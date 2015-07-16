@@ -15,23 +15,17 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-#
-# =============================================================================
-#
-#                                   Preamble
-#
-# =============================================================================
-#
-
 """
 This module provides classes to create injection distributions, and to convert
 from one distribution to another.
 """
 
-import lal
 import numpy
 from scipy import stats
 import ConfigParser
+import functools
+
+import lal
 from glue import segments
 
 
@@ -87,17 +81,18 @@ class CBCDistribution(object):
                     param))
             self._bounds[param] = segments.segment(left, right)
         # set optional parameters
-        for param in self._optional_parameters:
-            try:
-                these_bounds = kwargs.pop(param)
-            except KeyError:
-                continue
-            try:
-                left, right = these_bounds
-            except:
-                raise ValueError("Must provide a minimum and a maximum for " +\
-                    "parameter %s" %(param))
-            self._bounds[param] = segments.segment(left, right)
+        if self._optional_parameters is not None:
+            for param in self._optional_parameters:
+                try:
+                    these_bounds = kwargs.pop(param)
+                except KeyError:
+                    continue
+                try:
+                    left, right = these_bounds
+                except:
+                    raise ValueError("Must provide a minimum and a maximum " +\
+                        "for parameter %s" %(param))
+                self._bounds[param] = segments.segment(left, right)
         if kwargs != {}:
             raise ValueError("Parameters %s " %(', '.join(kwargs.keys())) +\
                 "are not parameters for this distribution")
@@ -109,15 +104,12 @@ class CBCDistribution(object):
         """
         return self._norm
 
-    def _pdf(self, *args):
-        raise ValueError("Density function not set!")
-
     def pdf(self, *args):
         """
-        Returns the value of this distribution's density_func evaluated
+        Returns the value of this distribution's density function evaluated
         at the given arguments.
         """
-        return self._pdf(*args)
+        raise ValueError("Density function not set!")
 
     def pdf_from_result(self, result):
         """"
@@ -126,9 +118,9 @@ class CBCDistribution(object):
 
         Parameters
         ----------
-        result: plot.Result instance
-            An instance of a pycbc.plot.Result populated with the needed
-            parameters.
+        result: class instance
+            An instance of any class that has the names in self._parameters
+            as attributes.
 
         Returns
         -------
@@ -138,6 +130,50 @@ class CBCDistribution(object):
         args = [getattr(result, p) for p in self._parameters]
         return self.pdf(*args)
 
+
+def uniform_rand(min_val, max_val, size=1):
+    """
+    Returns one or more values drawn uniformly between the given min and max
+    values.
+
+    Parameters
+    ----------
+    min_val: float
+        The lower bound.
+    max_val: float
+        The upper bound.
+    size: {1 | int}
+        Number to random values to return.
+
+    Returns
+    -------
+    randvals: numpy.array
+        Array of the random values.
+    """
+    return numpy.random.uniform(min_val, max_val, size=size)
+
+
+def log_rand(min_val, max_val, size=1):
+    """
+    Returns one or more values drawn logarithmically between the given min and
+    max values.
+
+    Parameters
+    ----------
+    min_val: float
+        The lower bound.
+    max_val: float
+        The upper bound.
+    size: {1 | int}
+        Number to random values to return.
+
+    Returns
+    -------
+    randvals: numpy.array
+        Array of the random values.
+    """
+    return min_val * (float(max_val)/min_val)**numpy.random.uniform(0., 1.,
+        size=size)
 
 
 class UniformComponent(CBCDistribution):
@@ -152,7 +188,9 @@ class UniformComponent(CBCDistribution):
     _optional_parameters = ['mtotal']
 
     def __init__(self, min_mass1, max_mass1, min_mass2, max_mass2,
-            min_mtotal=None, max_mtotal=None, ensure_m1gtm2=True):
+            min_mtotal=None, max_mtotal=None, enforce_m1gtm2=True):
+        # set self's random function to be uniform
+        self._rand_mass_func = uniform_rand
         # ensure data types are correct
         min_mass1 = float(min_mass1)
         max_mass1 = float(max_mass1)
@@ -162,7 +200,7 @@ class UniformComponent(CBCDistribution):
             min_mtotal = float(min_mtotal)
         if max_mtotal is not None:
             max_mtotal = float(max_mtotal)
-        if ensure_m1gtm2 and max_mass2 > max_mass1:
+        if enforce_m1gtm2 and max_mass2 > max_mass1:
             bounds = {'mass2': (min_mass1, max_mass1),
                 'mass1': (min_mass2, max_mass2)}
         else:
@@ -203,7 +241,7 @@ class UniformComponent(CBCDistribution):
         self._norm = 1./invnorm
         return self._norm
 
-    def _pdf(self, mass1, mass2):
+    def pdf(self, mass1, mass2):
         if mass1 not in self.bounds['mass1']:
             return 0.
         if mass2 not in self.bounds['mass2']:
@@ -215,46 +253,44 @@ class UniformComponent(CBCDistribution):
             pass
         return self.norm
 
-    def _rand_mass_func(self, min_val, max_val, num=1):
-        """
-        Returns a mass according to self's pdf. No cut bounds are applied.
-        """
-        return numpy.random.uniform(min_val, max_val, size=num)
-
-    def rvs(self, num=1):
+    def rvs(self, size=1, enforce_m1gtm2=True):
         """
         Returns 1 or more random variates drawn from this distribution. The
         bounds specified in self.bounds are applied.
 
         Parameters
         ----------
-        num: {1 | int}
+        size: {1 | int}
             Number of draws to do.
+        enforce_m1gtm2: {True | bool}
+            Make sure the returned mass1 >= mass2.
         
         Returns
         -------
         mass1: numpy.array
             The list of mass 1s.
-
         mass2: numpy.array
             The list of mass 2s. Note: may be larger than mass1.
         """
         min_m1, max_m1 = self.bounds['mass1']
         min_m2, max_m2 = self.bounds['mass2']
-        masses = numpy.zeros((num, 2))
+        masses = numpy.zeros((size, 2))
         # if there aren't any cuts, just create all the points at once
         if 'mtotal' not in self.bounds:
-            masses[:,0] = self._rand_mass_func(min_m1, max_m1, num)
-            masses[:,1] = self._rand_mass_func(min_m2, max_m2, num)
+            masses[:,0] = self._rand_mass_func(min_m1, max_m1, size)
+            masses[:,1] = self._rand_mass_func(min_m2, max_m2, size)
         else:
             ii = 0
-            while ii < num:
+            while ii < size:
                 these_ms = self._rand_mass_func(min_m1, max_m1, 2)
                 if these_ms.sum() not in self.bounds['mtotal']:
                     continue
                 masses[ii,:] = these_ms
                 ii += 1
-        return masses[:,0], masses[:,1]
+        m1s, m2s = masses[:,0], masses[:,1]
+        if enforce_m1gtm2:
+            m1s, m2s = make_m1gtm2(m1s,m2s)
+        return m1s, m2s
 
     @classmethod
     def load_from_database(cls, connection, process_id):
@@ -367,7 +403,8 @@ class LogComponent(UniformComponent):
             min_mtotal=None, max_mtotal=None):
         super(LogComponent, self).__init__(min_mass1, max_mass1, min_mass2,
             max_mass2, min_mtotal=min_mtotal, max_mtotal=max_mtotal)
-        # override the normalization
+        # override the normalization and rand_mass_func
+        self._rand_mass_func = log_rand
         self.set_norm()
 
     def set_norm(self):
@@ -393,13 +430,6 @@ class LogComponent(UniformComponent):
                 max_m2, min_mtotal)
         self._norm = 1./invnorm
         return self._norm
-
-    def _rand_mass_func(self, min_val, max_val, num=1):
-        """
-        Returns a mass according to self's pdf. No cut bounds are applied.
-        """
-        return min_val * (float(max_val)/min_val)**numpy.random.uniform(0., 1.,
-            size=num)
 
 
 #
@@ -494,6 +524,156 @@ def _loguniform_invnorm_mtotal_cut(min_m1, max_m1, min_m2, max_m2, mtotal_cut):
     return invnorm
 
 
+class ConstrainedUniformTotalMass(CBCDistribution):
+    """
+    A special case of the distribution that is uniform in total mass. Here,
+    the distribution is determined by bounds on component masses, [ma, mb).
+    Both component masses have the same bounds. The bounds on total mass
+    are [Ma, Mb) with Ma = 2*ma and Mb = ma+mb. Injections are drawn
+    uniform in [Ma, Mb), then one component mass drawn uniform in [ma, M)
+    (the mass of the other is just M-m). This corresponds to a right triangle
+    in x = M, y = m. 
+    """
+    name = 'constrained_uniform_mtotal'
+    inspinj_name = 'totalMass'
+    description = 'Uniform in total mass, with bounds ' +\
+        '$M = [2m_a, m_a+m_b)$; for a given $M$ component masses are ' +\
+        'uniform on: $m = [m_a, M)$'
+    _parameters = ['mass', 'mtotal']
+
+    def __init__(self, min_mass, max_mass):
+        # set self's random function to be uniform
+        self._rand_mass_func = uniform_rand
+        # ensure data types are correct
+        min_mass = float(min_mass)
+        max_mass = float(max_mass)
+        bounds = {
+            'mass': (min_mass, max_mass),
+            'mtotal': (2*min_mass, min_mass+max_mass)
+        }
+        self.set_bounds(**bounds)
+        self.set_norm()
+
+    def set_norm(self):
+        """
+        Calculates the norm of self given the boundaries; the result is
+        stored to self._norm.
+        """
+        # the norm is 1./(max_mass - min_mass) = 1./(max_mtotal - min_mtotal)
+        self._norm = 1./abs(self._bounds['mass'])
+        return self._norm
+
+    def pdf(self, mass1, mass2):
+        """
+        Gives the pdf as a function of mass1 and mass2.
+        """
+        mtotal = mass1+mass2
+        if (mass1 not in self._bounds['mass'] or 
+                mass2 not in self._bounds['mass'] or
+                mtotal not in self._bounds['mtotal']):
+            return 0.
+        return self._norm / (mtotal - self._bounds['mtotal'][0])
+
+    def pdf_from_result(self, result):
+        """"
+        Returns the value of this distribution's probability density function
+        evaluated at the given result's mass1 and mass2.
+
+        Parameters
+        ----------
+        result: class instance
+            Any object with mass1 and mass2 as attributes.
+
+        Returns
+        -------
+        pdf: float
+            Value of the pdf at the given parameters.
+        """
+        return self.pdf(result.mass1, result.mass2)
+
+    def rvs(self, size=1, enforce_m1gtm2=True):
+        """
+        Returns 1 or more random variates drawn from this distribution. The
+        bounds specified in self.bounds are applied.
+
+        Parameters
+        ----------
+        size: {1 | int}
+            Number of draws to do.
+        enforce_m1gtm2: {True | bool}
+            Make sure the returned mass1 >= mass2.
+        
+        Returns
+        -------
+        mass1: numpy.array
+            The list of mass 1s.
+        mass2: numpy.array
+            The list of mass 2s. Note: may be larger than mass1.
+        """
+        Ma, Mb = self._bounds['mtotal']
+        ma = self._bounds['mass'][0]
+        Ms = self._rand_mass_func(Ma, Mb, size=size)
+        m1s = numpy.array([self._rand_mass_func(ma, Ms[ii]-ma)[0] \
+            for ii in numpy.arange(size)])
+        m2s = Ms - m1s
+        if enforce_m1gtm2:
+            m1s, m2s = make_m1gtm2(m1s,m2s)
+        return m1s, m2s
+
+    @classmethod
+    def load_from_database(cls, connection, process_id):
+        """
+        Given a connection to a database and a process_id of an inspinj job,
+        loads all of the needed parameters.
+        """
+        cursor = connection.cursor()
+        # first, check that the process_id belongs to an inspinj job with the
+        # correct mass distribution
+        mdistr = get_mdistr_from_database(connection, process_id)
+        if mdistr != cls.inspinj_name:
+            raise ValueError("given process_id does not match this " +
+                "distribution")
+        # now get everything we need for this distribution: min,max component
+        # masses, plus any cuts on mass ratio and/or total mass
+        relevant_parameters = ["--min-mass1", "--max-mass1", "--min-mass2",
+            "--max-mass2", "--min-mtotal", "--max-mtotal", "--min-mratio",
+            "--max-mratio"]
+        sqlquery = """
+            SELECT
+                pp.param, pp.value
+            FROM
+                process_params AS pp
+            WHERE
+                pp.process_id == ? AND (
+                %s)""" %(' OR\n'.join(['pp.param == "%s"' %(param) \
+                    for param in relevant_parameters]))
+        param_values = dict([ [param, None] for param in relevant_parameters])
+        for param, value in cursor.execute(sqlquery, (process_id,)):
+            param_values[param] = float(value)
+        # check that no other parameters conflict
+        if (param_values["--min-mratio"] is not None or 
+                param_values["--max-mratio"] is not None):
+            raise ValueError("Sorry, a cut on mass ratio is currently not " +\
+                "supported.")
+        # make sure that min-mass1 = min-mass2, max-mass1 = max-mass2,
+        # min-mtotal = 2*min-mass1, max-mtotal = min-mass1+max-mass1
+        if param_values['--min-mass1'] != param_values['--min-mass2']:
+            raise ValueError("Sorry, this distribution does not support " +\
+                "min-mass1 != min-mass2")
+        if param_values['--max-mass1'] != param_values['--max-mass2']:
+            raise ValueError("Sorry, this distribution does not support " +\
+                "max-mass1 != max-mass2")
+        if 2*param_values['--min-mass1'] != param_values['--min-mtotal']:
+            raise ValueError("min-mtotal must be = 2*min-mass1")
+        if param_values['--max-mass1']+param_values['--min-mass1'] != \
+                param_values['--max-mtotal']:
+            raise ValueError("max-mtotal must be = min-mass1 + max-mass1")
+        # create the class
+        clsinst = cls(
+            param_values["--min-mass1"], param_values["--max-mass1"])
+        return clsinst
+
+
 class UniformMq(CBCDistribution):
     """
     A distribution that is uniform in total mass and mass ratio, with cuts in
@@ -504,6 +684,7 @@ class UniformMq(CBCDistribution):
     description = 'uniform in M,q (q >= 1) with a cut on component masses'
     _parameters = ['mtotal', 'q', 'mass1', 'mass2']
     _optional_parameters = []
+    _rand_mass_func = uniform_rand
 
     def __init__(self, min_mtotal, max_mtotal, min_q, max_q, min_mass1,
             max_mass1, min_mass2, max_mass2):
@@ -549,18 +730,71 @@ class UniformMq(CBCDistribution):
         self._norm = 1./inv_norm
         return self._norm
 
-    def _pdf(self, M, q, mass1, mass2):
+    def pdf(self, M, q, mass1, mass2):
         if M not in self.bounds['mtotal']:
             return 0.
         if q not in self.bounds['q']:
             return 0.
-        #mass2 = M/(1.+q)
-        #mass1 = q*mass2
         if mass1 not in self.bounds['mass1']:
             return 0.
         if mass2 not in self.bounds['mass2']:
             return 0.
         return self.norm
+
+    def rvs(self, size=1, enforce_m1gtm2=True):
+        """
+        Returns 1 or more random variates drawn from this distribution. The
+        bounds specified in self.bounds are applied.
+
+        Parameters
+        ----------
+        size: {1 | int}
+            Number of draws to do.
+        enforce_m1gtm2: {True | bool}
+            Make sure the returned mass1 >= mass2.
+        
+        Returns
+        -------
+        mass1: numpy.array
+            The list of mass 1s.
+        mass2: numpy.array
+            The list of mass 2s. Note: may be larger than mass1.
+        """
+        min_M, max_M = self.bounds['mtotal']
+        min_q, max_q = self.bounds['q']
+        # if there aren't any cuts, just create all the points at once
+        if 'mass1' not in self.bounds and 'mass2' not in self.bounds:
+            Ms = self._rand_mass_func(min_M, max_M, size)
+            qs = self._rand_mass_func(min_q, max_q, size)
+            m1s, m2s = m1m2_from_Mq(Ms, qs)
+        else:
+            m1s = numpy.zeros(size)
+            m2s = numpy.zeros(size)
+            ii = 0
+            while ii < size:
+                this_M = self._rand_mass_func(min_M, max_M, 1)
+                this_q = self._rand_mass_func(min_q, max_q, 1)
+                m1, m2 = m1m2_from_Mq(this_M, this_q) 
+                if 'mass1' in self.bounds and m1 not in self.bounds['mass1']:
+                    continue
+                if 'mass2' in self.bounds and m2 not in self.bounds['mass2']:
+                    continue
+                m1s[ii] = m1
+                m2s[ii] = m2
+                ii += 1
+        if enforce_m1gtm2:
+            m1s, m2s = make_m1gtm2(m1s,m2s)
+        return m1s, m2s
+
+# helper functions
+def m1m2_from_Mq(M, q):
+    """
+    Calculates mass1 and mass2 given total mass and mass ratio (>= 1), where
+    mass1 >= mass2.
+    """
+    m2 = M/(1.+q)
+    m1 = m2 * q
+    return m1, m2
 
 
 class DominikEtAl2012(CBCDistribution):
@@ -581,7 +815,7 @@ class DominikEtAl2012(CBCDistribution):
         self.description = description
         # load the filename and the kernel
         self.filename = filename
-        self._kernel, m1s, m2s = _get_data_and_kernel(filename)
+        self._kernel, m1s, m2s = get_data_and_kernel(filename)
         m1s_min, m1s_max = m1s.min(), m1s.max()
         m2s_min, m2s_max = m2s.min(), m2s.max()
         # we'll bump up/down the mass bounds slightly
@@ -594,7 +828,7 @@ class DominikEtAl2012(CBCDistribution):
             (self.bounds['mass1'][1], self.bounds['mass2'][1]))
         self._norm = norm
 
-    def _pdf(self, mass1, mass2):
+    def pdf(self, mass1, mass2):
         return self._norm*self._kernel.evaluate((mass1, mass2))[0]
 
     def pdf_from_result(self, result):
@@ -602,7 +836,7 @@ class DominikEtAl2012(CBCDistribution):
         Returns the value of this distribution's probability density function
         evaluated at the given result's parameters. Overrides parent's class
         so that the observed chirp mass can be de-redshifted prior to calling
-        self's _pdf.
+        self's pdf.
 
         Parameters
         ----------
@@ -621,11 +855,36 @@ class DominikEtAl2012(CBCDistribution):
             get_proper_distance(result.distance))
 
         return (1.+get_redshift(result.distance))**2. * \
-            self._pdf(source_mass1, source_mass2)
+            self.pdf(source_mass1, source_mass2)
+
+    def rvs(self, size=1):
+        """
+        Returns 1 or more random variates drawn from the kernel density
+        estimate of this distribution.
+
+        Parameters
+        ----------
+        size: {1 | int}
+            Number of draws to do.
+        enforce_m1gtm2: {True | bool}
+            Make sure the returned mass1 >= mass2.
+        
+        Returns
+        -------
+        mass1: numpy.array
+            The list of mass 1s.
+        mass2: numpy.array
+            The list of mass 2s. Note: may be larger than mass1.
+        """
+        masses = self._kernel.resample(size)
+        m1s, m2s = masses[0,:], masses[1,:]
+        if enforce_m1gtm2:
+            m1s, m2s = make_m1gtm2(m1s,m2s)
+        return m1s, m2s
 
 
 # helper functions
-def _load_dominik2012_model(filename):
+def load_dominik2012_model(filename):
     """
     Loads masses from a Dominik et al. 2012 .dat files.
     """
@@ -633,10 +892,10 @@ def _load_dominik2012_model(filename):
     data = numpy.loadtxt(filename, usecols=(0,1))
     m1s = data[:,0]
     m2s = data[:,1]
-    m1s, m2s = _enforce_m1gtm2(m1s, m2s)
+    m1s, m2s = make_m1gtm2(m1s, m2s)
     return m1s, m2s
 
-def _enforce_m1gtm2(m1s, m2s):
+def make_m1gtm2(m1s, m2s):
     """
     Given two lists of masses, ensures that m1 > m2.
     This is done in place.
@@ -647,12 +906,12 @@ def _enforce_m1gtm2(m1s, m2s):
     m2s[replace_idx] = smaller_masses
     return m1s, m2s
 
-def _get_data_and_kernel(filename):
+def get_data_and_kernel(filename):
     """
     Loads masses from a Dominik et al. 2012 .dat file and applies a Gaussian
     kernel density estimator (KDE) on the chirp mass and eta.
     """
-    m1s, m2s = _load_dominik2012_model(filename)
+    m1s, m2s = load_dominik2012_model(filename)
     dataset = numpy.vstack((m1s, m2s))
     kernel = stats.gaussian_kde(dataset)
     return kernel, m1s, m2s
@@ -664,13 +923,15 @@ distributions = {
     UniformComponent.name: UniformComponent,
     LogComponent.name: LogComponent,
     UniformMq.name: UniformMq,
+    ConstrainedUniformTotalMass.name: ConstrainedUniformTotalMass,
     DominikEtAl2012.name: DominikEtAl2012
     }
 
 # Mapping from names used by inspinj to distributions defined here
 inspinj_map = {
     UniformComponent.inspinj_name: UniformComponent,
-    LogComponent.inspinj_name: LogComponent
+    LogComponent.inspinj_name: LogComponent,
+    ConstrainedUniformTotalMass.inspinj_name: ConstrainedUniformTotalMass
     }
 
 #
@@ -837,27 +1098,48 @@ def logComponent_to_MchirpEta(result):
     return logComponent_to_uniformComponent(result)*\
             uniformComponent_to_MchirpEta(result)
 
+def inverseJacobian(func, result):
+    """
+    Wrapper around the given Jacobian function that returns the inverse.
+    """
+    return 1./func(result)
+
 # the known Jacobians
-Jacobians = {
-    ("log_component", "uniform_component"): logComponent_to_uniformComponent,
-    ("uniform_component", "uniform_Mq"): uniformComponent_to_uniformMq,
-    ("uniform_component", "dominik_etal_2012"): identity,
-    ("log_component", "dominik_etal_2012"): logComponent_to_uniformComponent,
-    # identities
-    ("log_component", "log_component"): identity,
-    ("uniform_component", "uniform_component"): identity,
-    ("dominik_etal_2012", "dominik_etal_2012"): identity,
-    }
+# The base set just contains one-way mappings between various distributions.
+# The function Jacobians uses this for two-way mapping, and for identities.
+__jacobians__ = {
+    (LogComponent.name, UniformComponent.name): \
+        logComponent_to_uniformComponent,
+    (UniformComponent.name, UniformMq.name): uniformComponent_to_uniformMq,
+    (UniformComponent.name, DominikEtAl2012.name): identity,
+    (LogComponent.name, DominikEtAl2012.name): \
+        logComponent_to_uniformComponent,
+    (ConstrainedUniformTotalMass.name, UniformComponent.name): identity
+}
+# add the inverses
+for (__a__, __b__),__func__ in __jacobians__.items():
+    __jacobians__[__b__,__a__] = functools.partial(
+        inverseJacobian, func=__func__)
+# add the identities
+for (__a__, _),__func__ in __jacobians__.items():
+    __jacobians__[__a__, __a__] = identity
+
+def Jacobians(a, b):
+    """
+    Given the name of two distributions, returns the function needed to
+    compute the Jacobian between them.
+    """
+    try:
+        return __jacobians__[a, b]
+    except KeyError:
+        raise ValueError("I don't know how to convert from %s to %s" %(
+            a, b))
 
 def convert_distribution(result, from_distr, to_distr):
     """
     Given a result instance, converts from one distribution to another.
     """
     # get the jacobian weight
-    try:
-        jacobian = Jacobians[from_distr.name, to_distr.name](result)
-    except KeyError:
-        raise ValueError("I don't know how to convert from %s to %s" %(
-            from_distr.name, to_distr.name))
+    jacobian = Jacobians(from_distr.name, to_distr.name)(result)
     return jacobian * to_distr.pdf_from_result(result) / \
             from_distr.pdf_from_result(result)
