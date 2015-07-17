@@ -524,32 +524,44 @@ def _loguniform_invnorm_mtotal_cut(min_m1, max_m1, min_m2, max_m2, mtotal_cut):
     return invnorm
 
 
-class ConstrainedUniformTotalMass(CBCDistribution):
+class UniformTotalMass(CBCDistribution):
     """
-    A special case of the distribution that is uniform in total mass. Here,
-    the distribution is determined by bounds on component masses, [ma, mb).
-    Both component masses have the same bounds. The bounds on total mass
-    are [Ma, Mb) with Ma = 2*ma and Mb = ma+mb. Injections are drawn
-    uniform in [Ma, Mb), then one component mass drawn uniform in [ma, M)
-    (the mass of the other is just M-m). This corresponds to a right triangle
-    in x = M, y = m. 
+    A distribution that is uniform in total mass. The distribution is
+    determined by bounds on component masses, [ma, mb) and total mass [Ma, Mb).
+    Both component masses have the same bounds. The bounds on total mass are
+    [Ma, Mb) with Ma >= 2*ma and Mb < ma+mb. Injections are drawn uniform in
+    [Ma, Mb), then one component mass drawn uniform in [ma, M) (the mass of the
+    other is just M-m). This corresponds to a right triangle in x = M, y = m. 
     """
-    name = 'constrained_uniform_mtotal'
+    name = 'uniform_mtotal'
     inspinj_name = 'totalMass'
     description = 'Uniform in total mass, with bounds ' +\
-        '$M = [2m_a, m_a+m_b)$; for a given $M$ component masses are ' +\
+        '$M = [M_a, M_b)$; for a given $M$ component masses are ' +\
         'uniform on: $m = [m_a, M)$'
-    _parameters = ['mass', 'mtotal']
+    _parameters = ['mass']
+    _optional_parameters = ['mtotal']
 
-    def __init__(self, min_mass, max_mass):
+    def __init__(self, min_mass, max_mass, min_mtotal=None, max_mtotal=None):
         # set self's random function to be uniform
         self._rand_mass_func = uniform_rand
         # ensure data types are correct
         min_mass = float(min_mass)
         max_mass = float(max_mass)
+        if min_mtotal is None:
+            min_mtotal = 2*min_mass
+        else:
+            min_mtotal = float(min_mtotal)
+            if min_mtotal < 2*min_mass:
+                raise ValueError("min_mtotal must be >= 2*min_mass")
+        if max_mtotal is None:
+            max_mtotal = min_mass + max_mass
+        else:
+            max_mtotal = float(max_mtotal)
+            if max_mtotal > min_mass + max_mass:
+                raise ValueError("max_mtotal must be < min_mass+max_mass")
         bounds = {
             'mass': (min_mass, max_mass),
-            'mtotal': (2*min_mass, min_mass+max_mass)
+            'mtotal': (min_mtotal, max_mtotal)
         }
         self.set_bounds(**bounds)
         self.set_norm()
@@ -663,14 +675,18 @@ class ConstrainedUniformTotalMass(CBCDistribution):
         if param_values['--max-mass1'] != param_values['--max-mass2']:
             raise ValueError("Sorry, this distribution does not support " +\
                 "max-mass1 != max-mass2")
-        if 2*param_values['--min-mass1'] != param_values['--min-mtotal']:
-            raise ValueError("min-mtotal must be = 2*min-mass1")
-        if param_values['--max-mass1']+param_values['--min-mass1'] != \
-                param_values['--max-mtotal']:
-            raise ValueError("max-mtotal must be = min-mass1 + max-mass1")
+        try:
+            min_mtotal = param_values['--min-mtotal']
+        except KeyError:
+            min_mtotal = None
+        try:
+            max_mtotal = param_values['--max-mtotal']
+        except KeyError:
+            max_mtotal = None
         # create the class
         clsinst = cls(
-            param_values["--min-mass1"], param_values["--max-mass1"])
+            param_values["--min-mass1"], param_values["--max-mass1"],
+            min_mtotal=min_mtotal, max_mtotal=max_mtotal)
         return clsinst
 
 
@@ -923,7 +939,7 @@ distributions = {
     UniformComponent.name: UniformComponent,
     LogComponent.name: LogComponent,
     UniformMq.name: UniformMq,
-    ConstrainedUniformTotalMass.name: ConstrainedUniformTotalMass,
+    UniformTotalMass.name: UniformTotalMass,
     DominikEtAl2012.name: DominikEtAl2012
     }
 
@@ -931,7 +947,7 @@ distributions = {
 inspinj_map = {
     UniformComponent.inspinj_name: UniformComponent,
     LogComponent.inspinj_name: LogComponent,
-    ConstrainedUniformTotalMass.inspinj_name: ConstrainedUniformTotalMass
+    UniformTotalMass.inspinj_name: UniformTotalMass
     }
 
 #
@@ -1114,7 +1130,7 @@ __jacobians__ = {
     (UniformComponent.name, DominikEtAl2012.name): identity,
     (LogComponent.name, DominikEtAl2012.name): \
         logComponent_to_uniformComponent,
-    (ConstrainedUniformTotalMass.name, UniformComponent.name): identity
+    (UniformTotalMass.name, UniformComponent.name): identity
 }
 # add the inverses
 for (__a__, __b__),__func__ in __jacobians__.items():
