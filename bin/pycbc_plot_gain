@@ -474,7 +474,8 @@ while this_layer is not None:
             html_name = html_tmplt %(this_layer.web_dir, this_layer.level,
                 'child', ii)
             child.create_html_page(this_layer.root_dir, html_name,
-                test_threshold, ref_threshold, mapper=None,
+                test_threshold, ref_threshold, test_label=test_label,
+                ref_label=ref_label,mapper=None,
                 ref_livetime=ref_livetime, test_livetime=test_livetime,
                 print_relative_error=opts.print_relative_error,
                 comments=command_line)

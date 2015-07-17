@@ -1135,7 +1135,7 @@ __jacobians__ = {
 # add the inverses
 for (__a__, __b__),__func__ in __jacobians__.items():
     __jacobians__[__b__,__a__] = functools.partial(
-        inverseJacobian, func=__func__)
+        inverseJacobian, __func__)
 # add the identities
 for (__a__, _),__func__ in __jacobians__.items():
     __jacobians__[__a__, __a__] = identity

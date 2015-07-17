@@ -946,9 +946,12 @@ def _create_gain_html_page(phyper_cube, out_dir, html_name,
         raise ValueError("must provide a threshold")
 
     if test_label is None:
-        test_label = 'test'
+        test_label = 'Test'
     if ref_label is None:
-        ref_label = 'reference'
+        ref_label = 'Reference'
+    # make labels colored to stick out
+    test_label = '<font color="#8B0000">%s</font>' %(test_label)
+    ref_label = '<font color="#00008B">%s</font>' %(ref_label)
 
     #
     #   Open the html page and write the header
@@ -982,9 +985,9 @@ def _create_gain_html_page(phyper_cube, out_dir, html_name,
     print >> f, "</h1>"
     # print some basic info about this cube
     print >> f, "<h2>"
-    print >> f, "Test (%s) number of injections: %i<br />" %(
+    print >> f, "%s number of injections: %i<br />" %(
         test_label, phyper_cube.test_cube.nsamples)
-    print >> f, "Reference (%s) number of injections: %i<br />" %(
+    print >> f, "%s number of injections: %i<br />" %(
         ref_label, phyper_cube.reference_cube.nsamples)
     if phyper_cube.reference_cube.astro_prior is not None:
         print >> f, "Astrophysical prior: %s<br />" %(
@@ -1016,7 +1019,8 @@ def _create_gain_html_page(phyper_cube, out_dir, html_name,
         if test_livetime is not None:
             G = G * test_livetime/ref_livetime
             err = err * test_livetime / ref_livetime
-        print >> f, "Relative gain:<br />&nbsp&nbsp%s<br />" %(
+        print >> f, "Relative gain (%s/%s):<br />&nbsp&nbsp%s<br />" %(
+            test_label, ref_label,
             format_volume_text(G, err, include_units=False,
                 use_relative_err=print_relative_error,
                 use_scientific_notation=False))
