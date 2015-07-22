@@ -66,7 +66,7 @@ def parse_columns_into_dtype(input_array, columns=None, str_as_obj=False):
                 # empty array
                 ncols = len(columns)
             else:
-                ncols = 1
+                ncols = len(obj.dtype)
         # check that the number of columns match
         if len(columns) != ncols:
             raise ValueError("given number of columns does not match " +
@@ -103,11 +103,18 @@ def parse_columns_into_dtype(input_array, columns=None, str_as_obj=False):
             # the input array to find the longest string in order to set
             # the appropriate bit length
             if not str_as_obj:
-                dt = numpy.dtype(typeMap(coltype, str_as_obj=False))
-                if dt == 'S' or dt == 'U':
+                dt = typeMap(coltype, str_as_obj=False)
+                if dt == str or dt == unicode:
                     # get the longest string
-                    slen = len(max(obj[:,ii], key=len))+2
-                    coltype = '%s%i' % (dt.char, slen)
+                    if obj.ndim == 2:
+                        strarr = obj[:,ii]
+                    elif obj.dtype.names is not None:
+                        strarr = obj[obj.dtype.names[ii]]
+                    else:
+                        strarr = obj
+                    slen = len(max(strarr, key=len))
+                    stype = 'S' if dt == str else 'U'
+                    coltype = '%s%i' % (stype, slen)
             outdt.append((colname, typeMap(coltype, str_as_obj)))
     else:
         # just use whatever the current dtype is
@@ -629,6 +636,35 @@ array([ 27.54155067,  21.72203807,  31.48035881, ...,   4.73399603,
         self.__copy_attributes__(newself)
         return newself
 
+    def without_fields(self, names, copy=False):
+        """
+        Get a view/copy of this array without the specified fields.
+
+        Parameters
+        ----------
+        names: {strings|list of strings}
+            List of column names for the returned array; may be either a
+            single name or a list of names.
+        copy: bool, optional
+            If True, will return a copy of the array rather than a view.
+            Default is False.
+
+        Returns
+        -------
+        lscarray: new instance of this array
+            The view or copy of the array without the specified fields.
+        """
+        # check if only given a single name
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+        # cycle over self's fields, excluding any names in names
+        keep_names = [name for name in self.dtype.names if name not in names]
+        newself = get_fields(self, keep_names, copy=copy)  
+        # copy relevant attributes
+        self.__copy_attributes__(newself)
+        return newself
+
+
 
     def lookup(self, column, value):
         """
@@ -700,3 +736,375 @@ array([ 27.54155067,  21.72203807,  31.48035881, ...,   4.73399603,
         """
         self.clear_lookup()
         super(LSCArray, self).sort(*args, **kwargs)
+
+
+class _LSCArrayWithDefaults(LSCArray):
+    """
+    Subclasses LSCArray, adding class attributes ``default_columns`` and
+    ``default_name``. If no name is provided when initialized, the
+    ``default_name`` will be used. Likewise, if no columns are provided when
+    initalized, the default columns will be used as the columns argument. If
+    columns are provided but some (or all) do not have a specified data type,
+    the data type specified in default columns will be used.
+
+    The default ``default_name`` is None and the ``default_columns`` is an
+    empty dictionary. This class is mostly meant to be subclassed by other
+    classes, so they can add their own defaults.
+    """
+    default_columns = {}
+    default_name = None
+
+    def __new__(cls, input_array, columns=None, name=None):
+        if name is None:
+            name = cls.default_name
+        if columns is None:
+            # use the default columns
+            columns = cls.default_columns.items()
+        else:
+            # if any columns are provided that match the columns in cls's
+            # default_columns, but no data types are provided for them,
+            # use the data type specified in this class's default
+            if isinstance(columns, str) or isinstance(columns, unicode):
+                columns = [columns]
+            fields = []
+            for col in columns:
+                if isinstance(col, tuple):
+                    if len(col) == 2:
+                        cname, ctype = col
+                    else:
+                        cname = col[0]
+                        ctype = None
+                else:
+                    cname = col 
+                    ctype = None
+                if ctype is None:
+                    try:
+                        ctype = cls.default_columns[cname]
+                    except KeyError:
+                        pass
+                fields.append((cname, ctype))
+            columns = fields
+        return super(_LSCArrayWithDefaults, cls).__new__(cls, input_array,
+            columns=columns, name=name)
+
+    @classmethod
+    def zeros(cls, size, column_names=None, name=None):
+        """
+        Creates a new zeroed instance of this class with the desired size.
+
+        Parameters
+        ----------
+        size: int
+            Required, the length of the empty array to create.
+        column_names: {None | (list of) strings}
+            The names that the new array should have. All the names must
+            be columns in default columns. If None provided, all of the
+            default columns will be provided.
+        name: {None | string}
+            What to name the array. If None provided, the default name will
+            be used.
+
+        Returns
+        -------
+        zeroed_array: instance of this class
+            An zeroed array with the desired size and columns.
+        """
+        if name is None:
+            name = cls.default_name
+        if column_names is None:
+            dt = cls.default_columns.items()
+        else:
+            dt = [(col, cls.default_columns[col]) for col in column_names]
+        return cls(numpy.zeros(size, dtype=dt), columns=dt, name=name)
+
+
+class Instrument(_LSCArrayWithDefaults):
+    """
+    Subclasses LSCArray, adding default name "instrument" and default columns.
+    """
+    default_name = 'instrument'
+    default_columns = {
+        'ifo': 'S3',
+        'sigma': float,
+        }
+
+class TmpltInspiral(_LSCArrayWithDefaults):
+    """
+    Subclasses LSCArray, with default name "tmplt_inspiral". Also adds
+    class attributes, ids, instrinsic_params, extrinsic_params, ifo_params,
+    and waveform_params. These are concatenated together to make the default
+    columns.
+
+    Notes
+    -----
+    The attribute ``ifo_params`` defines the ``ifos`` column. The data type
+    for this column is the ``default_columns`` of the Instrument class.
+    Therefore, a single row of a TmpltInspiral can store information about
+    one or more ifos.
+
+    Also adds various common functions decorated as properties, such as
+    mtotal = mass1+mass2.
+    """
+    default_name = 'tmplt_inspiral'
+    # we'll group the various parameters by type
+    ids = {
+        'tmplt_id': int,
+        'process_id': int
+        }
+    intrinsic_params = {
+        'mass1': float,
+        'mass2': float,
+        'spin1x': float,
+        'spin1y': float,
+        'spin1z': float,
+        'spin2x': float,
+        'spin2y': float,
+        'spin2z': float,
+        'lambda1': float,
+        'lambda2': float,
+        'quadparam1': float,
+        'quadparam2': float,
+        'eccentricity': float,
+        'argument_periapsis': float,
+        }
+    extrinsic_params = {
+        'phi_ref': float,
+        'inclination': float,
+        }
+    ifo_params = {
+        'ifos': Instrument.default_columns.items(),
+        }
+    waveform_params = {
+        'sample_rate': int,
+        'segment_length': int,
+        'f_min': float,
+        'f_ref': float,
+        'f_max': float,
+        'duration': float,
+        'amp_order': int,
+        'phase_order': int,
+        'spin_order': int,
+        'tidal_order': int,
+        'approximant': str,
+        'taper': str,
+        'frame_axis': str,
+        'modes_choice': str,
+        }
+    default_columns = dict(ids.items() + intrinsic_params.items() +
+        extrinsic_params.items() + ifo_params.items() +
+        waveform_params.items())
+
+    # some other derived parameters
+    @property
+    def mtotal(self):
+        return self.mass1 + self.mass2
+
+    @property
+    def mtotal_s(self):
+        return lal.MTSUN_SI*self.mtotal
+
+    @property
+    def q(self):
+        return self.mass1 / self.mass2
+
+    @property
+    def eta(self):
+        return self.mass1*self.mass2 / self.mtotal**2.
+
+    @property
+    def mchirp(self):
+        return self.eta**(3./5)*self.mtotal
+
+    @property
+    def chi(self):
+        return (self.mass1*self.spin1z + self.mass2*self.spin2z) / self.mtotal
+
+    def tau0(self, f0=None):
+        """
+        Returns tau0. If f0 is not specified, uses self.f_min.
+        """
+        if f0 is None:
+            f0 = self.f_min
+        return (5./(256 * numpy.pi * f0 * self.eta)) * \
+            (numpy.pi * self.mtotal_s * f0)**(-5./3.)
+   
+    def v0(self, f0=None):
+        """
+        Returns the velocity at f0, as a fraction of c. If f0 is not
+        specified, uses self.f_min.
+        """
+        if f0 is None:
+            f0 = self.f_min
+        return (2*numpy.pi* f0 * self.mtotal_s)**(1./3)
+
+    # some short cuts
+    @property
+    def m1(self):
+        return self.mass1
+
+    @property
+    def m2(self):
+        return self.mass2
+
+    @property
+    def s1(self):
+        return numpy.array([self.spin1x, self.spin1y, self.spin1z])
+
+    @property
+    def s1x(self):
+        return self.spin1x
+
+    @property
+    def s1y(self):
+        return self.spin1y
+
+    @property
+    def s1z(self):
+        return self.spin1z
+
+    @property
+    def s2(self):
+        return numpy.array([self.spin2x, self.spin2y, self.spin2z])
+
+    @property
+    def s2x(self):
+        return self.spin2x
+
+    @property
+    def s2y(self):
+        return self.spin2y
+
+    @property
+    def s2z(self):
+        return self.spin2z
+
+    @property
+    def apprx(self):
+        return self.approximant
+
+
+class SnglEvent(_LSCArrayWithDefaults):
+    """
+    Subclasses LSCArray, adding ranking_stat, snr, chisq, and end time as
+    default columns. Also has a 'template' column, which is a sub-array
+    of with fields ifo and tmplt_id. If given a TmpltInspiral array, the
+    template field can be expanded to have all the parameters of each single
+    event; see expand_templates for details.
+    """
+    default_name = 'sngl_event'
+    id_params = {
+        'process_id': int,
+        'event_id': int,
+    }
+    tmplt_params = {
+        'template': {
+            'ifo': Instrument.default_columns['ifo'],
+            'tmplt_id': TmpltInspiral.default_columns['tmplt_id']
+            }.items(),
+    }
+    stat_params = {
+        'end_time': float,
+        'ranking_stat': float,
+        'snr': float,
+        'chisq': float,
+        'chisq_dof': float,
+    }
+    default_columns = dict(id_params.items() + tmplt_params.items() + 
+        stat_params.items())
+
+    def expand_templates(self, tmplt_inspiral_array, get_fields=None):
+        """
+        Given an array of templates, replaces the template column with a
+        sub-array of the template data.
+        """
+        # strip off the original template field
+        new_self = self.without_fields('template')
+        # get a view of the tmplt_inspiral array with just the desired
+        # fields; note: this will also give a clean lookup table
+        if isinstance(get_fields, str) or isinstance(get_fields, unicode):
+            get_fields = ['tmplt_id', get_fields]
+        elif get_fields is not None:
+            # ensure tmplt_id is included
+            get_fields = get_fields + ['tmplt_id']
+        else:
+            get_fields = tmplt_inspiral_array.dtype.names
+        tmplt_inspiral_array = tmplt_inspiral_array.with_fields(get_fields)
+        # add the new template field
+        new_self = new_self.add_field('template',
+            numpy.zeros(len(self), dtype=tmplt_inspiral_array.dtype)) 
+        # copy the data over
+        for ii,tmplts in enumerate(self['template']):
+            this_data = numpy.concatenate(
+                (tmplt_inspiral_array.lookup(tmplt_id) \
+                for tmplt_id in tmplts['tmplt_id']))
+            new_self[ii]['template'] = this_data
+        return new_self
+
+
+class CoincEvent(_LSCArrayWithDefaults):
+    """
+    Subclasses LSCArray; similar to SnglEvent, but with different default
+    stat_params. Also has a 'sngl_events', which is a subarray of SnglEvents.
+    This can be expanded to have the full parameters of the sngl events;
+    see expand_sngls for details.
+    """
+    default_name = 'coinc_event'
+    id_params = {
+        'process_id': int,
+        'coinc_event_id': int,
+    }
+    sngl_params = {
+            'sngl_events': {
+                'ifo': Instrument.default_columns['ifo'],
+                'event_id': SnglEvent.default_columns['event_id'],
+                }.items(),
+    }
+    stat_params = {
+        'end_time': float,
+        'false_alarm_rate': float,
+        'false_alarm_probability': float,
+        'ranking_stat': float,
+        'snr': float,
+    }
+    default_columns = dict(id_params.items() + sngl_params.items() +
+        stat_params.items())
+
+
+class SimInspiral(TmpltInspiral):
+    """
+    Subclasses TmpltInspiral, adding fields for sky location, distance,
+    geocentric end time, and weights needed for MC integration. Changes
+    'tmplt_id' to 'simulation_id' in id_params, and adds
+    additional fields to the ifos field for end time. Also has a 'recovered'
+    field, which is a subarray with fields coinc_event_id and sngl_events.
+    If given a CoincEvent array, this can be expanded to have all of the
+    coinc event statistics; see expand_recovered for details.
+    """
+    default_name = 'sim_inspiral'
+    ids = {
+        'simulation_id': int,
+        'process_id': int
+        }
+    location_params = {
+        'geocent_end_time': float,
+        'distance': float,
+        'ra': float,
+        'dec': float
+    }
+    ifo_params = {
+        'ifos': Instrument.default_columns.items() + [('end_time', float)],
+        }
+    recovered_params = {
+        'recovered': {
+            'coinc_event_id': CoincEvent.default_columns['coinc_event_id'],
+            'sngl_events': CoincEvent.default_columns['sngl_events'],
+            }.items()
+    }
+    default_columns = dict(ids.items() + location_params.items() +
+        ifo_params.items() + recovered_params.items() +
+        TmpltInspiral.intrinsic_params.items() +
+        TmpltInspiral.extrinsic_params.items() +
+        TmpltInspiral.waveform_params.items())
+
+
+
