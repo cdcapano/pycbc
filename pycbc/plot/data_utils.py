@@ -6,6 +6,8 @@ import numpy
 import operator
 import lal
 
+from pycbc import pnutils
+
 #############################################
 #
 #   Data Storage and Slicing tools
@@ -135,6 +137,31 @@ class Template(object):
     @property
     def apprx(self):
         return self.approximant
+    
+    @property
+    def final_frequency(self):
+        # will get a runtime error for SpinTaylorTx; instead we'll use
+        # SEOBNRpeak
+        if self.approximant.startswith('SpinTaylorT'):
+            return pnutils.frequency_cutoff_from_name('SEOBNRv2Peak',
+                self.mass1, self.mass2, self.spin1z, self.spin2z)
+        else:
+            return pnutils.get_final_freq(str(self.approximant),
+                self.mass1, self.mass2, self.spin1z, self.spin2z)
+
+    @property
+    def source_type(self):
+        """
+        Returns BNS, NSBH, or BBH depending on self's parameters.
+        """
+        if self.mass1 > 3. and self.mass2 > 3.:
+            return 3 # must be BBH
+        elif self.mass1 > 3. and self.mass2 < 2.:
+            return 2 # must be NSBH
+        elif self.mass1 < 2. and self.mass2 < 2.:
+            return 1 # must be BNS
+        else:
+            return 4 # the overlapping region
 
 
 class SnglIFOInjectionParams(object):
