@@ -73,7 +73,7 @@ def ColorBarLog10Formatter(y, pos):
     """
     Formats y=log10(x) values for a colorbar so that they appear as 10^y.
     """
-    return "$10^{%.1f}$" % y
+    return "$10^{%.2f}$" % y
 
 def create_bounded_colorbar_formatter(minlim, maxlim, formatter=None):
     """
@@ -98,10 +98,10 @@ def create_bounded_colorbar_formatter(minlim, maxlim, formatter=None):
             add_dollar = '$'
         else:
             add_dollar = ''
-        if y <= minlim:
-            tickstr = '< %s' %(tickstr)
-        if y >= maxlim:
-            tickstr = '> %s' %(tickstr)
+        #if y < minlim:
+        #    tickstr = '< %s' %(tickstr)
+        #if y > maxlim:
+        #    tickstr = '> %s' %(tickstr)
         return add_dollar + tickstr
     return pyplot.FuncFormatter(functools.partial(
         bounded_colorbar_formatter, formatter=formatter, minlim=minlim,
