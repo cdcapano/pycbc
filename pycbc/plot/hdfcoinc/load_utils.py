@@ -139,6 +139,10 @@ def get_injection_results(injfind_filenames,
             # there's only one process_id, so get it
             proc_id = rdistrs.keys()[0] 
             distr_type, distribution, r1, r2 = rdistrs[proc_id]
+            # since we have it, we'll get the waveform approximant too
+            approxs = dict([[int(simid.split(':')[-1]), apprx] \
+                for simid, apprx in connection.cursor().execute(
+                'select simulation_id, waveform from sim_inspiral')])
         # get the injection distribution information
         if load_inj_distribution:
             # we'll use the process_id retrieved from rdistrs
@@ -163,9 +167,10 @@ def get_injection_results(injfind_filenames,
             # Set the injection parameters: we'll make the injection
             # the psuedo class so we can access its attributes directly
             thisRes.set_psuedoattr_class(thisRes.injection)
-            # FIXME: add the following info
             thisRes.injection.simulation_id = injidx
-            #thisRes.injection.approximant = row.waveform
+            # FIXME: add the following info to hdfinjfind files
+            if load_inj_distribution or load_vol_weights_from_inspinj:
+                thisRes.injection.approximant = approxs[injidx]
             # ensure that m1 is always > m2
             mass1 = injections['mass1'][injidx]
             mass2 = injections['mass2'][injidx]
