@@ -182,14 +182,12 @@ def _plot_tiles(ax, zvals, plus_errs, minus_errs, phyper_cubes,
             txtx = min(x) + (max(x) - min(x))/2.
             txty = min(y) + (max(y) - min(y))/2.
 
-        # add a border if the grayscale is close to black
-        #if clr_grayscale < 0.1:
-        #    edgecolor = 'gray'
-        #else:
-        #    edgecolor = 'none'
+        # make the border be the opposite of the grayscale
+        edgecolor = str(-clr_grayscale + 1.)
 
         # plot
-        tile = ax.fill(x, y, color=clr, zorder=1)[0]
+        tile = ax.fill(x, y, color=clr, edgecolor=edgecolor, linewidth=0.1,
+            zorder=1)[0]
         # the tiles will be clickable
         if add_clickables:
             # we'll make the tag be the x, y values of tile
@@ -991,6 +989,21 @@ def plot_gains(phyper_cubes, xarg, xlabel, yarg, ylabel, test_threshold,
     Gs = time_factor * gains[:,0]
     gain_errs = time_factor * gains[:,1]
 
+    # if mingain and maxgain are not provided, and coloring as logz, make the
+    # min/max symmetric about 1
+    if mingain is None and maxgain is None and logz:
+        pwr = abs(numpy.log10(Gs)).max()
+        # we'll make the spread be atleast +/-10%
+        if pwr < 0.04:
+            pwr = 0.04 
+        mingain = 10**(-pwr)
+        maxgain = 10**(pwr)
+    # otherwise, just use the min/max
+    if mingain is None:
+        mingain = Gs.min()
+    if maxgain is None:
+        maxgain = Gs.max()
+
     # create a tiles plot on the axis
     _, cb = _plot_tiles(ax, Gs, gain_errs, gain_errs, phyper_cubes,
         xarg, xlabel, yarg, ylabel,
@@ -1056,6 +1069,16 @@ def plot_subgains(phyper_cubes, xarg, xlabel, yarg, ylabel,
         for child in parent.children if child.nsamples >= min_ninj and \
             numpy.isfinite(child.get_fractional_gain(ref_threshold,
             test_threshold)[0])])[:,0]
+    # if mingain and maxgain are not provided, and coloring as logz, make the
+    # min/max symmetric about 1
+    if mingain is None and maxgain is None and logz:
+        pwr = abs(numpy.log10(Gs)).max()
+        # we'll make the spread be atleast +/-10%
+        if pwr < 0.04:
+            pwr = 0.04 
+        mingain = 10**(-pwr)
+        maxgain = 10**(pwr)
+    # otherwise, just use the min/max
     if mingain is None:
         mingain = Gs.min()
     if maxgain is None:

@@ -52,16 +52,16 @@ parser.add_option('', '--reference-cache-file',  metavar="REFFILE.CACHE:TYPE[:RE
 parser.add_option('-m', '--map-label', help='Required if either test or reference results type is pycbc_sqlite. The map label to use when getting found injections.')
 parser.add_option('-T', '--include-livetime', action='store_true', default=False, help='Calculate gain using VT instead of just V.')
 parser.add_option('-l', '--layer-config-file', help='Required. A config file containing the layer parameters to use.') 
-parser.add_option('', '--reference-threshold', type='float', help='Required. The value of the ranking stat to use as the threshold when computing efficiencies for the reference run.')
-parser.add_option('', '--test-threshold', type='float', help='Required. The value of the ranking stat to use as the threshold when computing efficiencies for the test run.')
-parser.add_option('-t', '--test-stat', metavar='stat[:stat_label]', help='The ranking stat to use for computing efficiency of the test results. Can also specify a stat label for plotting (latex math should be enclosed in $ signs).')
-parser.add_option('', '--reference-stat', metavar='optimal|stat[:stat_label]', help='Required. Must be either "optimal", or the ranking stat to use for computing efficiency. If "optimal," the results in the test cache file will be compared to what the SNR of each injection would be in Gaussian noise. This is the overlap of each injection with itself ("sigma") divided by 1Mpc. If not "optimal", a reference-cache file must be specified. A stat label for plotting can also be provided if not "optimal."')
-parser.add_option('', '--test-rank-by', metavar='max|min', help='Options are "max" or "min". If max (min) an injection in the test results will be considered found if its ranking stat is >= (<) the threshold.')
-parser.add_option('', '--reference-rank-by', metavar='max|min', help='Same as test-rank-by, but for the reference results. Ignored if "reference-stat is "optimal".')
-parser.add_option('', '--test-stat-range', metavar='MIN_STAT,MAX_STAT', help='Required. Stat range to use when creating volume vs. stat plots for the test results. Must specify both a minimum and a maximum.')
-parser.add_option('', '--reference-stat-range', metavar='MIN_STAT,MAX_STAT', help='Required. Stat range to use when creating volume vs. stat plots for the reference results. Must specify both a minimum and a maximum. This must be provided even if reference-stat is "optimal."')
+parser.add_option('', '--test-threshold', type='float', default=1e-3, help='The value of the ranking stat to use as the threshold when computing efficiencies for the test run. Default is to be equal to 1e-3.')
+parser.add_option('', '--reference-threshold', type='float', help='The value of the ranking stat to use as the threshold when computing efficiencies for the reference run. Default is to be the same as test-threshold.')
+parser.add_option('-t', '--test-stat', metavar='stat[:stat_label]', default='false_alarm_rate:FAR (yr$^{-1}$)', help='The ranking stat to use for computing efficiency of the test results. Can also specify a stat label for plotting (latex math should be enclosed in $ signs). Default is false_alarm_rate:FAR (yr$^{-1}$).')
+parser.add_option('', '--reference-stat', metavar='optimal|stat[:stat_label]', help='Must be either "optimal", or the ranking stat to use for computing efficiency. If "optimal," the results in the test cache file will be compared to what the SNR of each injection would be in Gaussian noise. This is the overlap of each injection with itself ("sigma") divided by 1Mpc. If not "optimal", a reference-cache file must be specified. A stat label for plotting can also be provided if not "optimal." Default is to be the same as test-stat.')
+parser.add_option('', '--test-rank-by', metavar='max|min', default='min', help='Options are "max" or "min". If max (min) an injection in the test results will be considered found if its ranking stat is >= (<) the threshold. Default is min.')
+parser.add_option('', '--reference-rank-by', metavar='max|min', help='Same as test-rank-by, but for the reference results. Ignored if "reference-stat is "optimal". Default is to be the same as test-rank-by.')
+parser.add_option('', '--test-stat-range', metavar='MIN_STAT,MAX_STAT', default='1e-4,1e4', help='Stat range to use when creating volume vs. stat plots for the test results. Must specify both a minimum and a maximum. Default is 1e-4,1e4.')
+parser.add_option('', '--reference-stat-range', metavar='MIN_STAT,MAX_STAT', help='Stat range to use when creating volume vs. stat plots for the reference results. Must specify both a minimum and a maximum. Default is to be the same as test-stat-range.')
 parser.add_option('', '--log-vol-vs-stat', action='store_true', default=False, help='Make the y-axis of the volume vs ranking-stat plots log10.')
-parser.add_option('', '--log-stat', action='store_true', default=False, help='Make the x-axis of the volume vs ranking-stat plots log10. This will make both the test and reference stats log10.')
+parser.add_option('', '--lin-stat', action='store_true', default=False, help='Make the x-axis of the volume vs ranking-stat plots linear. This will make both the test and reference stats linear. Otherwise, the x-axes are log10.')
 parser.add_option('-N', '--min-ninj', type='int', default=10, help='Minimum number of injections that must exist in a block in in order to calculate volume. If a block has less then this, it will be skipped. Default is 10.')
 parser.add_option('', '--print-relative-error', action='store_true', default=False, help='Turn on to print relative errors instead of absolute errors.')
 parser.add_option('', '--use-distance-bins', action='store_true', default=False, help="If turned on, will use distance bins to compute sensitive volumes, rather than the standard Monte Carlo method of using the average of the integrand. Generally, this will yield larger variance, so turn this on with caution.")
@@ -72,10 +72,10 @@ parser.add_option('-p', '--additional-plots-cache', metavar='FILE1.cache[,FILE2.
 parser.add_option('-o', '--output-dir', help='Directory to save results to.')
 parser.add_option('-u', '--user-tag', default='', help='Add a user tag to all output files.')
 parser.add_option('', '--colormap', default='RdBu_r', help='What color map to use for fractional gain plots. Default is RdBu_r.')
-parser.add_option('', '--mingain', type='float', default=None, help='Minimum gain to color. Default is to use whatever the minium gain found is.')
-parser.add_option('', '--maxgain', type='float', default=None, help='Maximum gain to color. Default is to use whatever the maximum gain found is.')
+parser.add_option('', '--mingain', type='float', default=None, help='Minimum gain to color. If this and maxgain is None, and not --linz, then the gains will be made symmetric about 1, with the range determined by whatever the minimum and maximum gain found is. Otherwise, this will just be set to the minimum gain found.')
+parser.add_option('', '--maxgain', type='float', default=None, help='Maximum gain to color. Default is to make symmetric about 1 if no mingain specified and not linz; otherwise, whatever the maximum gain found is.')
 parser.add_option('', '--fontsize', type='int', default=8, help='Fontsize to use in volume plots. Default is 8.')
-parser.add_option('', '--logz', action='store_true', default=False, help='Make coloring log10.')
+parser.add_option('', '--linz', action='store_true', default=False, help='Make the coloring (and ticks on the sub-gains plot) linear. Default is for these to be log10.')
 parser.add_option('', '--dpi', type='int', default=300, help='dpi to use for plots; default is 300')
 parser.add_option('-P', '--apply-cut', action = 'append', default = [], metavar = 'arg:min,max', help = 'apply cut to injections; can specify multiple times')
 parser.add_option('-M', '--mapper', default=None, help="Specify the location of a mapper.js JavaScript in order to highlight tiles on mouse over.")
@@ -86,6 +86,11 @@ if opts.user_tag is not None:
     tag = '_%s' % opts.user_tag
 else:
     tag = ''
+
+# set reference options to be the same as test if they are not provided
+for opt in ['threshold', 'stat', 'rank_by', 'stat_range']:
+    if getattr(opts, 'reference_%s' % opt) is None:
+        setattr(opts, 'reference_%s' % opt, getattr(opts, 'test_%s' %opt))
 
 # parse test cache file option
 if not opts.test_cache_file:
@@ -420,11 +425,11 @@ if opts.use_global_norm:
         pcube.test_cube.total_nsamples = len(test_results)
         pcube.reference_cube.total_nsamples = len(ref_results)
 
-# if min, max gain aren't specified, get the minimum/maximum gains across
-# all of the tiles
+# color options
 mingain = opts.mingain
 maxgain = opts.maxgain
 minvol = maxvol = None
+logz = not opts.linz
 
 # for keeping track of commands, we'll add the arguments used to create this
 # at the bottom of the html pages
@@ -445,7 +450,7 @@ while this_layer is not None:
         ref_threshold, test_livetime=test_livetime, ref_livetime=ref_livetime,
         test_label=test_label, ref_label=ref_label,
         include_children=this_is_lowest_layer,
-        user_tag=opts.user_tag, min_ninj=opts.min_ninj, logx=opts.log_stat,
+        user_tag=opts.user_tag, min_ninj=opts.min_ninj, logx=not opts.lin_stat,
         logy=opts.log_vol_vs_stat, nbins=100, dpi=opts.dpi, verbose=True)
 
     plot_volumes.plot_gains_from_layer(this_layer, test_threshold,
@@ -454,7 +459,7 @@ while this_layer is not None:
         test_label=test_label, ref_label=ref_label, colormap=opts.colormap,
         maxgain=maxgain, mingain=mingain, fontsize=opts.fontsize,
         print_relative_err=opts.print_relative_error,
-        logz=opts.logz, include_volume_plots=opts.include_volume_plots,
+        logz=logz, include_volume_plots=opts.include_volume_plots,
         minvol=minvol, maxvol=maxvol, dpi=opts.dpi, verbose=True)
 
     # if not the last layer, create the subvolumes plot
@@ -465,7 +470,7 @@ while this_layer is not None:
             user_tag=opts.user_tag, min_ninj=opts.min_ninj,
             test_label=test_label, ref_label=ref_label, colormap=opts.colormap,
             maxgain=maxgain, mingain=mingain,
-            logz=opts.logz, dpi=opts.dpi, verbose=True)
+            logz=logz, dpi=opts.dpi, verbose=True)
 
     # write the html page
     # if this is the bottom layer, create pages for the children
