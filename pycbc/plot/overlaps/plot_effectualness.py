@@ -134,25 +134,50 @@ def plot_effectualness(results, xarg, xlabel, yarg, ylabel,
 
 
 
-def plot_effectualness_cumhist(results, tmplt_label='', inj_label='',
+def plot_effectualness_cumhist(results, labels=[], colors=[],
+        tmplt_label='', inj_label='',
         target_mismatch=0.97, xmin=None, xmax=None, ymin=None,
         ymax=None, logy=False, dpi=300):
 
     plot_data = {}
     fig = pyplot.figure(dpi=dpi)
     ax = fig.add_subplot(111)
-    if xmin is not None and xmax is not None:
-        range = (xmin, xmax)
-    else:
-        range = None
-    xvals = numpy.array([x.effectualness for x in results])
-    xvals.sort()
-    # yvals are the % of points with an effectualness <= each xval
-    yvals = 100.*numpy.array([numpy.searchsorted(xvals, x, side='right') \
-        for x in xvals]) / float(len(xvals))
-    ax.plot(xvals, yvals, 'b-', linewidth=1, zorder=2)
-    plot_data['xvals'] = xvals
-    plot_data['yvals'] = yvals
+    for ii,result_group in enumerate(results):
+        xvals = numpy.array([x.effectualness for x in result_group])
+        if xvals.shape[0] == 0:
+            # nothing to plot, continue
+            continue
+        xvals.sort()
+        # yvals are the % of points with an effectualness <= each xval
+        yvals = 100.*numpy.array([numpy.searchsorted(xvals, x, side='right') \
+            for x in xvals]) / float(len(xvals))
+        if labels != []:
+            lbl = labels[ii]
+        else:
+            lbl = 'group %i' %(ii)
+        if colors != []:
+            clr = colors[ii]
+        else:
+            clr = None
+            #if len(result_group) == 1:
+            #    clrval = 0. 
+            #else:
+            #    clrval = ii/float(len(result_group)-1)
+            #clr = pyplot.cm.brg(clrval)
+        if clr is not None:
+            ax.plot(xvals, yvals, color=clr, linewidth=1, zorder=ii, label=lbl)
+        else:
+            ax.plot(xvals, yvals, linewidth=1, zorder=ii, label=lbl)
+        plot_data[lbl] = {}
+        plot_data[lbl]['xvals'] = xvals
+        plot_data[lbl]['yvals'] = yvals
+
+    # if nothing was plotted, just create an empty plot and exit
+    if plot_data == {}:
+        plot_utils.empty_plot(ax) 
+        return fig, plot_data
+    if labels != []:
+        ax.legend(loc='lower left')
     if logy:
         ax.semilogy()
     if tmplt_label or inj_label:
@@ -173,8 +198,9 @@ def plot_effectualness_cumhist(results, tmplt_label='', inj_label='',
     if ymax is not None:
         plt_ymax = ymax
     # plot the target mismatch
-    ax.plot([target_mismatch, target_mismatch], [plt_ymin, plt_ymax], 'r--',
-        linewidth=1, zorder=2)
+    ax.plot([target_mismatch, target_mismatch], [plt_ymin, plt_ymax],
+        color='darkorange', linestyle='--',
+        linewidth=1, zorder=ii+1)
     # set the axis limits
     ax.set_xlim(plt_xmin, plt_xmax)
     ax.set_ylim(plt_ymin, plt_ymax)

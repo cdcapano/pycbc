@@ -179,7 +179,7 @@ def get_injection_results(filenames, load_inj_distribution=False,
                         thisRes = results[id_map[thisfile, simid]]
                     except KeyError:
                         continue
-                    sngl_params = SnglIFOInjectionParams(ifo=ifo,
+                    sngl_params = data_utils.SnglIFOInjectionParams(ifo=ifo,
                         sigma=numpy.sqrt(sigmasq))
                     thisRes.injection.sngl_ifos[ifo] = sngl_params
                     if min_vol is not None:
