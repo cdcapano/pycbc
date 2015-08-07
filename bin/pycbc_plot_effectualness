@@ -6,12 +6,12 @@ from optparse import OptionParser
 import math
 import numpy
 from pycbc import plot
-from pycbc.plot import plot_utils
 from pycbc.plot import efficiency
+from pycbc.plot import overlaps
 
 __prog__ = 'pycbc_plot_effectualness'
 __author__ = 'Collin Capano <collin.capano@ligo.org>'
-__description__ = 'Makes scatter plots of the effectualness of a set of injections. The following can be plotted on the x and y axes: %s' %(plot_utils.Result().plottable_arguments)
+__description__ = 'Makes scatter plots of the effectualness of a set of injections.'
 
 parser = OptionParser(description=__description__)
 parser.add_option('-c', '--cache-file', help = 'cache file containing result databases')
@@ -72,8 +72,8 @@ else:
     pcubes = [efficiency.PHyperCube()]
 
 print "getting results"
-filenames = plot_utils.parse_results_cache(opts.cache_file)
-results, _ = plot_utils.get_injection_results(filenames,
+filenames = plot.parse_results_cache(opts.cache_file)
+results, _ = plot.overlaps.get_injection_results(filenames,
     weight_function=opts.weight_function, verbose=True)
 apply_cut = {}
 for thiscut in opts.apply_cut:
@@ -81,14 +81,14 @@ for thiscut in opts.apply_cut:
     apply_cut[arg] = map(float, vals.split(','))
 if apply_cut:
     print "applying cuts"
-    results = plot_utils.slice_results(results, apply_cut)
+    results = plot.slice_results(results, apply_cut)
 if opts.plot_templates:
     print "getting templates"
     ii = 0
     templates = []
     while not templates:
         try:
-            templates = plot_utils.get_templates(filenames[ii])
+            templates = plot.get_templates(filenames[ii])
         except:
             pass
         ii += 1
@@ -113,14 +113,14 @@ for apprx, results in inj_results.items():
         print "%i / %i\r" %(ii+1, len(pcubes)),
         sys.stdout.flush()
         # slice these results
-        these_results = plot_utils.slice_results(results, pcube.bounds)
+        these_results = plot.slice_results(results, pcube.bounds)
         # if no results in this cube, just skip so we don't waste time making
         # empty plots
         if these_results == []:
             continue
-        fig, _, _ = plot.plot_effectualness(these_results, xarg,
-            xlabel, yarg, ylabel, opts.tmplt_label, opts.inj_label,
-            logx=opts.log_x, logy=opts.log_y,
+        fig, _, _ = overlaps.plot_effectualness.plot_effectualness(
+            these_results, xarg, xlabel, yarg, ylabel, opts.tmplt_label,
+            opts.inj_label, logx=opts.log_x, logy=opts.log_y,
             plot_templates=opts.plot_templates, templates=templates,
             xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, zmin=zmin, zmax=zmax,
             ptsize=opts.point_size, cmap=opts.cmap, bkgclr=opts.bkg_color,
