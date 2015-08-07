@@ -173,9 +173,10 @@ jobs = [(randDists, randDists_job), (overlaps_exec, overlaps_job),
     (exval_exec, exval_job)]
 
 # set standard job parameters 
+accounting_group = cp.get('pipeline', 'accounting_group')
 for jobexec, job in jobs:
     set_standard_params(job, jobexec, basename)
-
+    job.add_condor_cmd('accounting_group', accounting_group)
 
 #
 #   Set static options
