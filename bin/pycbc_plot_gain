@@ -67,6 +67,7 @@ parser.add_option('', '--print-relative-error', action='store_true', default=Fal
 parser.add_option('', '--use-distance-bins', action='store_true', default=False, help="If turned on, will use distance bins to compute sensitive volumes, rather than the standard Monte Carlo method of using the average of the integrand. Generally, this will yield larger variance, so turn this on with caution.")
 parser.add_option('-A', '--astrophysical-prior', metavar='AST_DISTR.cfg', help='Use the astrophysical prior provided in the given config file. Default is to use whatever was used in the injection set.')
 parser.add_option('', '--include-volume-plots', action='store_true', default=False, help='Include the volume tile plots of the test and reference results to the summary html pages.')
+parser.add_option('', '--skip-volume-vs-stat-plots', action='store_true', default=False, help="Don't create volume vs. stat plots.")
 parser.add_option('-G', '--use-global-norm', action='store_true', default=False, help='Normalize volumes in each tile such that they add up to the total volume across all volumes. In this case, the volumes in each tile give the contribution of that tile to the whole. Otherwise, the volume in each tile is as if the universe only contained signals in that tile.')
 parser.add_option('-p', '--additional-plots-cache', metavar='FILE1.cache[,FILE2.cache,...]', help='Load additional plots for each cube from the given cache file(s). To specify multiple cache files, comma separate each file name. All cache files must have used the same layer-configuration-file.')
 parser.add_option('-o', '--output-dir', help='Directory to save results to.')
@@ -445,13 +446,15 @@ while this_layer is not None:
     # for the bottom layer, we'll also create html and volume vs stat plots
     # for the children
     this_is_lowest_layer = this_layer.sub_layer is None
-    plot_volumes.plot_twovolume_vs_stat_from_layer(this_layer, test_min_stat,
-        test_max_stat, ref_min_stat, ref_max_stat, test_threshold,
-        ref_threshold, test_livetime=test_livetime, ref_livetime=ref_livetime,
-        test_label=test_label, ref_label=ref_label,
-        include_children=this_is_lowest_layer,
-        user_tag=opts.user_tag, min_ninj=opts.min_ninj, logx=not opts.lin_stat,
-        logy=opts.log_vol_vs_stat, nbins=100, dpi=opts.dpi, verbose=True)
+    if not opts.skip_volume_vs_stat_plots:
+        plot_volumes.plot_twovolume_vs_stat_from_layer(this_layer,
+            test_min_stat, test_max_stat, ref_min_stat, ref_max_stat,
+            test_threshold, ref_threshold, test_livetime=test_livetime,
+            ref_livetime=ref_livetime, test_label=test_label,
+            ref_label=ref_label, include_children=this_is_lowest_layer,
+            user_tag=opts.user_tag, min_ninj=opts.min_ninj, logx=not
+            opts.lin_stat, logy=opts.log_vol_vs_stat, nbins=100, dpi=opts.dpi,
+            verbose=True)
 
     plot_volumes.plot_gains_from_layer(this_layer, test_threshold,
         ref_threshold, test_livetime=test_livetime, ref_livetime=ref_livetime,
