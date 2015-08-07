@@ -13,7 +13,7 @@ from pycbc.plot import efficiency
 __prog__ = 'pycbc_plot_effectualness_cumhist'
 __author__ = 'Collin Capano <collin.capano@ligo.org>'
 __description__ = 'Makes a cumulative histogram of the effectualness of a set of injections.'
-__usage__ = '%s [OPTIONAL_COMMANDS] CACHE_FILE1.cache[:LABEL1:COLOR1:uniform|WEIGHT_FUNCTION:APPROXIMANT] CACHE_FILE2.cache[:LABEL2:COLOR2:uniform|WEIGHT_FUNCTION:APPROXIMANT] ...' % __prog__
+__usage__ = '%s [OPTIONAL_COMMANDS] CACHE_FILE1.cache[:LABEL1:COLOR1:LINESTYLE1:uniform|WEIGHT_FUNCTION:APPROXIMANT] CACHE_FILE2.cache[:LABEL2:COLOR2:LINESTYLE2:uniform|WEIGHT_FUNCTION:APPROXIMANT] ...' % __prog__
 
 parser = OptionParser(description=__description__, usage=__usage__)
 parser.add_option('-P', '--apply-cut', action = 'append', default = [], metavar = 'arg:min,max', help='Only include injections that have the given argument in the given range. If specified multiple times, only injections passing all specified cuts will be plotted.')
@@ -65,27 +65,32 @@ print "Cycling over cache files:"
 all_results = []
 labels = []
 colors = []
+linestyles = []
 for ii,cache_file_arg in enumerate(cache_files):
     print "%i / %i" %(ii+1, len(cache_files))
     # parse the cache file arguments
     cache_file_arg = cache_file_arg.split(':')
     if len(cache_file_arg) == 1:
         cache_file = cache_file_arg[0]
-        label = color = approx = None
+        label = color = linestyle = approx = None
         weight_function = 'uniform'
     elif len(cache_file_arg) == 2:
         cache_file, label = cache_file_arg
-        approx = color = None
+        color = linestyle = approx = None
         weight_function = 'uniform'
     elif len(cache_file_arg) == 3:
         cache_file, label, color = cache_file_arg
-        approx = None
+        linestyle = approx = None
         weight_function = 'uniform'
     elif len(cache_file_arg) == 4:
-        cache_file, label, color, weight_function = cache_file_arg
+        cache_file, label, color, linestyle = cache_file_arg
         approx = None
+        weight_function = 'uniform'
     elif len(cache_file_arg) == 5:
-        cache_file, label, color, weight_function, approx = cache_file_arg
+        cache_file, label, color, linestyle, weight_function = cache_file_arg
+        approx = None
+    elif len(cache_file_arg) == 6:
+        cache_file, label, color, linestyle, weight_function, approx = cache_file_arg
     else:
         raise ValueError("cache file %s is not in correct format; " %(
             cache_file_arg) + "see help message")
@@ -94,6 +99,8 @@ for ii,cache_file_arg in enumerate(cache_files):
         label = None
     if color == '':
         color = None
+    if linestyle == '':
+        linestyle = None
     if weight_function == '':
         weight_function = 'uniform'
     if approx == '':
@@ -117,6 +124,7 @@ for ii,cache_file_arg in enumerate(cache_files):
     all_results.append(results)
     labels.append(label)
     colors.append(color)
+    linestyles.append(linestyle)
 
 print "plotting..."
 print "plotting"
@@ -131,7 +139,7 @@ for ii,pcube in enumerate(pcubes):
     if these_results == []:
         continue
     fig, plot_data = overlaps.plot_effectualness.plot_effectualness_cumhist(these_results,
-        labels=labels, colors=colors,
+        labels=labels, colors=colors, linestyles=linestyles,
         tmplt_label=opts.tmplt_label, inj_label=opts.inj_label,
         target_mismatch=opts.target_mismatch,
         xmin=xmin, xmax=xmax, ymin=ymin,
@@ -145,7 +153,7 @@ for ii,pcube in enumerate(pcubes):
             idx_tag = '-%i-%i' %(level_id, idx_id)
     else:
         idx_tag = ''
-    figname = '%s/plot_effectualness_cumhist%s_%s.%s' %(opts.output_dir,
+    figname = '%s/plot_effectualness_cumhist%s%s.%s' %(opts.output_dir,
         tag, idx_tag, opts.plot_type)
     fig.savefig(figname, dpi=opts.dpi, bbox_inches='tight')
     # add to the cube's list of additional plots

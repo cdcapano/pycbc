@@ -21,6 +21,7 @@ pyplot.rcParams.update({
 import math
 import numpy
 from pycbc.plot import plot_utils
+from pycbc.plot import data_utils
 
 def auto_pointsize(N):
     """
@@ -38,8 +39,8 @@ def plot_effectualness(results, xarg, xlabel, yarg, ylabel,
     ax = fig.add_subplot(111, axisbg=bkgclr)
     plot_data = {}
     plot_data['args'] = (xarg, yarg)
-    xvals = numpy.array([plot_utils.get_arg(res, xarg) for res in results])
-    yvals = numpy.array([plot_utils.get_arg(res, yarg) for res in results])
+    xvals = numpy.array([data_utils.get_arg(res, xarg) for res in results])
+    yvals = numpy.array([data_utils.get_arg(res, yarg) for res in results])
     zvals = numpy.array([res.effectualness for res in results])
 
     # if nothing to plot, just create an empty plot and return
@@ -71,6 +72,26 @@ def plot_effectualness(results, xarg, xlabel, yarg, ylabel,
     dz = (zmax - zmin)/float(nticks)
     cb = fig.colorbar(sc, cax=cax, orientation='horizontal',
         ticks=[round(zmin + (ii*dz), precision) for ii in range(nticks+1)])
+    # add a < (>) if any of the zvals are < zmin (> zmax)
+    ticklabels = [tck.get_text() for tck in cb.ax.get_xticklabels()]
+    if zvals.min() < zmin:
+        tickstr = ticklabels[0]
+        if tickstr.startswith('$'):
+            tickstr = tickstr[1:]
+            add_dollar = '$'
+        else:
+            add_dollar = ''
+        ticklabels[0] = u'%s< %s' %(add_dollar, tickstr)
+    if zvals.max() > zmax:
+        tickstr = ticklabels[-1]
+        if tickstr.startswith('$'):
+            tickstr = tickstr[1:]
+            add_dollar = '$'
+        else:
+            add_dollar = ''
+        ticklabels[-1] = u'%s> %s' %(add_dollar, tickstr)
+    if zvals.min() < zmin or zvals.max() > zmax:
+        cb.ax.set_xticklabels(ticklabels)
     if tmplt_label or inj_label:
         lbl = ' '.join([tmplt_label.strip(), inj_label.strip()])
     else:
@@ -105,8 +126,8 @@ def plot_effectualness(results, xarg, xlabel, yarg, ylabel,
             ymax = yvals.max() + y_range/20.
 
     if plot_templates:
-        xvals = [plot_utils.get_arg(tmplt, xarg) for tmplt in templates]
-        yvals = [plot_utils.get_arg(tmplt, yarg) for tmplt in templates]
+        xvals = [data_utils.get_arg(tmplt, xarg) for tmplt in templates]
+        yvals = [data_utils.get_arg(tmplt, yarg) for tmplt in templates]
         ax.scatter(xvals, yvals, edgecolors='g', c='g', marker='x', s=40,
             zorder=10)
         plot_data['templates'] = (xvals, yvals)
@@ -135,7 +156,7 @@ def plot_effectualness(results, xarg, xlabel, yarg, ylabel,
 
 
 def plot_effectualness_cumhist(results, labels=[], colors=[],
-        tmplt_label='', inj_label='',
+        linestyles=[], tmplt_label='', inj_label='',
         target_mismatch=0.97, xmin=None, xmax=None, ymin=None,
         ymax=None, logy=False, dpi=300):
 
@@ -164,10 +185,20 @@ def plot_effectualness_cumhist(results, labels=[], colors=[],
             #else:
             #    clrval = ii/float(len(result_group)-1)
             #clr = pyplot.cm.brg(clrval)
-        if clr is not None:
-            ax.plot(xvals, yvals, color=clr, linewidth=1, zorder=ii, label=lbl)
+        if linestyles != [] and linestyles[ii] is not None:
+            ls = linestyles[ii]
         else:
-            ax.plot(xvals, yvals, linewidth=1, zorder=ii, label=lbl)
+            ls = '-'
+        if clr is not None:
+            [l] = ax.plot(xvals, yvals, color=clr, ls=ls, linewidth=2, zorder=ii, label=lbl)
+        else:
+            [l] = ax.plot(xvals, yvals, ls=ls, linewidth=2, zorder=ii, label=lbl)
+        if ls == '-.':
+            # the dash-dot has weird spacing for this size figure, so adjust
+            l.set_dashes((5,3,2,3))
+        if ls == '--':
+            l.set_dashes((5,3))
+
         plot_data[lbl] = {}
         plot_data[lbl]['xvals'] = xvals
         plot_data[lbl]['yvals'] = yvals
@@ -205,7 +236,7 @@ def plot_effectualness_cumhist(results, labels=[], colors=[],
     ax.set_xlim(plt_xmin, plt_xmax)
     ax.set_ylim(plt_ymin, plt_ymax)
     
-    ax.grid(which = 'both', zorder = 0)
+    ax.grid(which='major', zorder=0)
 
     return fig, plot_data
 
@@ -261,7 +292,7 @@ def plotffcumhist(results, xarg, xlabel, target_mismatch = 0.97, xmin = None, xm
         range = (xmin, xmax)
     else:
         range = None
-    plotvals = sorted([(plot_utils.get_arg(res, xarg), res.effectualness) for res in results])
+    plotvals = sorted([(data_utils.get_arg(res, xarg), res.effectualness) for res in results])
     yvals = []
     ffs = []
     for _, ff in plotvals:
@@ -303,7 +334,7 @@ def plotffbinnedhist(results, xarg, xlabel, target_mismatch = 0.97, nbins = 50, 
         range = (xmin, xmax)
     else:
         range = None
-    plotvals = sorted([(plot_utils.get_arg(res, xarg), res.effectualness) for res in results])
+    plotvals = sorted([(data_utils.get_arg(res, xarg), res.effectualness) for res in results])
     xvals = [x for x, _ in plotvals]
     ffs = [ff for _, ff in plotvals]
     xbins = numpy.linspace(plotvals[0][0], plotvals[-1][0], num = nbins+1)
