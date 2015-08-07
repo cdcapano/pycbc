@@ -1466,7 +1466,12 @@ def checkpoint(connection, backup_dir, archive, time_now, sim_id, inj_num,
     if not backup_archive:
         backup_arxv_fn = last_bkup_arxv
         if isinstance(archive, h5py.highlevel.File):
-            arxiv_fn = archive.filename
+            try:
+                arxiv_fn = archive.filename
+            except ValueError:
+                # this can happen if the archive is already closed
+                # so we'll just set the filename to None
+                arxiv_fn = None
         else:
             arxiv_fn = None
     if not last_bkup_arxv and not backup_archive:
