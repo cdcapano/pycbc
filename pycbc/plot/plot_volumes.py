@@ -186,7 +186,7 @@ def _plot_tiles(ax, zvals, plus_errs, minus_errs, phyper_cubes,
         edgecolor = str(-clr_grayscale + 1.)
 
         # plot
-        tile = ax.fill(x, y, color=clr, edgecolor=edgecolor, linewidth=0.1,
+        tile = ax.fill(x, y, color=clr, edgecolor=edgecolor, linewidth=0.3,
             zorder=1)[0]
         # the tiles will be clickable
         if add_clickables:
