@@ -143,6 +143,11 @@ def get_injection_results(injfind_filenames,
             approxs = dict([[int(simid.split(':')[-1]), apprx] \
                 for simid, apprx in connection.cursor().execute(
                 'select simulation_id, waveform from sim_inspiral')])
+            # FIXME: tito has stored optimal SNRs to alpha1, alpha2 columns for
+            # now
+            optimal_snrs = dict([[int(simid.split(':')[-1]), (h_opt, l_opt)]
+                for simid, h_opt, l_opt in connection.cursor().execute(
+                'select simulation_id, alpha1, alpha2 from sim_inspiral')])
         # get the injection distribution information
         if load_inj_distribution:
             # we'll use the process_id retrieved from rdistrs
@@ -168,9 +173,6 @@ def get_injection_results(injfind_filenames,
             # the psuedo class so we can access its attributes directly
             thisRes.set_psuedoattr_class(thisRes.injection)
             thisRes.injection.simulation_id = injidx
-            # FIXME: add the following info to hdfinjfind files
-            if load_inj_distribution or load_vol_weights_from_inspinj:
-                thisRes.injection.approximant = approxs[injidx]
             # ensure that m1 is always > m2
             mass1 = injections['mass1'][injidx]
             mass2 = injections['mass2'][injidx]
@@ -196,6 +198,15 @@ def get_injection_results(injfind_filenames,
             thisRes.injection.inclination = injections['inclination'][injidx]
             thisRes.injection.ra = injections['longitude'][injidx]
             thisRes.injection.dec = injections['latitude'][injidx]
+            # FIXME: add the following info to hdfinjfind files
+            if load_inj_distribution or load_vol_weights_from_inspinj:
+                thisRes.injection.approximant = approxs[injidx]
+                h1params = data_utils.SnglIFOInjectionParams(ifo='H1',
+                    sigma=optimal_snrs[injidx][0] * thisRes.injection.distance)
+                l1params = data_utils.SnglIFOInjectionParams(ifo='L1',
+                    sigma=optimal_snrs[injidx][1] * thisRes.injection.distance)
+                thisRes.injection.sngl_ifos = {h1params.ifo: h1params,
+                    l1params.ifo: l1params}
             # get the injection weights
             if load_vol_weights_from_inspinj:
                 min_vol, vol_weight = get_dist_weights_from_inspinj_distr(

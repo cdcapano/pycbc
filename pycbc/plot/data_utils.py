@@ -320,7 +320,7 @@ class Result(object):
         Returns the quadrature sum of the inj_sigmas divided by the distance.
         """
         return numpy.sqrt((numpy.array([ifo.sigma \
-            for ifo in self.injection.sngl_ifos])**2.).sum()) / \
+            for ifo in self.injection.sngl_ifos.values()])**2.).sum()) / \
             self.injection.distance
 
     # some short cuts
