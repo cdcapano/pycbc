@@ -1,0 +1,17 @@
+language: python
+sudo: false
+addons:
+    apt:
+        packages:
+            - libfftw3-dev 
+            - libhdf5-serial-dev 
+            - liblapack-dev 
+            - gfortran 
+            - libgsl0-dev
+cache:
+  directories:
+    - $HOME/inst
+install:
+  - ./tools/install_travis.sh
+script:
+  - ./tools/run_travis.sh

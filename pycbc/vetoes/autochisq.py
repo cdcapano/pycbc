@@ -13,15 +13,10 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-import sys, re
-import pycbc
-from pycbc.filter import resample_to_delta_t, highpass, make_frequency_series
-from pycbc.filter import  matched_filter_core, sigmasq, sigmasq_series
-from pycbc.types import Array, TimeSeries, FrequencySeries, float32, complex64, zeros
-from pycbc.types import complex_same_precision_as,real_same_precision_as
+from pycbc.filter import make_frequency_series
+from pycbc.filter import  matched_filter_core
+from pycbc.types import Array
 import numpy as np
-from math import cos, sin, sqrt, pi, atan2, exp 
-import time
 import logging
 
 BACKEND_PREFIX="pycbc.vetoes.autochisq_"
@@ -247,8 +242,8 @@ class SingleDetAutoChisq(object):
                     Pt = Pt * (1./ Pt[0])
                     self._autocor = Array(Pt, copy=True)
                 else:
-                    Pt, _Ptilde, P_norm = matched_filter_core(htilde,
-                              htilde.conj(), psd=psd,
+                    Pt, _Ptilde, P_norm = matched_filter_core(htilde.conj(),
+                              htilde, psd=psd,
                               low_frequency_cutoff=low_frequency_cutoff,
                               high_frequency_cutoff=high_frequency_cutoff)
 

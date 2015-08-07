@@ -26,6 +26,35 @@
 
 """
 import subprocess, os, sys, tempfile
+import logging
+import signal
+
+
+def init_logging(verbose=False):
+    """
+    Common utility for setting up logging in PyCBC. Installs a signal handler
+    such that verbosity can be activated at run-time by sending a SIGUSR1 to
+    the process.
+    """
+    def sig_handler(signum, frame):
+        logger = logging.getLogger()
+        log_level = logger.level
+        if log_level == logging.DEBUG:
+            log_level = logging.WARN
+        else:
+            log_level = logging.DEBUG
+        logging.warn('Got signal %d, setting log level to %d',
+                     signum, log_level)
+        logger.setLevel(log_level)
+
+    signal.signal(signal.SIGUSR1, sig_handler)
+
+    if verbose:
+        initial_level = logging.DEBUG
+    else:
+        initial_level = logging.WARN
+    logging.basicConfig(format='%(asctime)s %(message)s', level=initial_level)
+
 
 # Check for optional components of the PyCBC Package
 try:
@@ -44,21 +73,6 @@ try:
 except ImportError:
     HAVE_CUDA=False
     
-try:
-    # This is a crude check to make sure that the driver is installed
-    try:
-        err = subprocess.call(["nvidia-smi"], stdout=open(os.devnull, 'wb'), stderr=open(os.devnull, 'wb'))
-        if err != 0:
-            raise ImportError("Cannot access 'nvidia-smi', driver may not be installed correctly")
-    except OSError:
-        pass
-
-    import pyopencl as _pyopencl
-    import pyfft.cl as _pyfftcl
-    HAVE_OPENCL=True
-except ImportError:
-    HAVE_OPENCL=False
-
 # Check for openmp suppport, currently we pressume it exists, unless on 
 # platforms (mac) that are silly and don't use the standard gcc. 
 if sys.platform == 'darwin':
@@ -88,3 +102,11 @@ _cache_dir_path = os.path.join(_tmp_dir, _cache_dir_name)
 try: os.makedirs(_cache_dir_path)
 except OSError: pass
 os.environ['PYTHONCOMPILED'] = _cache_dir_path
+
+# Check for MKL capability
+try:
+    import pycbc.fft.mkl
+    HAVE_MKL=True
+except ImportError as e:
+    print e
+    HAVE_MKL=False

@@ -24,7 +24,8 @@
 """ This modules contains functions for calculating and manipulating
 coincident triggers.
 """
-import numpy
+import numpy, logging
+from itertools import izip
 
 def timeslide_durations(start1, start2, end1, end2, timeslide_offsets):
     """ Find the coincident time for each timeslide.
@@ -103,7 +104,12 @@ def time_coincidence(t1, t2, window, slide_step=0):
     right = numpy.searchsorted(fold2, fold1 + window)
 
     idx1 = numpy.repeat(sort1, right-left)
-    idx2 = numpy.concatenate([sort2[l:r] for l,r in zip(left, right)])
+    idx2 = [sort2[l:r] for l,r in zip(left, right)]
+
+    if len(idx2) > 0:
+        idx2 = numpy.concatenate(idx2)
+    else:
+        idx2 = numpy.array([])
     
     if slide_step:
         diff = ((t1 / slide_step)[idx1] - (t2 / slide_step)[idx2])
@@ -113,4 +119,58 @@ def time_coincidence(t1, t2, window, slide_step=0):
         
     return idx1, idx2, slide
 
+
+def cluster_coincs(stat, time1, time2, timeslide_id, slide, window):
+    """Cluster coincident events for each timeslide separately, across 
+    templates, based on the ranking statistic 
+
+    Parameters
+    ----------
+    stat: numpy.ndarray
+        vector of ranking values to maximize
+    time1: numpy.ndarray
+        first time vector
+    time2: numpy.ndarray
+        second time vector
+    timeslide_id: numpy.ndarray
+        vector that determines the timeslide offset
+    slide: float
+        length of the timeslides offset interval
+    window: float
+        length to cluster over
+
+    Returns
+    -------
+    cindex: numpy.ndarray 
+        The set of indices corresponding to the surviving coincidences.
+    """
+    
+    logging.info('clustering coinc triggers over %ss window' % window)
+    
+    indices = []
+    if numpy.isfinite(slide):
+        time = (time2 + (time1 + timeslide_id * slide)) / 2
+    else:
+        time = 0.5 * (time2 + time1)
+        
+    tslide = timeslide_id.astype(numpy.float128)
+    time = time.astype(numpy.float128)
+    span = (time.max() - time.min()) + window * 10
+    time = time + span * tslide
+    
+    time_sorting = time.argsort()
+    stat = stat[time_sorting]
+    time = time[time_sorting]
+    tslide = tslide[time_sorting]
+    
+    logging.info('sorting...')
+    left = numpy.searchsorted(time, time - window)
+    right = numpy.searchsorted(time, time + window)
+    logging.info('done sorting')
+    indices = []
+    for i, (l, r) in enumerate(izip(left, right)):
+        if stat[l:r].argmax() + l == i:
+            indices += [i]
+    logging.info('done clustering coinc triggers: %s triggers remaining' % len(indices))
+    return time_sorting[numpy.array(indices)]
 

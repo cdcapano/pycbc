@@ -34,7 +34,6 @@ import os
 import ConfigParser
 import urlparse, urllib
 import logging
-from glue import segments
 from pycbc.workflow.core import File, FileList, make_analysis_dir
 from pycbc.workflow.jobsetup import select_tmpltbank_class, select_matchedfilter_class, sngl_ifo_job_setup
 
@@ -214,7 +213,7 @@ def setup_tmpltbank_dax_generated(workflow, science_segs, datafind_outs,
         else:
             link_job_instance = None
         sngl_ifo_job_setup(workflow, ifo, tmplt_banks, job_instance, 
-                           science_segs[ifo], datafind_outs, output_dir,
+                           science_segs[ifo], datafind_outs,
                            link_job_instance=link_job_instance, 
                            allow_overlap=True,
                            compatibility_mode=compatibility_mode)

@@ -7,6 +7,7 @@ from glue import segments
 import os.path
 from pycbc.future import numpy
 from pycbc.events import indices_within_segments as veto_indices
+import pycbc.version
 
 # dummy class needed for loading LIGOLW files
 class LIGOLWContentHandler(ligolw.LIGOLWContentHandler):
@@ -46,9 +47,12 @@ def xml_to_hdf(table, hdf_file, hdf_key, columns):
                                         dtype=numpy.float32))
      
 parser = argparse.ArgumentParser()
+parser.add_argument('--version', action='version', version=pycbc.version.git_verbose_msg)
 parser.add_argument('--trigger-files', nargs='+')
 parser.add_argument('--injection-files', nargs='+')
 parser.add_argument('--veto-file')
+parser.add_argument('--segment-name', default=None, type=str,
+                    help='Optional, name of segment list to use for vetoes')
 parser.add_argument('--injection-window', type=float)
 parser.add_argument('--verbose', action='count')
 parser.add_argument('--output-file')
@@ -66,14 +70,16 @@ for trigger_file, injection_file in zip(args.trigger_files, args.injection_files
 
     template_id = f['foreground/template_id'][:]
     stat = f['foreground/stat'][:]
+    ifar_exc = f['foreground/ifar_exc'][:]
     ifar = f['foreground/ifar'][:]
     fap = f['foreground/fap'][:]
+    fap_exc = f['foreground/fap_exc'][:]
     time1 = f['foreground/time1'][:]
     time2 = f['foreground/time2'][:]
     trig1 = f['foreground/trigger_id1'][:]
     trig2 = f['foreground/trigger_id2'][:]
-    ana_start = f['foreground/analyzed_start'][:]
-    ana_end = f['foreground/analyzed_end'][:]
+    ana_start = f['segments/coinc/start'][:]
+    ana_end = f['segments/coinc/end'][:]
     time = 0.5 * (time1 + time2)
     time_sorting = time.argsort()
 
@@ -106,9 +112,10 @@ for trigger_file, injection_file in zip(args.trigger_files, args.injection_files
     logging.info('Found: %s, Missed: %s' % (len(found_within_time), len(missed_within_time)))
 
     logging.info('Removing injections in vetoed time')
-    i1, v1 = veto_indices(inj_time, 'H1', [args.veto_file])
-    i2, v2 = veto_indices(inj_time, 'L1', [args.veto_file])
-    
+    i1, v1 = veto_indices(inj_time, [args.veto_file], ifo='H1', 
+                                    segment_name=args.segment_name)
+    i2, v2 = veto_indices(inj_time, [args.veto_file], ifo='L1', 
+                                     segment_name=args.segment_name)
     vi = numpy.concatenate([i1, i2])
 
     found_after_vetoes = numpy.delete(found_within_time, numpy.where(numpy.in1d(found_within_time, vi))[0])
@@ -128,6 +135,7 @@ for trigger_file, injection_file in zip(args.trigger_files, args.injection_files
     hdf_append(fo, 'injections/end_time', inj_time)
     fo.attrs['detector_1'] = f.attrs['detector_1']
     fo.attrs['detector_2'] = f.attrs['detector_2']
+    fo.attrs['foreground_time_exc'] = f.attrs['foreground_time_exc']
     hdf_append(fo, 'missed/all', missed + injection_index)
     hdf_append(fo, 'missed/within_analysis', missed_within_time + injection_index)
     hdf_append(fo, 'missed/after_vetoes', missed_after_vetoes + injection_index)
@@ -140,7 +148,9 @@ for trigger_file, injection_file in zip(args.trigger_files, args.injection_files
     hdf_append(fo, 'found/trigger_id1', trig1[time_sorting][found_fore])
     hdf_append(fo, 'found/trigger_id2', trig2[time_sorting][found_fore])
     hdf_append(fo, 'found/ifar', ifar[time_sorting][found_fore])
+    hdf_append(fo, 'found/ifar_exc', ifar_exc[time_sorting][found_fore])
     hdf_append(fo, 'found/fap', fap[time_sorting][found_fore])
+    hdf_append(fo, 'found/fap_exc', fap_exc[time_sorting][found_fore])
 
     hdf_append(fo, 'found_after_vetoes/template_id', template_id[time_sorting][found_fore_v])
     hdf_append(fo, 'found_after_vetoes/injection_index', found_after_vetoes + injection_index)
@@ -150,6 +160,7 @@ for trigger_file, injection_file in zip(args.trigger_files, args.injection_files
     hdf_append(fo, 'found_after_vetoes/trigger_id1', trig1[time_sorting][found_fore_v])
     hdf_append(fo, 'found_after_vetoes/trigger_id2', trig2[time_sorting][found_fore_v])
     hdf_append(fo, 'found_after_vetoes/ifar', ifar[time_sorting][found_fore_v])
+    hdf_append(fo, 'found_after_vetoes/ifar_exc', ifar_exc[time_sorting][found_fore_v])
     hdf_append(fo, 'found_after_vetoes/fap', fap[time_sorting][found_fore_v])
-    
+    hdf_append(fo, 'found_after_vetoes/fap_exc', fap_exc[time_sorting][found_fore_v])    
     injection_index += len(sim_table)

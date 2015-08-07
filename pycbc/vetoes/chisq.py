@@ -23,8 +23,8 @@
 #
 import numpy, logging, math, pycbc.fft
 
-from pycbc.types import Array, zeros, real_same_precision_as, TimeSeries, complex_same_precision_as, FrequencySeries
-from pycbc.filter import sigmasq_series, make_frequency_series, sigmasq, matched_filter_core, get_cutoff_indices
+from pycbc.types import zeros, real_same_precision_as, TimeSeries, complex_same_precision_as
+from pycbc.filter import sigmasq_series, make_frequency_series, matched_filter_core, get_cutoff_indices
 from pycbc.scheme import schemed
 
 BACKEND_PREFIX="pycbc.vetoes.chisq_"
@@ -112,7 +112,7 @@ def power_chisq_at_points_from_precomputed(corr, snr, snr_norm, bins, indices):
     ----------
     corr: FrequencySeries
         The product of the template and data in the frequency domain.
-    snr: Array
+    snr: numpy.ndarray
         The unnormalized array of snr values at only the selected points in `indices`.
     snr_norm: float
         The normalization of the snr (EXPLAINME : refer to Findchirp paper?)
@@ -128,11 +128,9 @@ def power_chisq_at_points_from_precomputed(corr, snr, snr_norm, bins, indices):
         An array containing only the chisq at the selected points.
     """
     logging.info('doing fast point chisq')
-    snr = Array(snr, copy=False)
     num_bins = len(bins) - 1
-
     chisq = shift_sum(corr, indices, bins)
-    return (chisq * num_bins - snr.squared_norm()) * (snr_norm ** 2.0)
+    return (chisq * num_bins - (snr.conj() * snr).real) * (snr_norm ** 2.0)
 
 _q_l = None
 _qtilde_l = None
@@ -206,6 +204,7 @@ def power_chisq_from_precomputed(corr, snr, snr_norm, bins, indices=None):
     else:
         return TimeSeries(chisq, delta_t=snr.delta_t, epoch=snr.start_time, copy=False)
 
+
 def fastest_power_chisq_at_points(corr, snr, snrv, snr_norm, bins, indices):
     """Calculate the chisq values for only selected points.
 
@@ -241,6 +240,7 @@ def fastest_power_chisq_at_points(corr, snr, snrv, snr_norm, bins, indices):
         # We have a lot of points so it is faster to use the fourier transform
         return power_chisq_from_precomputed(corr, snr, snr_norm, bins,
                                             indices=indices)
+
 
 def power_chisq(template, data, num_bins, psd,
                 low_frequency_cutoff=None, high_frequency_cutoff=None):
@@ -302,10 +302,10 @@ class SingleDetPowerChisq(object):
         safe_dict.update(row.__dict__)
         safe_dict.update(math.__dict__)
         return eval(arg, {"__builtins__":None}, safe_dict)
-        
+
     def cached_chisq_bins(self, template, psd):
-        key = (id(template.params), id(psd))    
-        if key not in self._bin_cache:        
+        key = (id(template.params), id(psd))
+        if key not in self._bin_cache:
             num_bins = int(self.parse_option(template, self.num_bins))
 
             if hasattr(psd, 'sigmasq_vec') and template.approximant in psd.sigmasq_vec:
@@ -318,7 +318,7 @@ class SingleDetPowerChisq(object):
                 logging.info("...Calculating power chisq bins")
                 bins = power_chisq_bins(template, num_bins, psd, template.f_lower)
             self._bin_cache[key] = bins
-                
+
         return self._bin_cache[key]
 
     def values(self, corr, snr, snrv, snr_norm, psd, indices, template):
@@ -330,12 +330,13 @@ class SingleDetPowerChisq(object):
             Chisq values, one for each sample index
 
         chisq_dof: Array
-            Number of statistical degrees of freedom for the chisq test 
+            Number of statistical degrees of freedom for the chisq test
             in the given template
         """
+
         if self.do:
             logging.info("...Doing power chisq")
-            
+
             num_above = len(indices)
             if self.snr_threshold:
                 above = abs(snrv * snr_norm) > self.snr_threshold
@@ -348,18 +349,18 @@ class SingleDetPowerChisq(object):
             else:
                 above_indices = indices
                 above_snrv = snrv
-                
-            if num_above > 0:   
-                bins = self.cached_chisq_bins(template, psd)  
-                dof = (len(bins) - 1) * 2 - 2   
+
+            if num_above > 0:
+                bins = self.cached_chisq_bins(template, psd)
+                dof = (len(bins) - 1) * 2 - 2
                 chisq = fastest_power_chisq_at_points(corr, snr, above_snrv, snr_norm, bins, above_indices)
-            
+
             if self.snr_threshold:
                 if num_above > 0:
                     rchisq[above] = chisq
             else:
                 rchisq = chisq
 
-            return rchisq, dof * numpy.ones_like(indices) 
+            return rchisq, numpy.repeat(dof, len(indices))# dof * numpy.ones_like(indices)
         else:
             return None, None

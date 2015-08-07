@@ -16,13 +16,12 @@
 """
 This modules contains functions for reading in data from frame files or caches
 """
-import lalframe
+import lalframe, logging
 import lal
 import numpy
 import os.path
 from pycbc.types import TimeSeries
-import copy
-from glue import datafind
+
 
 # map LAL series types to corresponding functions and Numpy types
 _fr_type_map = {
@@ -184,7 +183,10 @@ def datafind_connection(server=None):
     connection
         The open connection to the datafind server.
     """
-    
+    # import inside function to avoid adding M2Crypto
+    # as a general PyCBC requirement
+    import glue.datafind
+
     if server:
         datafind_server = server
     else:
@@ -199,7 +201,7 @@ def datafind_connection(server=None):
 
     # verify authentication options
     if not datafind_server.endswith("80"):
-        cert_file, key_file = datafind.find_credential()
+        cert_file, key_file = glue.datafind.find_credential()
     else:
         cert_file, key_file = None, None
 
@@ -212,12 +214,11 @@ def datafind_connection(server=None):
 
     # Open connection to the datafind server
     if cert_file and key_file:
-        connection = datafind.GWDataFindHTTPSConnection(host=server,
-                                                        port=port, 
-                                                        cert_file=cert_file, 
-                                                        key_file=key_file)
+        connection = glue.datafind.GWDataFindHTTPSConnection(
+                host=server, port=port, cert_file=cert_file, key_file=key_file)
     else:
-        connection = datafind.GWDataFindHTTPConnection(host=server, port=port)
+        connection = glue.datafind.GWDataFindHTTPConnection(
+                host=server, port=port)
     return connection
     
 def frame_paths(frame_type, start_time, end_time, server=None):
@@ -283,7 +284,9 @@ def query_and_read_frame(frame_type, channels, start_time, end_time):
     >>> ts = query_and_read_frame('H1_LDAS_C02_L2', 'H1:LDAS-STRAIN', 
     >>>                               968995968, 968995968+2048)
     """
+    logging.info('querying datafind server')
     paths = frame_paths(frame_type, start_time, end_time)
+    logging.info('found files: %s' % (' '.join(paths)))
     return read_frame(paths, channels, 
                       start_time=start_time, 
                       end_time=end_time)

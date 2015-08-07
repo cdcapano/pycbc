@@ -18,38 +18,66 @@
 """
 setup.py file for PyCBC package
 """
-import os
-import fnmatch
-import sys
-import subprocess
-import shutil
+import os, fnmatch, sys, subprocess, shutil
 from trace import fullmodname
+
+try:
+    from setuptools.command.install import install as _install
+    from setuptools.command.install_egg_info import install_egg_info as egg_info
+    USE_SETUPTOOLS = True
+except:
+    from distutils.command.install import install as _install
+    USE_SETUPTOOLS = False
+
+from distutils.errors import DistutilsError
 from distutils.core import setup, Command, Extension
 from distutils.command.clean import clean as _clean
-from distutils.command.install import install as _install
-from distutils.command.build import build as _build
-from numpy import get_include as np_get_include
 from pycbc.setuputils import pkg_config
 from distutils.file_util import write_file
+from distutils.version import LooseVersion
 
-# Now use the above function to set up our extension library's needs:
-ext_libraries, ext_library_dirs, ext_include_dirs = pkg_config(["lal", "lalsimulation", "lalinspiral"])
+try:
+    import numpy.version
+    if LooseVersion(numpy.version.version) < LooseVersion("1.6.4"):
+        print (" Numpy >= 1.6.4 is required for pycbc dependencies. \n"
+              " We found version %s already installed. Please update \n"
+              " to a more recent version and then retry PyCBC  \n"
+              " installation. \n"
+              " \n"
+              " Using pip: [pip install 'numpy>=1.6.4' --upgrade --user] \n"
+              "" % numpy.version.version)
+        exit(1)
+except ImportError:
+    pass
+                           
+requires = ['lal.lal', 'lalsimulation.lalsimulation', 'glue', 'pylal']
+setup_requires = []
+install_requires =  setup_requires + ['Mako>=1.0.1',
+                      'argparse>=1.3.0',
+                      'decorator>=3.4.2',
+                      'scipy>=0.13.0',
+                      'unittest2',
+                      'matplotlib>=1.3.1',
+                      'numpy>=1.6.4',
+                      'pillow',
+                      'h5py>=2.5',
+                      'jinja2',
+                      'mpld3>=0.3git',
+                      'pycbc-pylal>=0.9.3',
+                      'pycbc-glue>=0.9.4',
+                      ]
+links = ['https://github.com/ahnitz/mpld3/tarball/master#egg=mpld3-0.3git']
 
-requires = ['lal.lal', 'lalinspiral.lalinspiral', 'lalsimulation.lalsimulation']
-requires +=  ['numpy', 'scipy', 'glue', 'argparse']
+#FIXME Remove me when we bump to h5py > 2.5
+try:
+    import h5py
+except ImportError:
+    setup_requires.append('cython')
+else:
+    import h5py.version
+    if h5py.version.version < '2.5':
+        setup_requires.append('cython')
 
-def find_package_data(dirname):
-    def find_paths(dirname):
-        items = []
-        for fname in os.listdir(dirname):
-            path = os.path.join(dirname, fname)
-            if os.path.isdir(path):
-                items += find_paths(path)
-            elif not path.endswith(".py") and not path.endswith(".pyc"):
-                items.append(path)
-        return items
-    items = find_paths(dirname)
-    return [os.path.relpath(path, dirname) for path in items]
 
 def find_package_data(dirname):
     def find_paths(dirname):
@@ -86,13 +114,6 @@ class clean(_clean):
 
 class install(_install):
     def run(self):
-        # Check for some of the required python packages
-        for ppkg in requires:
-            try:
-                __import__(ppkg)
-            except:
-                raise RuntimeError('Failed to locate required package: %s  ' % ppkg)
-
         etcdirectory = os.path.join(self.install_data, 'etc')
         if not os.path.exists(etcdirectory):
             os.makedirs(etcdirectory)
@@ -109,18 +130,13 @@ class install(_install):
         print >> env_file, "export PYTHONPATH"
         print >> env_file, "export PATH"
         env_file.close()
+
         _install.run(self)
 
+def do_setup(*args):
+    return True
 
-# Override build order, so swig is handled first.
-class build(_build):
-    # override order of build sub-commands to work around
-    # <http://bugs.python.org/issue7562>
-    sub_commands = [ ('build_py', _build.has_pure_modules),
-                     ('build_scripts', _build.has_scripts) ]
-
-    def run(self):
-        _build.run(self)
+_install._called_from_setup=do_setup
 
 test_results = []
 # Run all of the testing scripts
@@ -173,13 +189,10 @@ class test(Command):
     def has_cuda(self):
         import pycbc
         return pycbc.HAVE_CUDA
-    def has_opencl(self):
-        import pycbc
-        return pycbc.HAVE_OPENCL
 
-    sub_commands = [('test_cpu',None),('test_cuda',has_cuda),('test_opencl',has_opencl)]
+    sub_commands = [('test_cpu',None),('test_cuda',has_cuda)]
     user_options = []
-    description = "run the available tests for all compute schemes (cpu,cuda,opencl)"
+    description = "run the available tests for all compute schemes (cpu, cuda)"
     def initialize_options(self):
         pass
     def finalize_options(self):
@@ -200,40 +213,76 @@ class test_cuda(TestBase):
         TestBase.initialize_options(self)
         self.scheme = 'cuda'
 
-class test_opencl(TestBase):
-    description = "run OpenCL tests"
-    def initialize_options(self):
-        TestBase.initialize_options(self)
-        self.scheme = 'opencl'
-
 # write versioning info
-def generate_version_info():
+def get_version_info():
     """Get VCS info and write version info to version.py
     """
     from pycbc import _version_helper
 
-    vcs_info = _version_helper.generate_git_version_info()
+    # If this is a pycbc git repo always populate versoin information using GIT
+    try:
+        vcs_info = _version_helper.generate_git_version_info()
 
-    with open('pycbc/version.py', 'w') as f:
-        f.write("# Generated by setup.py for PyCBC on %s.\n\n"
-                % vcs_info.build_date)
+        with open('pycbc/version.py', 'w') as f:
+            f.write("# Generated by setup.py for PyCBC on %s.\n\n"
+                    % vcs_info.build_date)
 
-        # print general info
-        f.write('version = \'%s\'\n' % vcs_info.version)
-        f.write('date = \'%s\'\n' % vcs_info.date)
-        f.write('release = %s\n' % vcs_info.release)
+            # print general info
+            f.write('version = \'%s\'\n' % vcs_info.version)
+            f.write('date = \'%s\'\n' % vcs_info.date)
+            f.write('release = %s\n' % vcs_info.release)
 
-        # print git info
-        f.write('\ngit_hash = \'%s\'\n' % vcs_info.hash)
-        f.write('git_branch = \'%s\'\n' % vcs_info.branch)
-        f.write('git_tag = \'%s\'\n' % vcs_info.tag)
-        f.write('git_author = \'%s\'\n' % vcs_info.author)
-        f.write('git_committer = \'%s\'\n' % vcs_info.committer)
-        f.write('git_status = \'%s\'\n' % vcs_info.status)
-        f.write('git_builder = \'%s\'\n' % vcs_info.builder)
-        f.write('git_build_date = \'%s\'\n' % vcs_info.build_date)
-        f.write('git_verbose_msg = """Branch: %s\nTag: %s\nId: %s\nBuilder: %s\nBuild date: %s\nRepository status is %s"""' %(vcs_info.branch,vcs_info.tag,vcs_info.hash,vcs_info.builder,vcs_info.build_date,vcs_info.status) )
-    return vcs_info.version
+            # print git info
+            f.write('\ngit_hash = \'%s\'\n' % vcs_info.hash)
+            f.write('git_branch = \'%s\'\n' % vcs_info.branch)
+            f.write('git_tag = \'%s\'\n' % vcs_info.tag)
+            f.write('git_author = \'%s\'\n' % vcs_info.author)
+            f.write('git_committer = \'%s\'\n' % vcs_info.committer)
+            f.write('git_status = \'%s\'\n' % vcs_info.status)
+            f.write('git_builder = \'%s\'\n' % vcs_info.builder)
+            f.write('git_build_date = \'%s\'\n' % vcs_info.build_date)
+            f.write('git_verbose_msg = """Branch: %s\n'
+                    'Tag: %s\n'
+                    'Id: %s\n'
+                    'Builder: %s\n'
+                    'Build date: %s\n'
+                    'Repository status is %s"""' %(vcs_info.branch, 
+                                                   vcs_info.tag,
+                                                   vcs_info.hash,
+                                                   vcs_info.builder,
+                                                   vcs_info.build_date,
+                                                   vcs_info.status))
+            version = vcs_info.version
+            
+    # If this is a release or another kind of source distribution of PyCBC
+    except:
+        version = '1.2.dev0'
+        release = 'False'
+        date = hash = branch = tag = author = committer = status = builder = build_date = ''
+    
+        with open('pycbc/version.py', 'w') as f:
+            f.write("# Generated by setup.py for PyCBC.\n\n")
+            
+            # print general infov
+            f.write('version = \'%s\'\n' % version)
+            f.write('date = \'%s\'\n' % date)
+            f.write('release = %s\n' % release)
+
+            # print git info
+            f.write('\ngit_hash = \'%s\'\n' % hash)
+            f.write('git_branch = \'%s\'\n' % branch)
+            f.write('git_tag = \'%s\'\n' % tag)
+            f.write('git_author = \'%s\'\n' % author)
+            f.write('git_committer = \'%s\'\n' % committer)
+            f.write('git_status = \'%s\'\n' % status)
+            f.write('git_builder = \'%s\'\n' % builder)
+            f.write('git_build_date = \'%s\'\n' % build_date)
+            f.write('git_verbose_msg = """Version: %s Release: %s \n'
+                    ' """' % (version, release))
+        
+    from pycbc import version
+    version = version.version
+    return version
 
 class build_docs(Command):
     user_options = []
@@ -243,7 +292,8 @@ class build_docs(Command):
     def finalize_options(self):
         pass
     def run(self):
-        subprocess.check_call("cd docs; cp conf_std.py conf.py; sphinx-apidoc -o ./ -f -A 'PyCBC dev team' -V '0.1' ../pycbc && make html",
+        subprocess.check_call("cd docs; cp conf_std.py conf.py; sphinx-apidoc "
+                              " -o ./ -f -A 'PyCBC dev team' -V '0.1' ../pycbc && make html",
                             stderr=subprocess.STDOUT, shell=True)
 
 class build_docs_test(Command):
@@ -254,28 +304,38 @@ class build_docs_test(Command):
     def finalize_options(self):
         pass
     def run(self):
-        subprocess.check_call("cd docs; cp conf_test.py conf.py; sphinx-apidoc -o ./ -f -A 'PyCBC dev team' -V '0.1' ../pycbc && make html",
+        subprocess.check_call("cd docs; cp conf_test.py conf.py; sphinx-apidoc "
+                              " -o ./ -f -A 'PyCBC dev team' -V '0.1' ../pycbc && make html",
                             stderr=subprocess.STDOUT, shell=True)                            
-                           
+
+cmdclass = { 'test'  : test,
+             'build_docs' : build_docs,
+             'build_docs_test' : build_docs_test,
+             'install' : install,
+             'test_cpu':test_cpu,
+             'test_cuda':test_cuda,
+             'clean' : clean,
+            }
+            
+extras_require = {'cuda': ['pycuda>=2015.1', 'scikits.cuda']}
+
 # do the actual work of building the package
-VERSION = generate_version_info()
+VERSION = get_version_info()
 
 setup (
     name = 'PyCBC',
     version = VERSION,
     description = 'Gravitational wave CBC analysis toolkit',
     author = 'Ligo Virgo Collaboration - PyCBC team',
-    url = 'https://ldas-jobs.ligo.caltech.edu/~cbc/docs/pycbc/',
-    cmdclass = { 'test'  : test,
-                 'build_docs' : build_docs,
-                 'build_docs_test' : build_docs_test,
-                 'install' : install,
-                 'test_cpu':test_cpu,
-                 'test_cuda':test_cuda,
-                 'test_opencl':test_opencl,
-                 'clean' : clean,
-                 'build' : build},
-    requires = requires,
+    author_email = 'alex.nitz@ligo.org',
+    url = 'https://github.com/ligo-cbc/pycbc',
+    download_url = 'https://github.com/ligo-cbc/pycbc/tarball/v%s' % VERSION,
+    keywords = ['ligo', 'physics', 'gravity', 'signal processing'],
+    cmdclass = cmdclass,
+    setup_requires = setup_requires,
+    extras_require = extras_require,
+    install_requires = install_requires,
+    dependency_links = links,
     scripts  = [
                'bin/lalapps/lalapps_inspiral_ahope',
                'bin/lalapps/lalapps_tmpltbank_ahope',
@@ -309,11 +369,9 @@ setup (
                'bin/gstlal/pycbc_gen_ranking_data',
                'bin/gstlal/pycbc_pickle_horizon_distances',
                'bin/pycbc_make_coinc_workflow',
-               'bin/pycbc_make_daily_workflow',
                'bin/pycbc_make_html_page',
                'bin/pycbc_ligolw_find_playground',
                'bin/hdfcoinc/pycbc_make_hdf_coinc_workflow',
-               'bin/pycbc_basic_pegasus_plan',
                'bin/pycbc_inj',
                'bin/pycbc_randr_by_snr',
                'bin/pycbc_overlaps',
@@ -328,6 +386,7 @@ setup (
                'bin/pycbc_plot_sensitivity',
                'bin/pycbc_plot_volumes',
                'bin/pycbc_plot_gain',
+               'bin/hdfcoinc/pycbc_calculate_psd',
                'bin/pycbc_optimal_snr',
                'bin/pycbc_fit_sngl_trigs',
                'bin/hdfcoinc/pycbc_coinc_mergetrigs',
@@ -335,15 +394,22 @@ setup (
                'bin/hdfcoinc/pycbc_coinc_bank2hdf',
                'bin/hdfcoinc/pycbc_coinc_trig2hdf',
                'bin/hdfcoinc/pycbc_coinc_statmap',
+               'bin/hdfcoinc/pycbc_coinc_statmap_inj',
                'bin/hdfcoinc/pycbc_page_foreground',
                'bin/hdfcoinc/pycbc_page_foundmissed',
+               'bin/hdfcoinc/pycbc_page_ifar',
                'bin/hdfcoinc/pycbc_page_snrifar',
                'bin/hdfcoinc/pycbc_page_sensitivity',
                'bin/hdfcoinc/pycbc_page_banktriggerrate',
                'bin/hdfcoinc/pycbc_coinc_hdfinjfind',
                'bin/hdfcoinc/pycbc_page_snrchi',
-               'bin/hdfcoinc/pycbc_page_inspiralrange',
                'bin/hdfcoinc/pycbc_page_segments',
+               'bin/hdfcoinc/pycbc_page_segtable',
+               'bin/hdfcoinc/pycbc_page_segplot',
+               'bin/hdfcoinc/pycbc_plot_psd_file',
+               'bin/hdfcoinc/pycbc_plot_range',
+               'bin/hdfcoinc/pycbc_foreground_censor',
+               'bin/hdfcoinc/pycbc_plot_hist',
                'bin/sngl/pycbc_ligolw_cluster',
                'bin/sngl/pycbc_plot_bank',
                'bin/sngl/pycbc_plot_glitchgram',
@@ -354,10 +420,12 @@ setup (
                'bin/hdfcoinc/pycbc_page_injtable',
                'bin/pycbc_submit_dax',
                'bin/pycbc_submit_dax_stampede',
-               'bin/pycbc_submit_dax_stampede_devel',
                'bin/hdfcoinc/pycbc_page_coinc_snrchi',
                'bin/hdfcoinc/pycbc_stat_dtphase',
                'bin/hdfcoinc/pycbc_plot_singles_vs_params',
+               'bin/hdfcoinc/pycbc_plot_singles_timefreq',
+               'bin/mvsc/pycbc_mvsc_get_features',
+               'bin/hdfcoinc/pycbc_plot_background_coincs',
                ],
     packages = [
                'pycbc',
@@ -381,6 +449,7 @@ setup (
                'pycbc.io',
                ],
      package_data = {'pycbc.workflow': find_package_data('pycbc/workflow'), 
-	             'pycbc.results': find_package_data('pycbc/results')},
+	             'pycbc.results': find_package_data('pycbc/results'),
+                     'pycbc.tmpltbank': find_package_data('pycbc/tmpltbank')},
 )
 
