@@ -363,7 +363,7 @@ def build_lookup_table(input_array):
                 for ii in range(len(unique_vals))
                 ])
 
-def join_arrays(this_array, other_array, map_field, expand_field_name,
+def join_arrays(this_array, other_array, map_field, expand_field_name=None,
         other_map_field=None, get_fields=None, map_indices=None):
     """
 
@@ -411,7 +411,14 @@ def join_arrays(this_array, other_array, map_field, expand_field_name,
     if other_map_field is None:
         other_map_field = map_field
     # strip off the expand field in this_array, if is in the array
-    new_array = this_array.without_fields(expand_field_name)
+    if expand_field_name is not None:
+        new_array = this_array.without_fields(expand_field_name)
+    # otherwise, strip off the map field, if it has the same name as the map
+    # field in the other array
+    elif map_field == other_map_field:
+        new_array = this_array.without_fields(map_field)
+    else:
+        new_array = this_array
     # get a view of the other_array with just the desired fields;
     # note: this will also give a clean lookup table
     if isinstance(get_fields, str) or isinstance(get_fields, unicode):
@@ -446,8 +453,12 @@ def join_arrays(this_array, other_array, map_field, expand_field_name,
     # need to know the maximum size of the subarray
     maxlen = numpy.array([x.size for x in expanded_info]).max()
     # convert to LSCArray
-    expanded_info = LSCArray.from_records(expanded_info,
-        dtype=[(expand_field_name, other_dtdescr, maxlen)])
+    if expand_field_name is not None:
+        expanded_info = LSCArray.from_records(expanded_info,
+            dtype=[(expand_field_name, other_dtdescr, maxlen)])
+    else:
+        expanded_info = LSCArray.from_records(expanded_info,
+            dtype=[(name, dt, maxlen) for (name,dt) in other_dtdescr])
     # add to this_array
     return new_array.add_fields(expanded_info)
 
@@ -821,6 +832,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
                 for alias,name in self.aliases.items()})
             safe_dict = {}
             safe_dict.update(item_dict)
+            # add self's funciton dict
             safe_dict.update(numpy.__dict__)
             return eval(item, {"__builtins__": None}, safe_dict)
 
@@ -1134,7 +1146,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         super(LSCArray, self).sort(*args, **kwargs)
 
 
-    def join(self, other, map_field, expand_field_name,
+    def join(self, other, map_field, expand_field_name=None,
             other_map_field=None, get_fields=None, map_indices=None):
         """
         Join another array to this array such that:
@@ -1170,7 +1182,8 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             A copy of this array with the mapped information added to
             ``expand_field_name``.
         """
-        return join_arrays(self, other, map_field, expand_field_name,
+        return join_arrays(self, other, map_field,
+            expand_field_name=expand_field_name,
             other_map_field=other_map_field, get_fields=get_fields,
             map_indices=map_indices)
 
@@ -1361,7 +1374,6 @@ class Waveform(_LSCArrayWithDefaults):
         return numpy.sqrt((self.s2**2).sum(axis=1))
 
 
-
 class TmpltInspiral(Waveform):
     """
     Subclasses Waveform, with default name ``tmplt_inspiral``. Adds attributes
@@ -1523,10 +1535,7 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
         # ids
         'process_id': int,
         'event_id': int,
-        # template parameters
-        'template': {
-            'template_id': int,
-            }.items(),
+        'template_id': int,
         }
 
     @classmethod
@@ -1556,7 +1565,7 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
 
 
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
-            selfs_map_field='template.template_id', tmplts_map_field='template_id'):
+            selfs_map_field='template_id', tmplts_map_field='template_id'):
         """
         Given an array of templates, replaces the template column with a
         sub-array of the template data. This is done by getting all rows in
@@ -1584,7 +1593,7 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
             A copy of this array with the template sub-array containing all
             of the fields specified by ``get_fields``.
         """
-        return self.join(tmplt_inspiral_array, selfs_map_field, 'template',
+        return self.join(tmplt_inspiral_array, selfs_map_field,
             other_map_field=tmplts_map_field, get_fields=get_fields)
 
 
