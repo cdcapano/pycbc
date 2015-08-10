@@ -15,7 +15,38 @@ from glue.ligolw import types as ligolw_types
 # add ligolw_types to numpy typeDict
 numpy.typeDict.update(ligolw_types.ToNumPyType)
 
-# set defaults
+# Annoyingly, numpy has no way to store NaNs in an integer field to indicate
+# the equivalent of None. This can be problematic for fields that store ids:
+# if an array has an id field with value 0, it isn't clear if this is because
+# the id is the first element, or if no id was set. To clear up the ambiguity,
+# we define here an integer to indicate 'id not set'. 
+ID_NOT_SET = -1
+EMPTY_OBJECT = None
+
+def set_default_empty(array):
+    if array.dtype.names is None:
+        # scalar dtype, just set
+        if array.dtype.str[1] == 'i':
+            # integer, set to ID_NOT_SET
+            array[:] = ID_NOT_SET
+        elif array.dtype.str[1] == 'O':
+            # object, set to EMPTY_OBJECT
+            array[:] = EMPTY_OBJECT
+    else:
+        for name in array.dtype.names:
+            set_default_empty(array[name])
+
+def default_empty(shape, dtype):
+    """
+    Numpy's empty array can have random values in it. To prevent that, we
+    define here a default emtpy array. This default empty is a numpy.zeros
+    array, except that objects are set to None, and all ints to ID_NOT_SET.
+    """
+    default = numpy.zeros(shape, dtype=dtype)
+    set_default_empty(default)
+    return default
+
+# set default data types
 _default_types_status = {
     'default_strlen': 50,
     'ilwd_as_int': True,
@@ -390,13 +421,15 @@ def join_arrays(this_array, other_array, map_field, expand_field_name,
     # ensure the map field is included
     if other_map_field not in get_fields:
         get_fields.append(other_map_field)
-    other_array = other_array.with_fields(get_fields, copy=False)
+    # XXX: I've found that copying other array is necessary here, otherwise
+    # I get corrupted values in expanded_info, below.
+    other_array = other_array.with_fields(get_fields, copy=True)
     # set an empty default in case one or map values in this array is not
     # found in other array
     # Note: for some strange reason, running dtype.descr will yield void fields
     # if with_fields is not a copy, so we'll strip those out
     other_dtdescr = get_dtype_descr(other_array.dtype)
-    default = numpy.zeros(1, dtype=other_dtdescr).view(
+    default = default_empty(1, dtype=other_dtdescr).view(
         type=type(other_array))
     if map_indices is not None:
         # only map rows whose indices are listed in map inidices
@@ -712,17 +745,18 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
     str_as_obj = False
     __persistent_attributes__ = ['name']
 
-    def __new__(cls, shape, name=None, zero=True, **kwargs):
-
+    def __new__(cls, shape, name=None, set_default_empty=True, **kwargs):
+        """
+        Initializes a new empty array.
+        """
         obj = super(LSCArray, cls).__new__(cls, shape, **kwargs).view(
             type=cls)
         obj.name = name
         obj.__persistent_attributes__ = cls.__persistent_attributes__
         # zero out the array if desired
-        if zero:
-            default = numpy.zeros(1, dtype=obj.dtype)
+        if set_default_empty:
+            default = default_empty(1, dtype=obj.dtype)
             obj[:] = default
-
         return obj
 
 
@@ -752,9 +786,28 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             for attr in self.__persistent_attributes__]
 
 
+    def __setitem__(self, item, values):
+        """
+        Wrap's recarray's setitem to allow attribute-like indexing when
+        setting values.
+        """
+        try:
+            return super(LSCArray, self).__setitem__(item, values)
+        except ValueError:
+            # we'll get a ValueError if a subarray is being referenced using
+            # '.'; so we'll try to parse it out here
+            fields = item.split('.')
+            if len(fields) > 1:
+                for field in fields[:-1]:
+                    self = self[field]
+                item = fields[-1]
+            # now try again
+            return super(LSCArray, self).__setitem__(item, values)
+
+
     def __getitem__(self, item):
         """
-        Wraps self's __getitem__ so that math functions on columns can be
+        Wraps recarray's  __getitem__ so that math functions on columns can be
         retrieved. Any function in numpy's library may be used.
         """
         try:
@@ -770,6 +823,18 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             safe_dict.update(item_dict)
             safe_dict.update(numpy.__dict__)
             return eval(item, {"__builtins__": None}, safe_dict)
+
+    def addattr(self, attrname, value=None, persistent=True):
+        """
+        Adds an attribute to self. If persistent is True, the attribute will
+        be made a persistent attribute. Persistent attributes are copied
+        whenever a view or copy of this array is created. Otherwise, new views
+        or copies of this will not have the attribute.
+        """
+        setattr(self, attrname, value)
+        # add as persistent
+        if persistent and attrname not in self.__persistent_attributes__:
+            self.__persistent_attributes__.append(attrname)
 
     @classmethod
     def from_arrays(cls, arrays, name=None, **kwargs):
@@ -1110,72 +1175,81 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             map_indices=map_indices)
 
 
+def aliases_from_fields(fields):
+    """
+    Given a dictionary of fields, will return a dictionary mapping the aliases
+    to the names.
+    """
+    return dict(c for c in fields if isinstance(c, tuple))
+
+
+def fields_from_names(fields, names=None):
+    """
+    Given a dictionary of fields and a list of names, will return a dictionary
+    consisting of the fields specified by names. Names can be either the names
+    of fields, or their aliases.
+    """
+    if names is None:
+        return fields
+    aliases_to_names = aliases_from_fields(fields)
+    names_to_aliases = dict(zip(aliases_to_names.values(),
+        aliases_to_names.keys()))
+    outfields = {}
+    for name in names:
+        try:
+            outfields[name] = fields[name]
+        except KeyError:
+            if name in aliases_to_names:
+                key = (name, aliases_to_names[name])
+            elif name in names_to_aliases:
+                key = (names_to_aliases[name], name)
+            else:
+                raise KeyError('default fields has no field %s' % name)
+            outfields[key] = fields[key]
+    return outfields
+
 class _LSCArrayWithDefaults(LSCArray):
     """
-    Subclasses LSCArray, adding class attributes ``default_fields`` and
-    ``default_name``. If no name is provided when initialized, the
-    ``default_name`` will be used. Likewise, if no columns are provided when
-    initalized, the default columns will be used as the columns argument. If
-    columns are provided but some (or all) do not have a specified data type,
-    the data type specified in default columns will be used.
+    Subclasses LSCArray, adding class method ``default_fields`` and class
+    attribute ``default_name``. If no name is provided when initialized, the
+    ``default_name`` will be used. Likewise, if no dtype is provided when
+    initalized, the default fields will be used. If names are provided, they
+    must be names or aliases that are in default fields, else a KeyError is
+    raised. Non-default fields can be created by specifying dtype directly. 
 
-    The default ``default_name`` is None and the ``default_fields`` is an
+    The default ``default_name`` is None and ``default_fields`` returns an
     empty dictionary. This class is mostly meant to be subclassed by other
     classes, so they can add their own defaults.
     """
-    default_fields = {}
     default_name = None
 
-    def __new__(cls, shape, name=None, use_default_fields=True, **kwargs):
-        if 'names' in kwargs and 'dtype' in kwargs and use_default_fields:
+    @classmethod
+    def default_fields(cls, **kwargs):
+        """
+        The default fields. This function should be overridden by subclasses
+        to return a dictionary of the desired default fields. Allows for
+        key word arguments to be passed to it, for classes that need to be
+        able to alter properties of some of the default fields.
+        """
+        return {}
+
+    def __new__(cls, shape, name=None, field_args={}, **kwargs):
+        """
+        Makes use of cls.default_fields and cls.default_name.
+        """
+        if 'names' in kwargs and 'dtype' in kwargs:
             raise ValueError("Please provide names or dtype, not both")
-        if 'names' in kwargs and use_default_fields:
+        fields = cls.default_fields(**field_args)
+        if 'names' in kwargs:
             names = kwargs.pop('names')
             if isinstance(names, str) or isinstance(names, unicode):
                 names = [names]
-            kwargs['dtype'] = cls.fields_from_names(names).items()
-        if 'dtype' not in kwargs and use_default_fields:
-            kwargs['dtype'] = cls.default_fields.items()
+            kwargs['dtype'] = fields_from_names(fields, names).items()
+        if 'dtype' not in kwargs:
+            kwargs['dtype'] = fields.items()
         return super(_LSCArrayWithDefaults, cls).__new__(cls, shape,
             name=None, **kwargs)
 
-    @classmethod
-    def default_dtype(cls):
-        return numpy.dtype(cls.default_fields.items())
-
-    @classmethod
-    def default_columns(cls):
-        return cls.default_dtype().names
-
-    @classmethod
-    def default_aliases(cls):
-        return dict(c for c in cls.default_fields \
-            if isinstance(c, tuple))
-
-    @classmethod
-    def fields_from_names(cls, names=None):
-        """
-        Returns a copy of cls.default_fields with only fields with either
-        a name or alias in names.
-        """
-        if names is None:
-            return cls.default_fields
-        fields = {}
-        aliases_to_names = cls.default_aliases()
-        names_to_aliases = dict(zip(aliases_to_names.values(),
-            aliases_to_names.keys()))
-        for name in names:
-            try:
-                fields[name] = cls.default_fields[name]
-            except KeyError:
-                if name in aliases_to_names:
-                    key = (name, aliases_to_names[name])
-                elif name in names_to_aliases:
-                    key = (names_to_aliases[name], name)
-                else:
-                    raise KeyError('default fields has no field %s' % name)
-                fields[key] = cls.default_fields[key]
-        return fields
 
 
 class Waveform(_LSCArrayWithDefaults):
@@ -1188,8 +1262,11 @@ class Waveform(_LSCArrayWithDefaults):
     mtotal = mass1+mass2.
     """
     default_name = 'waveform'
-    # we'll group the various parameters by type
-    intrinsic_params = {
+
+    # _static_fields are fields that are automatically inherited by
+    # subclasses of this class
+    _static_fields = {
+        # intrinsic parameters
         ('m1', 'mass1'): float,
         ('m2', 'mass2'): float,
         ('s1x', 'spin1x'): float,
@@ -1204,12 +1281,10 @@ class Waveform(_LSCArrayWithDefaults):
         'quadparam2': float,
         'eccentricity': float,
         'argument_periapsis': float,
-        }
-    extrinsic_params = {
+        # extrinsic parameters
         'phi_ref': float,
         ('inc', 'inclination'): float,
-        }
-    waveform_params = {
+        # waveform parameters
         'sample_rate': int,
         'segment_length': int,
         'f_min': float,
@@ -1225,8 +1300,10 @@ class Waveform(_LSCArrayWithDefaults):
         'frame_axis': 'lstring',
         'modes_choice': 'lstring',
         }
-    default_fields = dict(intrinsic_params.items() +
-        extrinsic_params.items() + waveform_params.items())
+
+    @classmethod
+    def default_fields(cls):
+        return cls._static_fields 
 
     # some other derived parameters
     @property
@@ -1306,10 +1383,10 @@ class TmpltInspiral(Waveform):
 
 >>> templates = TmpltInspiral.from_arrays(bankhdf.values(), names=bankhdf.keys())
 
->>> templates = templates.add_fields(numpy.arange(len(templates)), names='tmplt_id')
+>>> templates = templates.add_fields(numpy.arange(len(templates)), names='template_id')
 
 >>> templates.columns
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'tmplt_id')
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> templates.mass1
 array([ 1.71731389,  1.10231435,  2.99999857, ...,  1.67488706,
@@ -1326,43 +1403,35 @@ array([(1.7173138856887817, 1.2124452590942383),
 ``
     """
     default_name = 'tmplt_inspiral'
-    default_nifos = 1
-    # we'll group the various parameters by type
-    ids = {
-        'tmplt_id': int,
-        'process_id': int
-        }
-    ifo_params = {
-        # Note: ifo is a subarray with default length 1
-        'ifo': ('S2', default_nifos),
-        }
-    default_fields = dict(Waveform.default_fields.items() +
-        ids.items() + ifo_params.items())
 
-    def __new__(cls, shape, name=None, nifos=None, use_default_fields=True,
-            **kwargs):
+    @classmethod
+    def default_fields(cls, nifos=1):
+        """
+        Admits argument nifos, which is used to set the size of the ifo
+        sub-array.
+        """
+        fields = {
+            'template_id': int,
+            'process_id': int,
+            # Note: ifo is a subarray with length set by nifos
+            'ifo': ('S2', nifos),
+            }
+        # Note: cls._static_fields is Waveform's static fields
+        return dict(cls._static_fields.items() + fields.items())
+
+    def __new__(cls, shape, name=None, nifos=1, **kwargs):
         """
         Adds nifos to initialization.
         """
-        if nifos is not None and nifos != cls.default_nifos:
-            orig_ifo_dt = cls.default_fields['ifo']
-            # temporarily override the default_nifos
-            cls.default_fields['ifo'] = (orig_ifo_dt[0], nifos)  
-        # call new with the appropriate arguments
-        rv = super(TmpltInspiral, cls).__new__(cls, shape, name=name, 
-            use_default_fields=use_default_fields, **kwargs)
-        # set class's default_fields back to what it was
-        if nifos is not None and nifos != cls.default_nifos:
-            cls.default_fields['ifo'] = orig_ifo_dt
-        # and return
-        return rv
+        return super(TmpltInspiral, cls).__new__(cls, shape, name=name, 
+            field_args={'nifos': nifos}, **kwargs)
 
 
 class SnglEvent(_LSCArrayWithDefaults):
     """
     Subclasses _LSCArrayWithDefaults, adding ranking_stat, snr, chisq, and
     end time as default columns. Also has a 'template' column, which is a
-    sub-array of with fields ifo and tmplt_id. If given a TmpltInspiral
+    sub-array of with fields ifo and template_id. If given a TmpltInspiral
     array, the template field can be expanded to have all the parameters of
     each single event; see expand_templates for details.
 
@@ -1384,7 +1453,7 @@ class SnglEvent(_LSCArrayWithDefaults):
 
 >>> hsngls['end_time'] = hdf['end_time']
 
->>> hsngls['template']['tmplt_id'] = hdf['template_id']
+>>> hsngls['template']['template_id'] = hdf['template_id']
 
 >>> hsngls['ifo'] = 'H1'
 
@@ -1415,17 +1484,17 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
     ``templates`` from an hdf bank file):
 ``
 >>> hsngls.template.columns
-    ('tmplt_id',)
+    ('template_id',)
 
 >>> templates.columns
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'tmplt_id')
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> hsngls = hsngls.expand_templates(templates)
 
 >>> hsngls.template.columns
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'tmplt_id')
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
->>> hsngls.ranking_stat, hsngls.template.tmplt_id, hsngls.template.mass1
+>>> hsngls.ranking_stat, hsngls.template.template_id, hsngls.template.mass1
 (array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
          7.24139452,  7.55083953]),
  array([   0,    0,    0, ..., 4030, 4030, 4030]),
@@ -1437,7 +1506,7 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
 ``
 >>> hsngls.sort(order='ranking_stat')
 
->>> hsngls.ranking_stat, hsngls.template.tmplt_id, hsngls.template.mass1
+>>> hsngls.ranking_stat, hsngls.template.template_id, hsngls.template.mass1
 (array([   5.00000016,    5.00000954,    5.00000962, ...,  116.15787474,
          124.83552448,  155.72376072]),
  array([3785,  590, 2314, ..., 2473, 3159,   86]),
@@ -1447,29 +1516,47 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
     """
     default_name = 'sngl_event'
     ranking_stat_alias = 'new_snr'
-    id_params = {
+
+    # we define the following as static parameters because they are inherited
+    # by CoincEvent
+    _static_fields = {
+        # ids
         'process_id': int,
         'event_id': int,
-        }
-    tmplt_params = {
+        # template parameters
         'template': {
-            'tmplt_id': int,
+            'template_id': int,
             }.items(),
         }
-    stat_params = {
-        'ifo': 'S2',
-        'sigma': float,
-        'end_time': float,
-        (ranking_stat_alias, 'ranking_stat'): float,
-        'snr': float,
-        'chisq': float,
-        'chisq_dof': float,
-        }
-    default_fields = dict(id_params.items() + tmplt_params.items() + 
-        stat_params.items())
+
+    @classmethod
+    def default_fields(cls, ranking_stat_alias='new_snr'):
+        """
+        The ranking stat alias can be set; default is ``'new_snr'``.
+        """
+        fields = {
+            ('ifo', 'detector'): 'S2',
+            'sigma': float,
+            'end_time': float,
+            (ranking_stat_alias, 'ranking_stat'): float,
+            'snr': float,
+            'chisq': float,
+            'chisq_dof': float,
+            }
+        return dict(cls._static_fields.items() + fields.items())
+
+    def __new__(cls, shape, name=None, nsngls=2,
+            ranking_stat_alias='new_snr', **kwargs):
+        """
+        Adds nsngls and ranking_stat_alias to initialization.
+        """
+        field_args = {'ranking_stat_alias': ranking_stat_alias}
+        return super(SnglEvent, cls).__new__(cls, shape, name=name,
+            field_args=field_args, **kwargs)
+
 
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
-            selfs_map_field='template.tmplt_id', tmplts_map_field='tmplt_id'):
+            selfs_map_field='template.template_id', tmplts_map_field='template_id'):
         """
         Given an array of templates, replaces the template column with a
         sub-array of the template data. This is done by getting all rows in
@@ -1483,13 +1570,13 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
         get_fields: {None | (list of) strings}
             The names of the fields to get from the tmplt_inspiral_array.
             If ``None``, all fields will be retrieved.
-        selfs_map_field: {'template.tmplt_id' | string}
+        selfs_map_field: {'template.template_id' | string}
             The name of the field in self's current template sub-array to use
             to match to templates in the tmplt_inspiral_array. Default is
-            ``template.tmplt_id``.
-        tmplts_map_field: {'tmplt_id' | string}
+            ``template.template_id``.
+        tmplts_map_field: {'template_id' | string}
             The name of the field in the tmplt_inspiral_array to match.
-            Default is ``tmplt_id``.
+            Default is ``template_id``.
 
         Returns
         -------
@@ -1504,8 +1591,9 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
 class CoincEvent(SnglEvent):
     """
     Subclasses SnglEvent, but with different default stat_params. Also has a
-    'sngl_events', which is a subarray with ``ifo`` and ``event_id`` fields.
-    This can be expanded to have all of the full parameters of the single
+    'sngl_events', which is a subarray with fields named by instruments. The
+    default is to store ``event_id`` and ``end_time`` for each instrument,
+    but this can be expanded to have all of the full parameters of the single
     events; see expand_sngls for details.
 
     Examples
@@ -1520,7 +1608,7 @@ class CoincEvent(SnglEvent):
 
 >>> coincs['ranking_stat'] = fg['stat']
 
->>> coincs['template']['tmplt_id'] = fg['template_id']
+>>> coincs['template']['template_id'] = fg['template_id']
 
 >>> coincs['event_id'] = numpy.arange(len(coincs))
 
@@ -1593,69 +1681,86 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
       ``templates`` from an hdf bank file):
 ``
 >>> coincs.template.columns
-    ('tmplt_id',)
+    ('template_id',)
 
 >>> templates.columns
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'tmplt_id')
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> coincs = coincs.expand_templates(templates)
 
 >>> coincs.template.columns
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'tmplt_id')
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 ``
     """
     default_name = 'coinc_event'
-    ranking_stat_alias = 'new_snr'
-    max_nsngls = 2
-    sngl_params = {
-        'sngl_events': ({
-            'ifos': 'S2',
-            'event_ids': int,
-            }.items(),
-        max_nsngls),
-    }
-    stat_params = {
-        'end_time': float,
-        ('false_alarm_rate', 'far'): float,
-        ('false_alarm_probability', 'fap'): float,
-        (ranking_stat_alias, 'ranking_stat'): float,
-        'snr': float,
-    }
-    default_fields = dict(SnglEvent.id_params.items() +
-        SnglEvent.tmplt_params.items() + sngl_params.items() +
-        stat_params.items())
+    # add detectors as a persistent attribute
+    __persistent_attributes__ = ['detectors'] + \
+        super(CoincEvent, CoincEvent).__persistent_attributes__
 
-    def __new__(cls, shape, name=None, max_nsngls=None,
-            ranking_stat_alias=None, use_default_fields=True,
-            **kwargs):
+    @classmethod
+    def default_fields(cls, ranking_stat_alias='new_snr',
+            detectors=['detector1', 'detector2']):
         """
-        Adds max_nsngls and ranking_stat_alias to initialization.
+        Both the ranking stat alias and the maximum number of single-detector
+        fields can be set.
         """
-        change_nsngls = max_nsngls is not None and \
-            max_nsngls != cls.max_nsngls
-        change_ranking_stat_alias = ranking_stat_alias is not None and \
-            ranking_stat_alias != cls.ranking_stat_alias
-        if change_nsngls:
-            orig_nsngls_dt = cls.default_fields['sngl_events']
-            # temporarily override the default_nifos
-            cls.default_fields['sngl_events'] = (orig_nsngls_dt[0],
-                max_nsngls)
-        if change_ranking_stat_alias:
-            orig_rs_dt = cls.default_fields['ranking_stat']
-            cls.default_fields['ranking_stat'] = (orig_rs_dt,
-                ranking_stat_alias)
-        # call new with the appropriate arguments
-        rv = super(SnglEvent, cls).__new__(cls, shape, name=name, 
-            use_default_fields=use_default_fields, **kwargs)
-        # set class's default_fields back to what it was
-        if change_nsngls:
-            cls.default_fields['sngl_events'] = orig_nsngls_dt
-        if change_ranking_stat_alias:
-            cls.default_fields['ranking_stat'] = orig_rs_dt
-        # and return
-        return rv
+        fields = {
+            'end_time': float,
+            ('false_alarm_rate', 'far'): float,
+            ('false_alarm_probability', 'fap'): float,
+            (ranking_stat_alias, 'ranking_stat'): float,
+            'snr': float,
+            }
+        sngls = {
+            det: {
+                'event_id': int,
+                'end_time': float
+                }.items()
+            for det in detectors
+            }
+        # we'll inherit SnglEvent's _static_fields
+        return dict(cls._static_fields.items() + fields.items() + \
+            sngls.items())
 
-    def add_sngls_data(self, sngl_event_array, get_fields=None,
+    def __new__(cls, shape, name=None, detectors=['detector1', 'detector2'],
+            ranking_stat_alias='new_snr', **kwargs):
+        """
+        Adds nsngls and ranking_stat_alias to initialization.
+        """
+        field_args = {'ranking_stat_alias': ranking_stat_alias,
+            'detectors': detectors}
+        # add the detectors to the requested names if not already
+        if 'names' in kwargs:
+            names = kwargs.pop('names')
+            if isinstance(names, str) or isinstance(names, unicode):
+                names = [names]
+            else:
+                names = list(names)
+            names += [det for det in detectors if det not in names]
+            kwargs['names'] = names
+        # Note: we need to call _LSCArrayWithDefaults directly, as using
+        # super will lead to SnglEvent's __new__, which sets its own field args
+        obj = _LSCArrayWithDefaults.__new__(cls, shape, name=name,
+            field_args=field_args, **kwargs)
+        # set the detectors attribute
+        obj.addattr('detectors', tuple(sorted(detectors)))
+        return obj
+
+    @property
+    def detected_in(self):
+        """
+        Returns the names of the detectors that contributed to each coinc
+        event. This is found by returning all of the detectors for which
+        self[detector].event_id != lscarrays.ID_NOT_SET.
+        """
+        detectors = numpy.array(self.detectors)
+        mask = numpy.vstack([
+            self[det]['event_id'] != ID_NOT_SET \
+            for det in detectors]).T
+        return numpy.array([','.join(detectors[numpy.where(mask[ii,:])]) \
+            for ii in range(self.size)])
+
+    def expand_sngls(self, sngl_event_array, get_fields=None,
             sngls_map_field='event_id'):
         """
         Given an array of singles, adds sub-arrays of the single-detector
@@ -1687,9 +1792,9 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
 
         Notes
         -----
-        * The ``sngl_event_array`` must have an ``ifo`` field.
+        * The ``sngl_event_array`` must have a ``detector`` field.
         * The ``sngl_event_array`` must have one and only one row in it for a
-          given ``ifo, event_id`` pair in self. If ``sngl_event_array`` has an
+          given ``detector, event_id`` pair in self. If ``sngl_event_array`` has an
           ifo that is in self, but does not have an ``event_id`` that self has
           for that ifo, a KeyError is raised. For example, you will get a
           KeyError if self has ``ifo, event_id`` pair ``'H1', 11`` and
@@ -1710,69 +1815,40 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         #
         # cycle over the ifos in self.sngl_ifos.ifos that are in the
         # sngl_event_array
-        others_ifos = numpy.unique(sngl_event_array['ifo'])
-        if not any(others_ifos):
-            raise ValueError("sngl_event_array's ifo column is not populated!")
-        # strip off all ifo fields in self that we will be populating
-        new_array = self.without_fields(['sngl_events.%s' %(ifo) \
-            for ifo in others_ifos])
-        # get a view of the sngl events array with just the desired fields
-        if isinstance(get_fields, str) or isinstance(get_fields, unicode):
-            get_fields = [get_fields]
-        elif get_fields is None:
-            get_fields = list(sngl_event_array.dtype.names)
-        # ensure the map field is included
-        if sngls_map_field not in get_fields:
-            get_fields.append(sngls_map_field)
-        if 'ifo' not in get_fields:
-            get_fields.append('ifo')
-        sngl_event_array = sngl_event_array.with_fields(get_fields, copy=False)
-        # some rows in self may not have all of the ifos; in that case, we'll
-        # put an zeroed out entry in that row for any ifos that are missing
-        other_dtdescr = get_dtype_descr(sngl_event_array.dtype)
-        default = numpy.zeros(1, dtype=sngl_event_array.dtype).view(
-            type=type(sngl_event_array))
-        for ifo in numpy.unique(self.sngl_events.ifos):
-            if ifo not in others_ifos:
+        others_dets = numpy.unique(sngl_event_array['detector'])
+        if not any(others_dets):
+            raise ValueError("sngl_event_array's detector column is not " +
+                "populated!")
+        # if getting all fields, exclude the detector field, since that will
+        # be the sub-array's name
+        if get_fields is None:
+            get_fields = [name for name in sngl_event_array.columns \
+                if name != 'detector']
+        new_self = self
+        for det in self.detectors:
+            if det not in others_dets:
                 # just skip
                 continue
-            # lookup where the ifo exists in self
-            ifolocations = self['sngl_events']['ifos == "%s"' % ifo]
-            # construct the expanded info: if a row in self does not have
-            # this ifo, we'll just set the expanded info for that row to
-            # the default. Otherwise, we'll lookup the data in the
-            # sngl_event_array using the event id and ifo. If the data
-            # cannot be found in sngl_event_array, a KeyError is raised.
-            expanded_info = []
-            for ii,ifoishere in enumerate(ifolocations):
-                jj = numpy.where(ifoishere)[0]
-                if jj.size == 0:
-                    # the ifo isn't in this row, just use the default
-                    expanded_info.append(default)
-                else:
-                    # the ifo is in this row, get the data
-                    evid = self['sngl_events']['event_ids'][ii, jj[0]]
-                    # speed up: if the sngl_event array only has 1 ifo,
-                    # only check its event id
-                    if others_ifos.size == 1:
-                        this_data = sngl_event_array.lookup(
-                            sngls_map_field, evid)
-                    # otherwise, lookup both the ifo and the event id
-                    else:
-                        this_data = sngl_event_array.lookup(
-                            ('ifo', sngls_map_field), (ifo, evid))
-                    # make sure this is a unique mapping
-                    if this_data.size > 1:
-                        raise ValueError("more than one entry found in the " +
-                            "sngl_event_array with ifo, event_id = %s, %i" %(
-                            ifo, evid))
-                    expanded_info.append(this_data)
-            # convert to LSCArray: note the field wil be named by the ifo
-            expanded_info = LSCArray.from_records(expanded_info,
-                dtype=[(ifo, other_dtdescr)])
-            # add to the new array
-            new_array = new_array.add_fields(expanded_info)
-        return new_array
+            if others_dets.size == 1:
+                # we can just look at the whole array
+                other_array = sngl_event_array
+            else:
+                # pull out the rows with detector == det
+                other_array = sngl_event_array[numpy.where(
+                    sngl_event_array['detector'] == det)]
+            # figure out what rows in self have an entry for this detector
+            mask = self[det]['event_id'] != ID_NOT_SET
+            if mask.all():
+                # every row has an entry, just map all
+                map_indices = None
+            else:
+                map_indices = numpy.where(mask)
+            # join
+            new_self = new_self.join(other_array,
+                '%s.event_id' % det, det,
+                sngls_map_field, get_fields=get_fields,
+                map_indices=map_indices)
+        return new_self
 
 
 class SimInspiral(Waveform):
@@ -1850,7 +1926,7 @@ SimInspiral([['H1', 'L1'],
 
 >>> coincs['ranking_stat'] = hdffound['stat']
 
->>> coincs['template']['tmplt_id'] = hdffound['template_id']
+>>> coincs['template']['template_id'] = hdffound['template_id']
 
 >>> coincs['event_id'] = numpy.arange(coincs.size)
 
@@ -1872,7 +1948,7 @@ SimInspiral([['H1', 'L1'],
     ('event_id', 'ranking_stat', 'far', 'fap', 'L1', 'H1', 'template')
 
 >>> sims['recovered']['template'].columns
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'tmplt_id')
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> recsims = sims[numpy.where(sims.isrecovered)]
 
@@ -1885,69 +1961,74 @@ SimInspiral([['H1', 'L1'],
 ``
     """
     default_name = 'sim_inspiral'
-    default_nifos = 2
-    default_nrecovered = 1
-    ids = {
-        'simulation_id': int,
-        'process_id': int
-        }
-    location_params = {
-        'geocent_end_time': float,
-        'distance': float,
-        ('right_ascension', 'ra'): float,
-        ('declination', 'dec'): float,
-        'polarization': float,
-        'site_params': ({
-            'ifo': 'S2',
-            'sigma': float,
-            'end_time': float
-            }.items(),
-        default_nifos),
-        }
-    recovered_params = {
-        'isrecovered': bool,
-        'recovered': ({
-            'event_id': int,
-            }.items(), default_nrecovered),
-    }
-    distribution_params = {
-        'distribution': {
-            'min_vol': float,
-            'volume_weight': float,
-            # XXX: How to store information about mass and spin distributions?
-            }.items()
-        }
-            
-    default_fields = dict(Waveform.default_fields.items() + ids.items() + 
-        location_params.items() + recovered_params.items() + 
-        distribution_params.items())
+    # add detectors as a persistent attribute
+    __persistent_attributes__ = ['detectors'] + \
+        super(SimInspiral, SimInspiral).__persistent_attributes__
 
-    def __new__(cls, shape, name=None, nifos=None, nrecovered=None,
-            use_default_fields=True, **kwargs):
+    @classmethod
+    def default_fields(cls, detectors=['detector1', 'detector2'],
+            nrecovered=1):
         """
-        Adds nifos and nrecovered to initialization.
+        The number of ifos stored in site params and the maximum number of
+        events that can be stored in the recovered fields can be set.
         """
-        change_nifos = nifos is not None and \
-            nifos != cls.default_nifos
-        change_nrec = nrecovered is not None and \
-            nrecovered != cls.default_nrecovered
-        if change_nifos:
-            orig_sp_dt = cls.default_fields['site_params']
-            # temporarily override the default_nifos
-            cls.default_fields['site_params'] = (orig_sp_dt[0], nifos)
-        if change_nrec:
-            orig_rec_dt = cls.default_fields['recovered']
-            cls.default_fields['recovered'] = (orig_rec_dt[0], nrecovered)
-        # call new with the appropriate arguments
-        rv = super(SimInspiral, cls).__new__(cls, shape, name=name, 
-            use_default_fields=use_default_fields, **kwargs)
-        # set class's default_fields back to what it was
-        if change_nifos:
-            cls.default_fields['site_params'] = orig_sp_dt
-        if change_nrec:
-            cls.default_fields['recovered'] = orig_rec_dt
-        # and return
-        return rv
+        fields = {
+            # ids
+            'simulation_id': int,
+            'process_id': int,
+            # location params
+            'geocent_end_time': float,
+            'distance': float,
+            ('right_ascension', 'ra'): float,
+            ('declination', 'dec'): float,
+            'polarization': float,
+            # recovered params
+            'isrecovered': bool,
+            'recovered': ({
+                'event_id': int,
+                }.items(), nrecovered),
+            # distribution params
+            'distribution': {
+                'min_vol': float,
+                'volume_weight': float,
+                # XXX: How to store information about mass and spin
+                # distributions?
+                }.items()
+            }
+            # site params
+        site_params = {
+            det: {
+                'end_time': float,
+                'sigma': float,
+                }.items()
+            for det in detectors
+            }
+        # we'll inherit static fields from Waveform
+        return dict(cls._static_fields.items() + fields.items() + \
+            site_params.items())
+
+    def __new__(cls, shape, name=None, detectors=['detector1', 'detector2'],
+            nrecovered=None, **kwargs):
+        """
+        Adds detectors and nrecovered to initialization.
+        """
+        field_args = {'nrecovered': nrecovered,
+            'detectors': detectors}
+        # add the detectors to the requested names if not already
+        if 'names' in kwargs:
+            names = kwargs.pop('names')
+            if isinstance(names, str) or isinstance(names, unicode):
+                names = [names]
+            else:
+                names = list(names)
+            names += [det for det in detectors if det not in names]
+            kwargs['names'] = names
+        obj = super(SimInspiral, cls).__new__(cls, shape, name=name,
+            field_args=field_args, **kwargs)
+        # set the detectors attribute
+        obj.addattr('detectors', tuple(sorted(detectors)))
+        return obj
+
 
     def expand_recovered(self, event_array, get_fields=None,
             selfs_map_field='recovered.event_id',
@@ -2003,3 +2084,24 @@ SimInspiral([['H1', 'L1'],
         return self.join(event_array, selfs_map_field, 'recovered',
             other_map_field=events_map_field, get_fields=get_fields,
             map_indices=numpy.where(self['isrecovered']))
+
+    @property
+    def detected_in(self):
+        """
+        Returns the names of the detectors that the injections was detected in.
+        This is done by returning all of the detectors in self's detectors for
+        which ``self['recovered'][detector].event_id != lscarrays.ID_NOT_SET``.
+
+        Note: ``expand_recovered`` must have been run first on the list of
+        events.
+        """
+        detectors = numpy.array([det for det in self.detectors \
+            if det in self['recovered'].columns])
+        if detectors.size == 0:
+            raise ValueError("No detectors found in this array's recovered " +
+                "field. Did you run expand_recovered?")
+        mask = numpy.vstack([
+            self['recovered'][det]['event_id'] != ID_NOT_SET \
+            for det in detectors]).T
+        return numpy.array([','.join(detectors[numpy.where(mask[ii,:])]) \
+            for ii in range(self.size)])
