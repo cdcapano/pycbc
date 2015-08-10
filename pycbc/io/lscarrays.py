@@ -1,4 +1,30 @@
-#! /usr/bin/env python
+# Copyright (C) 2015  Collin Capano
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+
+#
+# =============================================================================
+#
+#                           Preamble
+#
+# =============================================================================
+#
+"""
+This modules provides definitions of, and helper functions for, LSCArrays.
+LSCArrays are wrappers of numpy recarrays with additional functionality useful for storing and retrieving data created by a search for gravitational waves.
+"""
 
 import os, sys
 import inspect
@@ -7,10 +33,15 @@ import operator
 import numpy.lib.recfunctions as recfunctions
 
 import lal
+import lalsimulation as lalsim
 from glue.ligolw import types as ligolw_types
 
 #
-#   Data type mappings
+# =============================================================================
+#
+#                           Data type mappings
+#
+# =============================================================================
 #
 # add ligolw_types to numpy typeDict
 numpy.typeDict.update(ligolw_types.ToNumPyType)
@@ -130,9 +161,11 @@ ilwd_as_int(True)
 
 
 #
+# =============================================================================
 #
-#   Helper functions
+#                           Helper functions 
 #
+# =============================================================================
 #
 def get_dtype_descr(dtype):
     """
@@ -275,8 +308,53 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
     if names is not None:
         if isinstance(names, str) or isinstance(names, unicode):
             names = [names]
-        # use the input array's original names
-        names = list(input_array.dtype.names) + names
+        # check if any names are subarray names; if so, we have to add them
+        # separately
+        subarray_names = [name for name in names if len(name.split('.')) > 1]
+    else:
+        subarray_names = []
+    if any(subarray_names):
+        subarrays = [arrays[ii] for ii,name in enumerate(names) \
+            if name in subarray_names]
+        # group together by subarray
+        groups = {}
+        for name,arr in zip(subarray_names, subarrays):
+            key = name.split('.')[0]
+            subkey = '.'.join(name.split('.')[1:])
+            try:
+                groups[key].append((subkey, arr))
+            except KeyError:
+                groups[key] = [(subkey, arr)]
+        # now cycle over the groups, adding all of the fields in each group
+        # as a subarray
+        for group_name in groups:
+            # we'll create a dictionary out of the subarray field names ->
+            # subarrays
+            thisdict = dict(groups[group_name])
+            # check if the input array has this field; if so, remove it, then
+            # add it back with the other new arrays
+            if group_name in input_array.columns:
+                # get the data
+                new_subarray = input_array[group_name]
+                # add the new fields to the subarray
+                new_subarray = add_fields(new_subarray, thisdict.values(),
+                    thisdict.keys())
+                # remove the original from the input array
+                input_array = input_array.without_fields(group_name)
+            else:
+                new_subarray = thisdict.values()
+            # add the new subarray to input_array as a subarray
+            input_array = add_fields(input_array, new_subarray,
+                names=group_name, assubarray=True)
+        # remove the subarray names from names 
+        keep_idx = [ii for ii,name in enumerate(names) \
+            if name not in subarray_names]
+        names = [names[ii] for ii in keep_idx]
+        # if there's nothing left, just return
+        if names == []:
+            return input_array
+        # also remove the subarray arrays
+        arrays = [arrays[ii] for ii in keep_idx] 
     if assubarray:
         # merge all of the arrays into a single array
         if len(arrays) > 1:
@@ -287,6 +365,8 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
         merged_arr['f0'] = arrays[0]
         arrays = [merged_arr]
     merge_list = [input_array] + arrays
+    if names is not None:
+        names = list(input_array.dtype.names) + names
     # merge into a single array
     return merge_arrays(merge_list, names=names, flatten=True,
         outtype=type(input_array))
@@ -462,10 +542,13 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     # add to this_array
     return new_array.add_fields(expanded_info)
 
+
 #
+# =============================================================================
 #
-#   Base LSCArray definitions
+#                           Base LSCArray definitions
 #
+# =============================================================================
 #
 class LSCArray(numpy.recarray):
     """
@@ -906,7 +989,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         return obj
 
     @classmethod
-    def from_ligolw_table(cls, table, columns=None):
+    def from_ligolw_table(cls, table, columns=None, dtype=None):
         """
         Converts the given ligolw table into an LSCArray. The tableName
         attribute is copied to the array's name.
@@ -919,6 +1002,8 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             Optionally specify a list of columns to retrieve. All of the
             columns must be in the table's validcolumns attribute. If None
             provided, all the columns in the table will be converted.
+        dtype: {None | numpy.dtype readable}
+            Override the column's dtype to dtype.
 
         Returns
         -------
@@ -944,8 +1029,10 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         else:
             input_array = [tuple(getattr(row, col) for col,_ in columns) \
                 for row in table]
+        if dtype is None:
+            dtype = columns
         # return the values as an instance of cls
-        return cls.from_records(input_array, dtype=columns,
+        return cls.from_records(input_array, dtype=dtype,
             name=name)
 
     @property
@@ -1265,6 +1352,14 @@ class _LSCArrayWithDefaults(LSCArray):
 
 
 
+#
+# =============================================================================
+#
+#                           Default LSCArrays
+#
+# =============================================================================
+#
+
 class Waveform(_LSCArrayWithDefaults):
     """
     Subclasses LSCArrayWithDefaults, with default name ``waveform``. Has
@@ -1536,6 +1631,9 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
         'process_id': int,
         'event_id': int,
         'template_id': int,
+        # end times
+        'end_time_s': "int_4s",
+        'end_time_ns': "int_4s",
         }
 
     @classmethod
@@ -1546,23 +1644,28 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
         fields = {
             ('ifo', 'detector'): 'S2',
             'sigma': float,
-            'end_time': float,
             (ranking_stat_alias, 'ranking_stat'): float,
             'snr': float,
             'chisq': float,
             'chisq_dof': float,
+            'bank_chisq': float,
+            'bank_chisq_dof': float,
+            'cont_chisq': float,
+            'cont_chisq_dof': float,
             }
         return dict(cls._static_fields.items() + fields.items())
 
-    def __new__(cls, shape, name=None, nsngls=2,
-            ranking_stat_alias='new_snr', **kwargs):
+    def __new__(cls, shape, name=None, ranking_stat_alias='new_snr', **kwargs):
         """
-        Adds nsngls and ranking_stat_alias to initialization.
+        Adds ranking_stat_alias to initialization.
         """
         field_args = {'ranking_stat_alias': ranking_stat_alias}
         return super(SnglEvent, cls).__new__(cls, shape, name=name,
             field_args=field_args, **kwargs)
 
+    @property
+    def end_time(self):
+        return self.end_time_s + 1e-9*self.end_time_ns
 
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
             selfs_map_field='template_id', tmplts_map_field='template_id'):
@@ -1714,9 +1817,10 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         fields can be set.
         """
         fields = {
-            'end_time': float,
             ('false_alarm_rate', 'far'): float,
             ('false_alarm_probability', 'fap'): float,
+            ('false_alarm_rate_exc', 'far_exc'): float,
+            ('false_alarm_probability_exc', 'fap_exc'): float,
             (ranking_stat_alias, 'ranking_stat'): float,
             'snr': float,
             }
@@ -1860,6 +1964,12 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         return new_self
 
 
+# we'll vectorize TimeDelayFromEarthCenter for faster processing of end times
+def _time_delay_from_center(geocent_end_time, detector, ra, dec):
+    return geocent_end_time + lal.TimeDelayFromEarthCenter(detector.location,
+        ra, dec, geocent_end_time)
+time_delay_from_center = numpy.vectorize(_time_delay_from_center)
+
 class SimInspiral(Waveform):
     """
     Subclasses Waveform, adding attributes ``location_params``,
@@ -1986,7 +2096,8 @@ SimInspiral([['H1', 'L1'],
             'simulation_id': int,
             'process_id': int,
             # location params
-            'geocent_end_time': float,
+            'geocent_end_time_s': 'int_4s',
+            'geocent_end_time_ns': 'int_4s',
             'distance': float,
             ('right_ascension', 'ra'): float,
             ('declination', 'dec'): float,
@@ -2007,7 +2118,7 @@ SimInspiral([['H1', 'L1'],
             # site params
         site_params = {
             det: {
-                'end_time': float,
+                'eff_dist': float,
                 'sigma': float,
                 }.items()
             for det in detectors
@@ -2038,6 +2149,22 @@ SimInspiral([['H1', 'L1'],
         obj.addattr('detectors', tuple(sorted(detectors)))
         return obj
 
+    @property
+    def geocent_end_time(self):
+        return self.geocent_end_time_s + 1e-9*self.geocent_end_time_ns
+
+    def end_time(self, detector=None):
+        """
+        Returns the end time in the given detector. If detector is None,
+        returns the geocentric end time.
+        """
+        geocent_end_time = self.geocent_end_time
+        if detector is None:
+            return geocent_end_time
+        else:
+            detector = lalsim.DetectorPrefixToLALDetector(detector)
+            return time_delay_from_center(geocent_end_time, detector, self.ra,
+                self.dec)
 
     def expand_recovered(self, event_array, get_fields=None,
             selfs_map_field='recovered.event_id',
@@ -2093,6 +2220,14 @@ SimInspiral([['H1', 'L1'],
         return self.join(event_array, selfs_map_field, 'recovered',
             other_map_field=events_map_field, get_fields=get_fields,
             map_indices=numpy.where(self['isrecovered']))
+
+    @property
+    def optimal_snr(self):
+        """
+        Gives the maximum SNR that the injections can have.
+        """
+        return numpy.sqrt(numpy.array([self[det]['sigma']**2
+            for det in self.detectors]).sum())/self['distance']
 
     @property
     def detected_in(self):
