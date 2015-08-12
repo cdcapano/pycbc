@@ -176,16 +176,13 @@ def get_dtype_descr(dtype):
     return [dt for dt in dtype.descr if not (dt[0] == '' and dt[1][1] == 'V')]
 
 
-def combine_fields(dtypes, names=None):
+def combine_fields(dtypes):
     """Combines the fields in the list of given dtypes into a single dtype.
 
     Parameters
     ----------
     dtypes: (list of) numpy.dtype(s)
         Either a numpy.dtype, or a list of numpy.dtypes.
-    names: {None | (list of) strings}
-        Only get the fields in the dtypes that have the given names. Default
-        is to get all the names from all of the dtypes.
 
     Returns
     -------
@@ -198,16 +195,6 @@ def combine_fields(dtypes, names=None):
     # that have no names and are void
     new_dt = numpy.dtype([dt for dtype in dtypes \
         for dt in get_dtype_descr(dtype)])
-    if names is not None:
-        if isinstance(names, str) or isinstance(names, unicode):
-            names = [names]
-        # ensure that all of the names are fields in the dtypes
-        missing_names = [name for name in names if name not in new_dt.names]
-        if any(missing_names):
-            raise ValueError("requested name(s) %s are not fields in the " %(
-                ', '.join(missing_names)) + "given dtypes")
-        # retrieve only the desired names
-        new_dt = numpy.dtype([dt for dt in new_dt.descr if dt[0] in names])
     return new_dt
 
 
@@ -248,22 +235,42 @@ def merge_arrays(merge_list, names=None, flatten=True, outtype=None):
         raise ValueError("all of the arrays in merge_list must have the " +
             "same shape")
     try:
+        # recfunctions' merge arrays has an annoying feature about flattend:
+        # if an array in merge list has a subarray which has only one field,
+        # it will make that subarray a field. For instance, if I have an array
+        # that has field ('foo', [('bar', float)]); instead of making foo a
+        # field of the output 'bar' will be made a field of the output. This
+        # only happens if there is one field; e.g., if the field was
+        # ('foo', [('bar', float),('narf', float)]), then foo would be added,
+        # with sub-fields 'bar' and 'narf'. The code in the ValueError block
+        # does not do this when flatten is true; i.e., it treats subarrays
+        # as subarrays. To indicate that we want a partial flatten, flatten
+        # should be set to -1. This will force the other block of code, below.
+        if flatten == -1:
+            raise ValueError("")
         new_arr = recfunctions.merge_arrays(merge_list, flatten=flatten)
     # merge arrays will fail if there are objects; in that case, we'll do
     # it manually
     except ValueError:
+        if flatten == -1:
+            flatten = True
         if flatten:
             new_dt = combine_fields([arr.dtype for arr in merge_list])
         else:
             new_dt = numpy.dtype([('f%i' %ii, arr.dtype.descr) \
                 for ii,arr in enumerate(merge_list)])
         new_arr = numpy.empty(merge_list[0].shape, dtype=new_dt)
-        for ii,arr in enumerate(merge_list):
+        # ii is a counter to keep track of which fields from the new array
+        # go with which arrays in merge list
+        ii = 0
+        for arr in merge_list:
             if arr.dtype.names is None:
                 new_arr[new_dt.names[ii]] = arr
+                ii += 1
             else:
                 for field in arr.dtype.names:
                     new_arr[field] = arr[field]
+                    ii += 1
     # set the names if desired
     if names is not None:
         new_arr.dtype.names = names
@@ -346,6 +353,8 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
             # add the new subarray to input_array as a subarray
             input_array = add_fields(input_array, new_subarray,
                 names=group_name, assubarray=True)
+            # set the subarray names
+            input_array[group_name].dtype.names = thisdict.keys()
         # remove the subarray names from names 
         keep_idx = [ii for ii,name in enumerate(names) \
             if name not in subarray_names]
@@ -355,10 +364,16 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
             return input_array
         # also remove the subarray arrays
         arrays = [arrays[ii] for ii in keep_idx] 
+    flatten = True
     if assubarray:
         # merge all of the arrays into a single array
         if len(arrays) > 1:
             arrays = [merge_arrays(arrays, flatten=True)]
+        # if there is only one array in the subarray, we need to set flatten
+        # to -1, else recfunctions' merge_arrays will make the subarray
+        # a field of the input array
+        else:
+            flatten = -1
         # now merge all the fields as a single subarray
         merged_arr = numpy.empty(len(arrays[0]),
             dtype=[('f0', arrays[0].dtype.descr)])
@@ -368,7 +383,7 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
     if names is not None:
         names = list(input_array.dtype.names) + names
     # merge into a single array
-    return merge_arrays(merge_list, names=names, flatten=True,
+    return merge_arrays(merge_list, names=names, flatten=flatten,
         outtype=type(input_array))
 
 
@@ -493,10 +508,6 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     # strip off the expand field in this_array, if is in the array
     if expand_field_name is not None:
         new_array = this_array.without_fields(expand_field_name)
-    # otherwise, strip off the map field, if it has the same name as the map
-    # field in the other array
-    elif map_field == other_map_field:
-        new_array = this_array.without_fields(map_field)
     else:
         new_array = this_array
     # get a view of the other_array with just the desired fields;
@@ -539,6 +550,10 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     else:
         expanded_info = LSCArray.from_records(expanded_info,
             dtype=[(name, dt, maxlen) for (name,dt) in other_dtdescr])
+        # if the map fields are the same name, remove from the expanded info
+        # to avoid name collisions
+        if map_field == other_map_field:
+            expanded_info = expanded_info.without_fields(map_field)
     # add to this_array
     return new_array.add_fields(expanded_info)
 
@@ -1350,6 +1365,32 @@ class _LSCArrayWithDefaults(LSCArray):
         return super(_LSCArrayWithDefaults, cls).__new__(cls, shape,
             name=None, **kwargs)
 
+    def add_default_fields(self, names, **kwargs):
+        """
+        Adds one or more empty default fields to self.
+
+        Parameters
+        ----------
+        names: (list of) string(s)
+            The names of the fields to add. Must be a field in self's default
+            fields.
+        
+        Other keyword args are any arguments passed to self's default fields.
+
+        Returns
+        -------
+        new array: instance of this array
+            A copy of this array with the field added.
+        """
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+        fields = fields_from_names(self.default_fields(**kwargs), names)
+        arrays = []
+        names = []
+        for name,dt in fields.items():
+            arrays.append(default_empty(self.size, dtype=dt)) 
+            names.append(name)
+        return self.add_fields(arrays, names)
 
 
 #
@@ -2108,14 +2149,12 @@ SimInspiral([['H1', 'L1'],
                 'event_id': int,
                 }.items(), nrecovered),
             # distribution params
-            'distribution': {
-                'min_vol': float,
-                'volume_weight': float,
-                # XXX: How to store information about mass and spin
-                # distributions?
-                }.items()
+            'min_vol': float,
+            'volume_weight': float,
+            # XXX: How to store information about mass and spin
+            # distributions?
             }
-            # site params
+        # site params
         site_params = {
             det: {
                 'eff_dist': float,
@@ -2249,3 +2288,16 @@ SimInspiral([['H1', 'L1'],
             for det in detectors]).T
         return numpy.array([','.join(detectors[numpy.where(mask[ii,:])]) \
             for ii in range(self.size)])
+
+    @property
+    def recovered_idx(self):
+        """
+        Returns the indices in self that were recovered.
+        """
+        return numpy.where(self['isrecovered'])
+
+    def get_recovered(self):
+        """
+        Returns the elements in self that were recovered.
+        """
+        return self[self.recovered_idx]
