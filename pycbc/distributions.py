@@ -29,6 +29,88 @@ import lal
 from glue import segments
 
 
+
+#
+# =============================================================================
+#
+#                           Distances
+#
+# =============================================================================
+#
+
+# FIXME: These should be converted to CBCDistributions, so a distribution
+# other than uniform in volume can be handled
+def get_r_distribution_from_inspinj(connection):
+    """
+    Gets the distance distribution that was given to inspinj from the
+    process_params table.
+    """
+    sqlquery = """
+        SELECT
+            process_id, param, value
+        FROM
+            process_params
+        WHERE
+            program == "inspinj" AND
+            (
+                param == "--min-distance" OR
+                param == "--max-distance" OR
+                param == "--d-distr" OR
+                param == "--dchirp-distr"
+            )
+        """
+    rdistrs = {}
+    for process_id, param, value in connection.cursor().execute(sqlquery):
+        # order of storing things is type, distribution, min, max
+        rdistrs.setdefault(process_id, ['', '', 0., 0.])
+        if param == "--d-distr":
+            rdistrs[process_id][0] = 'distance'
+            rdistrs[process_id][1] = value
+        if param == "--dchirp-distr":
+            rdistrs[process_id][0] = "chirp_dist"
+            rdistrs[process_id][1] = "uniform"
+        if param == "--min-distance":
+            rdistrs[process_id][2] = float(value)/1000. # convert kpc to Mpc
+        if param == "--max-distance":
+            rdistrs[process_id][3] = float(value)/1000.
+    return rdistrs
+
+
+def get_dist_weights_from_inspinj_params(r, distr_type, distribution,
+        r1, r2, mchirp=None):
+    """
+    FIXME: the scale_fac and weights are copied from 
+    randr_by_snr; these functions should be moved to library
+    location instead
+    """
+    if distr_type == "chirp_dist":
+        # scale r1 and r2 by the chirp mass
+        scale_fac = (mchirp/\
+            (2.8 * 0.25**0.6))**(5./6)
+        r1 = r1*scale_fac
+        r2 = r2*scale_fac
+    if distribution == "volume":
+        min_vol = (4./3)*numpy.pi*r1**3.
+        vol_weight = (4./3)*numpy.pi*(r2**3. - r1**3.)
+    elif distribution == "uniform":
+        min_vol = (4./3)*numpy.pi*r1**3.
+        vol_weight = 4.*numpy.pi*(r2-r1) * r**2. 
+    elif distribution == "log10":
+        min_vol = (4./3)*numpy.pi*r1**3.
+        vol_weight = 4.*numpy.pi * r**3. * numpy.log(r2/r1)
+    else:
+        raise ValueError("unrecognized distribution %s" %(
+            distribution))
+    return min_vol, vol_weight
+
+
+#
+# =============================================================================
+#
+#                           Base CBCDistribution
+#
+# =============================================================================
+#
 class CBCDistribution(object):
     """
     Base class to store basic information about a distribution of CBCs.
@@ -176,6 +258,13 @@ def log_rand(min_val, max_val, size=1):
         size=size)
 
 
+#
+# =============================================================================
+#
+#                           Mass Distributions
+#
+# =============================================================================
+#
 class UniformComponent(CBCDistribution):
     """
     A distribution that is uniform in component masses. Can optionally specify
@@ -933,6 +1022,13 @@ def get_data_and_kernel(filename):
     return kernel, m1s, m2s
 
 
+#
+# =============================================================================
+#
+#                           Helper functions
+#
+# =============================================================================
+#
 
 # The known distributions
 distributions = {
@@ -993,8 +1089,6 @@ def get_mdistr_from_database(connection, process_id):
     Gets the mass distribution of the given process_id.
     """
     cursor = connection.cursor()
-    # first, check that the process_id belongs to an inspinj job with the
-    # correct mass distribution
     sqlquery = """
         SELECT
             pp.value
