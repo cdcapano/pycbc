@@ -27,9 +27,10 @@ LSCArrays are wrappers of numpy recarrays with additional functionality useful f
 """
 
 import os, sys
+import copy
+import hashlib
 import inspect
 import numpy
-import operator
 import numpy.lib.recfunctions as recfunctions
 
 import lal
@@ -557,6 +558,33 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     # add to this_array
     return new_array.add_fields(expanded_info)
 
+def file_checksum(filename, hasher=hashlib.sha256, buffersize=65536):
+    """
+    Provides a checksum of the given file. Modified from:
+    <http://stackoverflow.com/a/3431835/1366472>.
+
+    Parameters
+    ----------
+    filename: string
+        Name of the file to checksum.
+    hasher: {hashlib.sha256 | hashlib algorithm}
+        The algorithm used for computing the hash.
+    buffersize: {65536 | int}
+        The number of bytes to read in from the file at a time.
+
+    Returns
+    -------
+    checksum: hex
+        The checksum of the file.
+    """
+    hasher = hasher()
+    f = open(filename, 'rb')
+    buf = f.read(buffersize)
+    while len(buf) > 0:
+        hasher.update(buf)
+        buf = f.read(buffersize)
+    f.close()
+    return hasher.hexdigest()
 
 #
 # =============================================================================
@@ -851,8 +879,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
       dtype=[('simulation_id', '<i8'), ('mass1', '<f4'), ('mass2', '<f4'), ('optimal_snr', '<f8'), ('site_params', [('ifos', 'S2'), ('eff_dists', '<f8')], (2,))])
 ``
     """
-    str_as_obj = False
-    __persistent_attributes__ = ['name']
+    __persistent_attributes__ = ['name', 'source_files', 'id_maps']
 
     def __new__(cls, shape, name=None, set_default_empty=True, **kwargs):
         """
@@ -861,6 +888,8 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         obj = super(LSCArray, cls).__new__(cls, shape, **kwargs).view(
             type=cls)
         obj.name = name
+        obj.source_files = None
+        obj.id_maps = None
         obj.__persistent_attributes__ = cls.__persistent_attributes__
         # zero out the array if desired
         if set_default_empty:
@@ -891,7 +920,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         Copies the values of all of the attributes listed in
         self.__persistent_attributes__ to other.
         """
-        [setattr(other, attr, getattr(self, attr, default)) \
+        [setattr(other, attr, copy.deepcopy(getattr(self, attr, default))) \
             for attr in self.__persistent_attributes__]
 
 
@@ -1072,6 +1101,58 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         values. Only fields that have aliases are returned.
         """
         return dict(c[0] for c in self.dtype.descr if isinstance(c[0], tuple))
+
+    def add_source_file(self, filename, id_field=None, id_ranges=None,
+            include_checksum=False, force=False):
+        """
+        Adds a source file to self.source_files. If id_field is provided,
+        will also include information about the ids that the source file
+        is valid for. This information is stored in a dictionary as:
+        ``self.source_files[filename][id_field] = id_ranges``
+
+        If include_checksum is True, a checksum of the file will be computed
+        and added to:
+        ``self.source_files[filename]['_checksum'] = checksum``.
+
+        If id_field is None and include_checksum is False,
+        ``self.source_files[filename]`` will just be an empty dictionary.
+
+        Parameters
+        ----------
+        filename: string
+            The name of the file.
+        id_field: {None | string}
+            The name of an id field in self for which this file is valid. To
+            refer to a subarray field, use "``.``", e.g.,
+            ``recovered.event_id``.
+        id_ranges: {None | array}
+            The id values for which the file is valid. Can either be an array
+            of the individual id values, or just the minimum and maximum
+            values, to specify a range. If provided, must also provide
+            id_field. If id_field provided and id_ranges is None, the ranges
+            will be ``[self[id_field].min(), self[id_field].max()]``.
+        include_checksum: bool
+            If True, will calculate a checksum for the file and add it to
+            the checksum fields. Default is False.
+        force: bool
+            If the filename is already in self.source_files, overwrite it.
+            Otherwise, a ValueError will be raised. Default is False.
+        """
+        if self.source_files is None:
+            self.source_files = {}
+        if id_field is None and id_ranges is not None:
+            raise ValueError("if providing an id_ranges must " + \
+                "also provide id_field")
+        if filename in self.source_files and not force:
+            raise ValueError("filename %s already in source_files" %(filename))
+        self.source_files[filename] = {}
+        if id_field is not None:
+            if id_ranges is None:
+                id_ranges = numpy.array([self[id_field].min(),
+                    self[id_field].max()])
+            self.source_files[filename][id_field] = id_ranges
+        if include_checksum:
+            self.source_files[filename]['_checksum'] = file_checksum(filename)
 
 
     def add_fields(self, arrays, names=None, assubarray=False):
@@ -1288,6 +1369,102 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             expand_field_name=expand_field_name,
             other_map_field=other_map_field, get_fields=get_fields,
             map_indices=map_indices)
+
+    def append(self, other, remap_ids=None):
+        """
+        Appends another array to this array, returning a copy of the combined
+        array. If a list of remap_ids is provided, those ids will be updated
+        in the combined array to prevent collisions. The persistent attributes
+        of the new array (e.g., name) will be retrieved from this array.
+
+        Parameters
+        ----------
+        other: array
+            The array to append. Must have the same dtype as this array.
+        remap_ids: {None | (list of) string(s)}
+            A (list of) field name(s) to update. For every field name provided,
+            the values in other array that are added to self will be increased
+            by the maximum value of the field in self. The ids that are updated
+            and the padding by which they were updated is stored to the new
+            array's ``id_maps`` attribute.
+
+        Returns
+        -------
+        combined: array
+            A copy of self with other appended.
+
+        Example
+        -------
+        Append two sim_inspiral arrays together:
+``
+>>> sims1.name, sims1.size, sims1.simulation_id, sims1.process_id, sims1.source_files, sims1.id_maps
+('sim_inspiral',
+ 11610,
+ array([    0,     1,     2, ..., 11607, 11608, 11609]),
+ array([0, 0, 0, ..., 0, 0, 0]),
+ {'inj_files/HL-INJECTIONS_BNS0INJ-1117400416-928800.xml': {'_checksum': '2a7a0f88f88476cd2ae85d03f9772a8da0d49ee734352cee79cfd64943d99bbe',
+   'simulation_id': array([    0, 11609])}},
+ None)
+
+>>> sims2.name, sims2.size, sims2.simulation_id, sims2.process_id, sims2.source_files, sims2.id_maps
+('other_sim_inspiral',
+ 11610,
+ array([    0,     1,     2, ..., 11607, 11608, 11609]),
+ array([0, 0, 0, ..., 0, 0, 0]),
+ {'inj_files/HL-INJECTIONS_BNS1INJ-1117400416-928800.xml': {'_checksum': 'cab57e614de403fd58affa3994f5920c56280c2c283871e8b730717338629fa9',
+   'simulation_id': array([    0, 11609])}},
+ None)
+
+>>> sims = sims1.append(sims2, ['simulation_id', 'process_id'])
+
+>>> sims.name, sims.size, sims.simulation_id, sims.process_id, sims.source_files, sims.id_maps
+('sim_inspiral',
+ 23220,
+ array([    0,     1,     2, ..., 23217, 23218, 23219]),
+ array([0, 0, 0, ..., 1, 1, 1]),
+ {'inj_files/HL-INJECTIONS_BNS0INJ-1117400416-928800.xml': {'_checksum': '2a7a0f88f88476cd2ae85d03f9772a8da0d49ee734352cee79cfd64943d99bbe',
+   'simulation_id': array([    0, 11609])},
+  'inj_files/HL-INJECTIONS_BNS1INJ-1117400416-928800.xml': {'_checksum': 'cab57e614de403fd58affa3994f5920c56280c2c283871e8b730717338629fa9',
+   'simulation_id': array([11610, 23219])}},
+ {'process_id': [(1, 1, 1)], 'simulation_id': [(11610, 23219, 11610)]})
+``
+        """
+        newarr = numpy.append(self, other).view(type=type(self))
+        # copy the persistent attributes from self
+        self.__copy_attributes__(newarr)
+        # remap ids if desired
+        if remap_ids is not None:
+            if isinstance(remap_ids, str) or isinstance(remap_ids, unicode):
+                remap_ids = [remap_ids]
+            if newarr.id_maps is None:
+                newarr.id_maps = {}
+            for idfield in remap_ids:
+                # get the maximum value from self and use that as a padding
+                pad = self[idfield].max() + 1
+                newarr[idfield][self.size:] += pad
+                # store in id map: we store the range of values of the new
+                # id values, and the pad used; this can be used to get the
+                # value of the original ids
+                new_ids = newarr[idfield][self.size:]
+                idmap = (new_ids.min(), new_ids.max(), pad)
+                try:
+                    newarr.id_maps[idfield].append(idmap)
+                except KeyError:
+                    newarr.id_maps[idfield] = []
+                    newarr.id_maps[idfield].append(idmap)
+        if hasattr(other, 'source_files') and other.source_files is not None:
+            for filename in other.source_files:
+                source_info = copy.deepcopy(other.source_files[filename])
+                newarr.source_files[filename] = source_info 
+                # update any ids that were remapped
+                if remap_ids is not None:
+                    update_fields = [id_field for id_field in source_info \
+                        if id_field in remap_ids]
+                    for id_field in update_fields:
+                        newarr.source_files[filename][id_field] = \
+                              source_info[id_field] + \
+                              newarr.id_maps[id_field][-1][-1]
+        return newarr
 
 
 def aliases_from_fields(fields):
@@ -1848,7 +2025,7 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
     default_name = 'coinc_event'
     # add detectors as a persistent attribute
     __persistent_attributes__ = ['detectors'] + \
-        super(CoincEvent, CoincEvent).__persistent_attributes__
+        SnglEvent.__persistent_attributes__
 
     @classmethod
     def default_fields(cls, ranking_stat_alias='new_snr',
@@ -2123,7 +2300,7 @@ SimInspiral([['H1', 'L1'],
     default_name = 'sim_inspiral'
     # add detectors as a persistent attribute
     __persistent_attributes__ = ['detectors'] + \
-        super(SimInspiral, SimInspiral).__persistent_attributes__
+        Waveform.__persistent_attributes__
 
     @classmethod
     def default_fields(cls, detectors=['detector1', 'detector2'],
@@ -2132,6 +2309,8 @@ SimInspiral([['H1', 'L1'],
         The number of ifos stored in site params and the maximum number of
         events that can be stored in the recovered fields can be set.
         """
+        if detectors is None:
+            detectors = []
         fields = {
             # ids
             'simulation_id': int,
@@ -2294,7 +2473,7 @@ SimInspiral([['H1', 'L1'],
         """
         Returns the indices in self that were recovered.
         """
-        return numpy.where(self['isrecovered'])
+        return numpy.where(self['isrecovered'])[0]
 
     def get_recovered(self):
         """
