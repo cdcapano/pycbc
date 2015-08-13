@@ -387,7 +387,7 @@ for fnum, infile in enumerate(filenames):
                     # the full time series, not to the cropped time series
                     chisq_indx = pytypes.Array(numpy.array([maxidx+N/4]))
                     chisq = vetoes.power_chisq_at_points_from_precomputed(
-                        chisq_corr, pytypes.Array(numpy.array([snr/norm])),
+                        chisq_corr, numpy.array([snr/norm]),
                         norm, chisq_bins, chisq_indx)[0]
 
                     newsnr = overlap_utils.new_snr(snr, chisq,
