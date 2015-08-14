@@ -1565,7 +1565,7 @@ class _LSCArrayWithDefaults(LSCArray):
         arrays = []
         names = []
         for name,dt in fields.items():
-            arrays.append(default_empty(self.size, dtype=dt)) 
+            arrays.append(default_empty(self.size, dtype=[(name, dt)])) 
             names.append(name)
         return self.add_fields(arrays, names)
 
