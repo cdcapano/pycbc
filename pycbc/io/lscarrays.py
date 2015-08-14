@@ -235,43 +235,23 @@ def merge_arrays(merge_list, names=None, flatten=True, outtype=None):
     if not all(merge_list[0].shape == arr.shape for arr in merge_list):
         raise ValueError("all of the arrays in merge_list must have the " +
             "same shape")
-    try:
-        # recfunctions' merge arrays has an annoying feature about flattend:
-        # if an array in merge list has a subarray which has only one field,
-        # it will make that subarray a field. For instance, if I have an array
-        # that has field ('foo', [('bar', float)]); instead of making foo a
-        # field of the output 'bar' will be made a field of the output. This
-        # only happens if there is one field; e.g., if the field was
-        # ('foo', [('bar', float),('narf', float)]), then foo would be added,
-        # with sub-fields 'bar' and 'narf'. The code in the ValueError block
-        # does not do this when flatten is true; i.e., it treats subarrays
-        # as subarrays. To indicate that we want a partial flatten, flatten
-        # should be set to -1. This will force the other block of code, below.
-        if flatten == -1:
-            raise ValueError("")
-        new_arr = recfunctions.merge_arrays(merge_list, flatten=flatten)
-    # merge arrays will fail if there are objects; in that case, we'll do
-    # it manually
-    except ValueError:
-        if flatten == -1:
-            flatten = True
-        if flatten:
-            new_dt = combine_fields([arr.dtype for arr in merge_list])
+    if flatten:
+        new_dt = combine_fields([arr.dtype for arr in merge_list])
+    else:
+        new_dt = numpy.dtype([('f%i' %ii, arr.dtype.descr) \
+            for ii,arr in enumerate(merge_list)])
+    new_arr = numpy.empty(merge_list[0].shape, dtype=new_dt)
+    # ii is a counter to keep track of which fields from the new array
+    # go with which arrays in merge list
+    ii = 0
+    for arr in merge_list:
+        if arr.dtype.names is None:
+            new_arr[new_dt.names[ii]] = arr
+            ii += 1
         else:
-            new_dt = numpy.dtype([('f%i' %ii, arr.dtype.descr) \
-                for ii,arr in enumerate(merge_list)])
-        new_arr = numpy.empty(merge_list[0].shape, dtype=new_dt)
-        # ii is a counter to keep track of which fields from the new array
-        # go with which arrays in merge list
-        ii = 0
-        for arr in merge_list:
-            if arr.dtype.names is None:
-                new_arr[new_dt.names[ii]] = arr
+            for field in arr.dtype.names:
+                new_arr[field] = arr[field]
                 ii += 1
-            else:
-                for field in arr.dtype.names:
-                    new_arr[field] = arr[field]
-                    ii += 1
     # set the names if desired
     if names is not None:
         new_arr.dtype.names = names
@@ -1033,7 +1013,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         return obj
 
     @classmethod
-    def from_ligolw_table(cls, table, columns=None, dtype=None):
+    def from_ligolw_table(cls, table, columns=None, cast_to_dtypes=None):
         """
         Converts the given ligolw table into an LSCArray. The tableName
         attribute is copied to the array's name.
@@ -1046,8 +1026,12 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             Optionally specify a list of columns to retrieve. All of the
             columns must be in the table's validcolumns attribute. If None
             provided, all the columns in the table will be converted.
-        dtype: {None | numpy.dtype readable}
-            Override the column's dtype to dtype.
+        dtype: {None | dict}
+            Override the columns' dtypes using the given dictionary. The
+            dictionary should be keyed by the column names, with the values
+            a tuple that can be understood by numpy.dtype. For example, to
+            cast a ligolw column called "foo" to a field called "bar" with
+            type float, cast_to_dtypes would be: ``{"foo": ("bar", float)}``.
 
         Returns
         -------
@@ -1057,24 +1041,26 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         name = table.tableName.split(':')[0]
         if columns is None:
             # get all the columns
-            columns = table.validcolumns.items()
+            columns = table.validcolumns
         else:
             # note: this will raise a KeyError if one or more columns is
             # not in the table's validcolumns
             columns = {col: table.validcolumns[col] \
-                for col in columns}.items()
+                for col in columns}
+        if cast_to_dtypes is not None:
+            dtype = [cast_to_dtypes[col] for col in columns]
+        else:
+            dtype = columns.items()
         # get the values
         if _default_types_status['ilwd_as_int']:
             input_array = [tuple(
                         getattr(row, col) if dt != 'ilwd:char' \
                         else int(getattr(row, col)) \
-                    for col,dt in columns) \
+                    for col,dt in columns.items()) \
                 for row in table]
         else:
-            input_array = [tuple(getattr(row, col) for col,_ in columns) \
+            input_array = [tuple(getattr(row, col) for col in columns) \
                 for row in table]
-        if dtype is None:
-            dtype = columns
         # return the values as an instance of cls
         return cls.from_records(input_array, dtype=dtype,
             name=name)
@@ -1483,6 +1469,8 @@ def fields_from_names(fields, names=None):
     """
     if names is None:
         return fields
+    if isinstance(names, str) or isinstance(names, unicode):
+        names = [names]
     aliases_to_names = aliases_from_fields(fields)
     names_to_aliases = dict(zip(aliases_to_names.values(),
         aliases_to_names.keys()))
