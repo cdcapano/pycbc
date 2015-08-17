@@ -40,19 +40,19 @@ parser.add_option('-o', '--output-dir', default = '.', help = 'Directory to save
 parser.add_option("-t", "--tmp-space", action = "store", type = "string", default = None, metavar = "PATH", help = "Location of local disk on which to do work. This is used to enhance performance in a networked environment.")
 parser.add_option("-p", "--psd-model", help = "What PSD model to use for overlaps. Options are %s." %(', '.join(overlap_utils.get_psd_models())))
 parser.add_option("-A", "--asd-file", help = "Load the PSD from a dat file containing an ASD. If both this and psd-model specified, this will take precedence.")
-parser.add_option('-f', '--waveform-f-min', type = 'float', help = "Frequency at which to start the waveform generation (in Hz).")
-parser.add_option('-F', '--overlap-f-min', type = 'float', help = "Frequency at which to start the overlap (in Hz). Note: This must be larger than waveform-f-min.")
+parser.add_option("-P", "--psd-file", help = "Load the PSD from a dat file containing a PSD. If both this and asd-model specified, asd-file will take precedence.")
+parser.add_option('-f', '--waveform-f-min', type = 'float', help = "Frequency at which to start the templates' waveform generation (in Hz).")
+parser.add_option('-F', '--overlap-f-min', type = 'float', help = "Frequency at which to start the overlap (in Hz). Note: This must be >= waveform-f-min.")
 parser.add_option('-r', '--sample-rate', type = 'int', help = "Required. Sample rate to use (in Hz). Must be a power of 2. If vary-n is turned on and the sample rate used to generate the waveforms and is less than this, the effectulaness, snr, and chisq will be found by zero-padding the frequency-domain such that the time series will have this sample rate. If the sample rate used in the waveform generation is greater than this, that sample rate will be used.")
 parser.add_option('-l', '--segment-length', type = 'int', help = "Segment length to use (in s). Must be a power of 2. Required if vary-n not used.")
 parser.add_option('-N', '--vary-n', action='store_true', default=False, help='If turned on, the sample rate and segment length used will be set to the smallest possible value between a given template and injection pair.')
 parser.add_option('-n', '--n-realizations', type = 'int', help = "Number of noise realizations to generate to calculate the mean snr, chisq, and new-snr.")
 parser.add_option('-i', '--ifo', metavar='IFO1[,IFO2,...]', help="What ifo(s) to inject into. If none specified, no response function will be applied to the injections. If multiple specified, combined new snr, snr, and chisq will be calculated and stored, with the single detector results saved to their own table. No coincidence window is used: two injections are counted as coincident as long as they create triggers in a realization that have SNRs > than the loudest trigger in the same realization without injections, regardless of the time difference between the triggers. Note that the same PSD is used for all the ifos.")
 parser.add_option('-U', '--user-tag', help = "User tag to add to all output files.")
-parser.add_option('-a', '--approximant', help = "Approximant to use for the templates.")
+parser.add_option('-a', '--approximant', metavar='APPRX[:taper[:parameter:min,max;APPRX2[:taper:parameter:min,max;...]]]', help = "Approximant(s) to use for the templates. For TD approximant, can set whether or not to taper. Options are: start, end, start_end. If not specified, no tapering will be done. Can also specify multiple approximants, and what parameter ranges to apply them. If specifying multiple approximants, the combination of all of the parameter ranges specified must cover the entire range of templates.")
 parser.add_option("", "--amp-order", type=int, default=0, help="Amplitude order to use for templates. Default is 0.")
 parser.add_option("", "--phase-order", type=int, default=7, help="Phase order to use for templates. Default is 7 (3.5PN).")
 parser.add_option("", "--spin-order", type=int, default=None, help="Spin order to use for templates.")
-parser.add_option("", "--taper", help = "For TD approximants, set whether or not to taper the templates at the start and/or end. Options are: start, end, start_end. If not specified, no tapering will be done.")
 parser.add_option('-b', '--n-chisq-bins', type = 'int', help = 'Number of chisq bins to use.')
 parser.add_option('-M', '--use-waveform-cache', metavar = '"memory" or "disk"', help = "Use a cache to save waveforms. This will speed up computation time if you have the same injection mapped to multiple templates, or the same template mapped to multiple injections. Options are 'memory' or 'disk'. If 'memory', all waveforms will be stored in memory. If 'disk', waveforms will be stored to a temporary h5py archive. If a temp-space is specified, this temporary archive will be placed there; otherwise, it will be created in the current working directory.")
 parser.add_option('-T', '--checkpoint-dt', type = 'float', default = numpy.inf, help = 'Number of minutes between checkpoints. Default is infinity, meaning no checkpointing.')
@@ -107,15 +107,16 @@ if not opts.vary_n:
     N = sample_rate * seg_length
     df = 1./seg_length
 
-if opts.asd_file is None and opts.psd_model is None:
-    raise ValueError("must specify --asd-file or --psd-model")
+if opts.asd_file is None and opts.psd_model is None and \
+        opts.psd_file is None:
+    raise ValueError, "must specify --(p|a)sd-file or --psd-model"
 if opts.asd_file is not None and not os.path.exists(opts.asd_file):
-    raise ValueError("asd-file %s not found" % opts.asd_file)
+    raise ValueError, "asd-file %s not found" % opts.asd_file
+if opts.psd_file is not None and not os.path.exists(opts.psd_file):
+    raise ValueError, "psd-file %s not found" % opts.psd_file
 
 if not opts.n_realizations:
     raise ValueError, "--n-realizations required"
-
-taper = waveform_utils.get_taper_string(opts.taper)
 
 # create a waveform archive if desired
 if opts.use_waveform_cache == 'disk':
@@ -131,7 +132,7 @@ last_time = time.time()
 work_space = overlap_utils.WorkSpace()
 
 # get the psd model to use
-if opts.asd_file is None:
+if opts.asd_file is None and opts.psd_file is not None:
     psd_model = opts.psd_model
 
 for fnum, infile in enumerate(filenames):
@@ -176,13 +177,13 @@ for fnum, infile in enumerate(filenames):
         print >> sys.stdout, "Getting injections and matching templates..."
     inj_tmplt_map = overlap_utils.get_injection_template_map(connection)
     injections = waveform_utils.InjectionDict()
-    injections.get_injections(connection, wfmin, archive=archive,
+    injections.get_injections(connection, archive=archive,
         calc_f_final=opts.vary_n, estimate_dur=True,
         verbose=opts.verbose)
     templates = waveform_utils.TemplateDict()
     templates.get_templates(connection, opts.approximant, wfmin,
         amp_order=opts.amp_order, phase_order=opts.phase_order,
-        spin_order=opts.spin_order, taper=taper,
+        spin_order=opts.spin_order,
         archive=archive, calc_f_final=True, estimate_dur=True,
         verbose=opts.verbose, only_matching=True)
 
@@ -288,10 +289,15 @@ for fnum, infile in enumerate(filenames):
 
             # get psd and needed workspace vectors
             if opts.asd_file is not None:
-                psd = work_space.get_psd_from_file(wfmin, sample_rate,
-                    seg_length, opts.asd_file, dyn_range_exp=0)
+                psd = work_space.get_psd_from_file(ofmin, sample_rate,
+                    seg_length, opts.asd_file, is_asd_file=True,
+                    dyn_range_exp=0)
+            elif opts.psd_file is not None:
+                psd = work_space.get_psd_from_file(ofmin, sample_rate,
+                    seg_length, opts.psd_file, is_asd_file=False,
+                    dyn_range_exp=0)
             else:
-                psd = work_space.get_psd(wfmin, sample_rate, seg_length,
+                psd = work_space.get_psd(ofmin, sample_rate, seg_length,
                     psd_model, dyn_range_exp=0)
 
             # we'll need a place to store work space vectors;
@@ -438,7 +444,7 @@ for fnum, infile in enumerate(filenames):
         this_result.sample_rate = int(1./cmplx_ts.delta_t)
         this_result.overlap_f_min = ofmin 
         this_result.waveform_f_min = wfmin
-        this_result.tmplt_approximant = opts.approximant 
+        this_result.tmplt_approximant = tmplt.approximant 
         this_result.effectualness = effectualness
         this_result.time_offset = time_offset.gpsSeconds
         this_result.time_offset_ns = time_offset.gpsNanoSeconds
@@ -470,7 +476,7 @@ for fnum, infile in enumerate(filenames):
                 this_result.sample_rate = int(1./cmplx_ts.delta_t)
                 this_result.overlap_f_min = ofmin 
                 this_result.waveform_f_min = wfmin
-                this_result.tmplt_approximant = opts.approximant 
+                this_result.tmplt_approximant = tmplt.approximant 
                 this_result.effectualness = effectualness
                 this_result.time_offset = time_offset.gpsSeconds
                 this_result.time_offset_ns = time_offset.gpsNanoSeconds

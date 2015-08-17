@@ -106,8 +106,8 @@ parser = OptionParser(description = __description__)
 parser.add_option("-t", "--tmp-space", action = "store", type = "string", default = None, metavar = "PATH", help = "Location of local disk on which to do work. This is used to enhance performance in a networked environment.")
 parser.add_option("-p", "--psd-model", help = "What PSD to use for overlaps. Options are %s." %(', '.join(overlap_utils.get_psd_models())))
 parser.add_option("-A", "--asd-file", help = "Load the PSD from a dat file containing an ASD. If both this and psd-model specified, this will take precedence.")
-parser.add_option('-f', '--waveform-f-min', type = 'float', help = "Frequency at which to start the waveform generation (in Hz).")
-parser.add_option('-F', '--overlap-f-min', type = 'float', help = "Frequency at which to start the overlap (in Hz). Note: This must be larger than waveform-f-min.")
+parser.add_option("-P", "--psd-file", help = "Load the PSD from a dat file containing a PSD. If both this and asd-model specified, asd-file will take precedence.")
+parser.add_option('-F', '--overlap-f-min', type = 'float', help = "Frequency at which to start the overlap (in Hz). Note: This must be larger than the smallest f-lower in the injection sets.")
 parser.add_option('-r', '--default-sample-rate', type = 'int', default = 4096, help = "Default sample rate to use (in Hz). Must be a power of 2. Only needed if injections' f_final column is not populated. If they are populated, the smallest sample rate giving a Nyquist frequency greater than the f_final of each injection will be used. Default is 4096.")
 parser.add_option('-i', '--ifo', metavar='IFO1[,IFO2,...]', help="What ifo(s) to inject into. If none specified, no response function will be applied to the injections. If multiple specified, the quadrature sum of the overlap of the injection with itself in each ifo will be used for determining distance limits. Currently, the same PSD is used for all the ifos.")
 parser.add_option('--use-effective-distance', action='store_true', default=False, help='Set the inclination angle to 0, and fix the sky location angles and polarization to be 0. A weight of 1/2.26 will be applied to the distance. Otherwise, angles for the sky-location will be drawn uniformly on the unit sphere. This may only be used for a single ifo.')
@@ -127,19 +127,17 @@ opts, filenames = parser.parse_args()
 
 # check options
 if not opts.no_sigmas:
-    wFmin = opts.waveform_f_min
     oFmin = opts.overlap_f_min
-    if oFmin < wFmin:
-        raise ValueError, "--waveform-f-min must be less than overlap-f-min"
     default_sample_rate = opts.default_sample_rate
     if numpy.log2(default_sample_rate) % 1 != 0.:
         raise ValueError, "--default-sample-rate must be a power of 2"
-    if opts.asd_file is None and opts.psd_model is None:
-        raise ValueError, "must specify --asd-file or --psd-model"
+    if opts.asd_file is None and opts.psd_model is None and \
+            opts.psd_file is None:
+        raise ValueError, "must specify --(p|a)sd-file or --psd-model"
     if opts.asd_file is not None and not os.path.exists(opts.asd_file):
         raise ValueError, "asd-file %s not found" % opts.asd_file
-else:
-    wFmin = 10. # just need a dummy value
+    if opts.psd_file is not None and not os.path.exists(opts.psd_file):
+        raise ValueError, "psd-file %s not found" % opts.psd_file
 
 ifos = []
 if opts.ifo is not None:
@@ -211,7 +209,7 @@ random.seed(opts.seed)
 workSpace = overlap_utils.WorkSpace()
 
 # get the psd model to use
-if opts.asd_file is None:
+if opts.asd_file is None and opts.psd_file is None:
     psd_model = opts.psd_model
 
 for fnum, infile in enumerate(filenames):
@@ -243,14 +241,8 @@ for fnum, infile in enumerate(filenames):
         print >> sys.stdout, "Cycling over injections..."
     # get the injections
     injections = waveform_utils.InjectionDict()
-    try:
-        injections.get_injections(connection, wFmin, calc_f_final=True,
-            estimate_dur=True, verbose=opts.verbose)
-    except RuntimeError:
-        # this can happen if GetFinalFrequency in lalsimulation doesn't know
-        # about this approximant; if so, turn off calc_f_final
-        injections.get_injections(connection, wFmin, calc_f_final=False,
-            estimate_dur=True, verbose=opts.verbose)
+    injections.get_injections(connection, calc_f_final=True,
+        estimate_dur=True, verbose=opts.verbose)
 
     for ii, inj in enumerate(injections.as_list):
         if opts.verbose:
@@ -294,10 +286,15 @@ for fnum, infile in enumerate(filenames):
             # get the psd and needed workspace vectors
             # FIXME: eventually allow different psds to be used
             if opts.asd_file is not None:
-                psd = workSpace.get_psd_from_file(wFmin, sample_rate,
-                    seg_length, opts.asd_file, dyn_range_exp=0)
+                psd = workSpace.get_psd_from_file(oFmin, sample_rate,
+                    seg_length, opts.asd_file, is_asd_file=True,
+                    dyn_range_exp=0)
+            elif opts.psd_file is not None:
+                psd = workSpace.get_psd_from_file(oFmin, sample_rate,
+                    seg_length, opts.psd_file, is_asd_file=False,
+                    dyn_range_exp=0)
             else:
-                psd = workSpace.get_psd(wFmin, sample_rate, seg_length,
+                psd = workSpace.get_psd(oFmin, sample_rate, seg_length,
                     psd_model, dyn_range_exp=0)
 
             # calculate the sigmas in each ifo

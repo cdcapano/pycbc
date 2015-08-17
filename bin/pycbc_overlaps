@@ -35,21 +35,21 @@ parser.add_option('-o', '--output-dir', default = '.', help = 'Directory to save
 parser.add_option("-t", "--tmp-space", action = "store", type = "string", default = None, metavar = "PATH", help = "Location of local disk on which to do work. This is used to enhance performance in a networked environment.")
 parser.add_option("-p", "--psd-model", help = "What PSD model to use for overlaps. Options are %s." %(', '.join(overlap_utils.get_psd_models())))
 parser.add_option("-A", "--asd-file", help = "Load the PSD from a dat file containing an ASD. If both this and psd-model specified, this will take precedence.")
-parser.add_option('-f', '--waveform-f-min', type = 'float', help = "Frequency at which to start the waveform generation (in Hz).")
-parser.add_option('-F', '--overlap-f-min', type = 'float', help = "Frequency at which to start the overlap (in Hz). Note: This must be larger than waveform-f-min.")
+parser.add_option("-P", "--psd-file", help = "Load the PSD from a dat file containing a PSD. If both this and asd-model specified, asd-file will take precedence.")
+parser.add_option('-f', '--waveform-f-min', type = 'float', help = "Frequency at which to start the templates' waveform generation (in Hz).")
+parser.add_option('-F', '--overlap-f-min', type = 'float', help = "Frequency at which to start the overlap (in Hz). Note: This must be >= waveform-f-min.")
 parser.add_option('-r', '--sample-rate', type = 'int', help = "Required. Sample rate to use (in Hz). Must be a power of 2. If vary-n is turned on and the sample rate used to generate the waveforms and compute overlaps is less than this, the effectulaness time series will be upsampled to this sample rate. If vary-n and the sample rate needed to generate a waveform is greater than this, the waveform will be downsampled using the LDAS filter.")
 parser.add_option('-l', '--segment-length', type = 'int', help = "Segment length to use (in s). Must be a power of 2. Required if vary-n not used.")
 parser.add_option('-n', '--vary-n', action='store_true', default=False, help='If turned on, the sample rate and segment length used will be set to the smallest possible value between a given template and injection. This speeds up overlap calculations, but may reduce the accuracy of the effectualness measurement.')
-parser.add_option('-P', '--precision', metavar="[double|single]", default='double', help="What precision to use. Options are 'double' or 'single'. Default is double.")
+parser.add_option('', '--precision', metavar="[double|single]", default='double', help="What precision to use. Options are 'double' or 'single'. Default is double.")
 parser.add_option('-D', '--dyn-range-exp', type=int, default=int(numpy.log2(pycbc.DYN_RANGE_FAC)), help="What power to use for the dynamic range factor, which = 2**dyn_range_exp. This is necessary if using single precision. Default is %i." %(int(numpy.log2(pycbc.DYN_RANGE_FAC))))
 parser.add_option('-i', '--ifo', help = "What ifo to inject into. If none specified, no response function will be applied to the injections.")
 parser.add_option('-U', '--user-tag', help = "User tag to add to all Overlap files.")
 parser.add_option('-M', '--use-injection-cache', metavar = '"memory" or "disk"', help = "Speed up calculations by using an injection cache. Options are 'memory' or 'disk'. If 'memory', all injections will be stored in memory. If 'disk', injections will be stored to a temporary hdf5 archive. If a temp-space is specified, this temporary archive will be placed there; otherwise, it will be created in the current working directory.")
-parser.add_option('-a', '--approximant', help = "Approximant to use for the templates.")
+parser.add_option('-a', '--approximant', metavar='APPRX[:taper[:parameter:min,max;APPRX2[:taper:parameter:min,max;...]]]', help = "Approximant(s) to use for the templates. For TD approximant, can set whether or not to taper. Options are: start, end, start_end. If not specified, no tapering will be done. Can also specify multiple approximants, and what parameter ranges to apply them. If specifying multiple approximants, the combination of all of the parameter ranges specified must cover the entire range of templates.")
 parser.add_option("", "--amp-order", type=int, default=0, help="Amplitude order to use for templates. Default is 0.")
 parser.add_option("", "--phase-order", type=int, default=7, help="Phase order to use for templates. Default is 7 (3.5PN).")
 parser.add_option("", "--spin-order", type=int, default=None, help="Spin order to use for templates.")
-parser.add_option("", "--taper", help = "For TD approximants, set whether or not to taper the templates at the start and/or end. Options are: start, end, start_end. If not specified, no tapering will be done.")
 parser.add_option("", "--apply-weights", metavar="WEIGHT1[,WEIGHT2,...]", default="uniform", help="Apply a weight to a template when maximizing the overlap of an injection over the bank. Options are %s. Default is uniform. To specify more than one weight, separate the weights by commas. A separate maximization will be performed for each weight specified. The name of the weight associated with each maximization is stored in the description column of the coinc_definer table." %(', '.join(overlap_utils.weight_functions.keys())))
 parser.add_option('', '--simple-window', metavar='PARAM:LOWER[:UPPER]', help="Only filter templates that lie within the given fractional range of the given parameter of an injection. LOWER must be < 1. If an UPPER is not specified, the LOWER fractional range will be used. For example, if set to mchirp:0.2, only templates that have an mchirp within +/-0.2 of an injection's mchirp will be filtered with that injection. If set to mchirp:0.2:0.5, templates with an mchirp [- 0.2, +0.5] * the injection's mchirp will be filtered.")
 parser.add_option('', '--match-window-db', help = 'Use the match windows specified in the given database to reduce the number of overlaps computed. This can provide a more fine-tuned match window than that provided by use-simple-window. This cannot be used at the same time as use-simple-window.')
@@ -100,16 +100,18 @@ if not opts.vary_n:
 # with really high mass systems
 global_min_seg_length = 4
 
-if opts.asd_file is None and opts.psd_model is None:
-    raise ValueError("must specify --asd-file or --psd-model")
+if opts.asd_file is None and opts.psd_model is None and \
+        opts.psd_file is None:
+    raise ValueError, "must specify --(p|a)sd-file or --psd-model"
 if opts.asd_file is not None and not os.path.exists(opts.asd_file):
-    raise ValueError("asd-file %s not found" % opts.asd_file)
+    raise ValueError, "asd-file %s not found" % opts.asd_file
+if opts.psd_file is not None and not os.path.exists(opts.psd_file):
+    raise ValueError, "psd-file %s not found" % opts.psd_file
 if (opts.use_injection_cache is not None and not 
         (opts.use_injection_cache == 'disk' or
         opts.use_injection_cache == 'memory')):
     raise ValueError('if using injection cache, --use-injection-cache must ' +\
         'be set to "disk" or "memory"')
-taper = waveform_utils.get_taper_string(opts.taper)
 
 dyn_range_fac = 2.**opts.dyn_range_exp
 if opts.precision.lower() == 'single':
@@ -164,15 +166,10 @@ elif opts.match_window_db is not None:
             inj_apprx
         FROM
             match_windows
-        WHERE
-            tmplt_apprx == ?
         '''
-    apprxs = [apprx[0] for apprx in connection.cursor().execute(sqlquery,
-        (opts.approximant,))]
-    for apprx in apprxs:
+    for (apprx,) in connection.cursor().execute(sqlquery).fetchall():
         pwList = overlap_utils.ParamWindowList()
-        pwList.load_from_database(connection, 'mchirp', apprx,
-            tmplt_apprx=opts.approximant)
+        pwList.load_from_database(connection, 'mchirp', apprx)
         param_windows[apprx] = pwList
 else:
     # we'll just create a dummy function that always evaluates to True
@@ -325,20 +322,22 @@ for fnum, infile in enumerate(filenames):
         in connection.cursor().execute(sqlquery)])
 
     # get the templates
-    # Note: Because FD waveforms have the ability to terminate
-    # at any frequency, we'll set a maximum f final equal to
-    # the target sample rate /2 for FD approximants.
-    if lalsim.SimInspiralImplementedFDApproximants(getattr(
-            lalsim, opts.approximant)):
-        max_f_final = target_sample_rate/2
-    else:
-        max_f_final = numpy.inf
     templates = waveform_utils.TemplateDict()
+    # if there are multiple approximants, we'll just use the first one to
+    # create the initial list; we'll adjust this later
     templates.get_templates(connection, opts.approximant, wfmin,
         amp_order=opts.amp_order, phase_order=opts.phase_order,
-        spin_order=opts.spin_order, taper=taper,
-        calc_f_final=True, max_f_final=max_f_final, estimate_dur=True,
+        spin_order=opts.spin_order,
+        calc_f_final=True, estimate_dur=True,
         verbose=opts.verbose, only_matching=False, get_weights=True)
+    # Because FD waveforms have the ability to terminate
+    # at any frequency, we'll set a maximum f final equal to
+    # the target sample rate /2 for FD approximants.
+    max_f_final = target_sample_rate/2
+    for tmplt in templates.values():
+        if lalsim.SimInspiralImplementedFDApproximants(getattr(
+                lalsim, tmplt.approximant)) and tmplt.f_final > max_f_final:
+            tmplt.set_f_final(max_f_final)
     templates.clear_sigmas()
     if opts.verbose:
         print >> sys.stdout, "Database contains %i templates" %(
@@ -361,7 +360,7 @@ for fnum, infile in enumerate(filenames):
 
     # get the injections
     injections = waveform_utils.InjectionDict()
-    injections.get_injections(connection, wfmin, archive=archive,
+    injections.get_injections(connection, archive=archive,
         calc_f_final=True, estimate_dur=True,
         verbose=opts.verbose)
     # set the maximum f_final if the injections is an FD waveform
@@ -579,11 +578,15 @@ for fnum, infile in enumerate(filenames):
             #   Get the PSD and needed workspace vectors
             #
             if opts.asd_file is not None:
-                psd = workSpace.get_psd_from_file(wfmin, sample_rate,
-                    seg_length, opts.asd_file,
+                psd = workSpace.get_psd_from_file(ofmin, sample_rate,
+                    seg_length, opts.asd_file, is_asd_file=True,
+                    dyn_range_exp=opts.dyn_range_exp)
+            elif opts.psd_file is not None:
+                psd = workSpace.get_psd_from_file(ofmin, sample_rate,
+                    seg_length, opts.psd_file, is_asd_file=False,
                     dyn_range_exp=opts.dyn_range_exp)
             else:
-                psd = workSpace.get_psd(wfmin, sample_rate, seg_length,
+                psd = workSpace.get_psd(ofmin, sample_rate, seg_length,
                     opts.psd_model, dyn_range_exp=opts.dyn_range_exp)
             psd = psd.astype(real_type)
 
@@ -652,7 +655,7 @@ for fnum, infile in enumerate(filenames):
             thisResult.sample_rate = sample_rate
             thisResult.overlap_f_min = ofmin 
             thisResult.waveform_f_min = wfmin
-            thisResult.tmplt_approximant = opts.approximant 
+            thisResult.tmplt_approximant = tmplt.approximant 
             thisResult.effectualness = effectualness
             thisResult.time_offset = time_offset.gpsSeconds
             thisResult.time_offset_ns = time_offset.gpsNanoSeconds

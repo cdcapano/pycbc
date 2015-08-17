@@ -14,6 +14,7 @@ from pycbc import types as pyTypes
 from pycbc import filter
 from pycbc import waveform
 from pycbc.filter import resample
+from pycbc import pnutils
 
 from glue import segments
 
@@ -529,11 +530,14 @@ class Waveform(object):
                 use_approximant = self.approximant.split('_')[0]
             else:
                 use_approximant = self.approximant
-            f_final = lalsim.SimInspiralGetFinalFreq(
-                self.mass1*lal.MSUN_SI, self.mass2*lal.MSUN_SI,
-                self.spin1x, self.spin1y, self.spin1z,
-                self.spin2x, self.spin2y, self.spin2z,
-                getattr(lalsim, use_approximant))
+            try:
+                f_final = float(pnutils.get_final_freq(str(use_approximant),
+                    self.mass1, self.mass2, self.spin1z, self.spin2z))
+            except RuntimeError:
+                # will get an error for SpinTaylorTx, so just use SEOBNRv2Peak
+                f_final = float(pnutils.frequency_cutoff_from_name(
+                    'SEOBNRv2Peak', self.mass1, self.mass2, self.spin1z,
+                    self.spin2z))
         self._f_final = f_final
         return self._f_final 
 
@@ -1109,19 +1113,93 @@ class Template(Waveform):
         return htilde
 
 
+def parse_approximants_str(apprxstr):
+    """
+    Parses an approximant string to get approximant names, whether to taper,
+    and what parameter ranges to apply the approximant to. Syntax is:
+    ``APPRX[:taper[:parameter:min,max;APPRX2[:taper:parameter:min,max;...]]]``
+    If specifying more than one approximant, a parameter and ranges
+    must be provided.
+    """
+    approximants = {}
+    apprx_seglookup = []
+    apprx_opts = apprxstr.split(';')
+    for apprx_args in apprx_opts:
+        apprx_args = apprx_args.split(':')
+        if len(apprx_args) == 1:
+            apprx = apprx_args[0]
+            taper = None
+            param = None
+            ranges = segments.segment(-numpy.inf, numpy.inf)
+        elif len(apprx_args) == 2:
+            apprx, taper = apprx_args
+            param = None
+            ranges = segments.segment(-numpy.inf, numpy.inf)
+        elif len(apprx_args) == 4:
+            apprx, taper, param, ranges = apprx_args
+            ranges = segments.segment(map(float, ranges.split(',')))
+        else:
+            raise ValueError("approximant option not formatted correctly")
+        if param is None and len(apprx_opts) > 1:
+            raise ValueError("if specifying more than one approximant, " +
+                "must provide a parameter range for every approximant")
+        if taper == '':
+            taper = None
+        approximants[apprx] = get_taper_string(taper)
+        apprx_seglookup.append((param, ranges, apprx))
+    return approximants, apprx_seglookup
+
+
 class TemplateDict(dict):
 
     def __init__(self):
         self._sort_key = None
         self._as_list = None
 
-    def get_templates(self, connection, approximant, f_min, amp_order=None,
-            phase_order=None, spin_order=None, taper=None, archive=None,
+    def get_templates(self, connection, approximants, f_min, amp_order=None,
+            phase_order=None, spin_order=None, archive=None,
             calc_f_final=True, max_f_final=numpy.inf, estimate_dur=True,
             verbose=False, only_matching=False, get_weights=False):
+        """
+        Gets the templates from a database.
+
+        Parameters
+        ----------
+        connection: sqlite3.connection
+            Connection to a sqlite database.
+        approximants: string
+            String giving the approximant(s), whether to taper, and what
+            parameter ranges to apply the template to. See
+            parse_approximant_str for details.
+        f_min: float
+            Frequency at which to generate the templates.
+        amp_order: int
+            The amplitude order for the templates (applies to all
+            approximants).
+        phase_order: int
+            The phase order for the templates (applies to all approximants).
+        spin_order: int
+            The spin order for the templates (applies to all approximants).
+        archive: {None|dict|h5py file}
+            Store template waveforms to the given archive.
+        calc_f_final: bool
+            Estimate the final frequency for each template. Default is True.
+        max_f_final: {inf|float}
+            The maximum frequency to generate the waveform to.
+        estimate_dur: bool
+            Estimate the duration of the waveform. Default is True.
+        verbose: bool
+            Be verbose. Default is False.
+        only_matching: bool
+            Only retrieve templates that have been mapped to an injection.
+            Default is False.
+        get_weights: bool
+            Get weights from the tmplt_weights table. Default is False.
+        """
         if verbose:
             print >> sys.stdout, "getting templates from database"
         self.clear()
+        approximants, apprx_seglookup = parse_approximants_str(approximants)
         params = ['mass1', 'mass2', 'spin1x', 'spin1y', 'spin1z',
         'spin2x', 'spin2y', 'spin2z', 'sngl_inspiral.event_id']
         sqlquery = "SELECT %s FROM sngl_inspiral" % ', '.join(params)
@@ -1139,9 +1217,25 @@ class TemplateDict(dict):
             # convert event_id to tmplt_id
             tmplt_id = args.pop('sngl_inspiral.event_id')
             args['tmplt_id'] = tmplt_id
+            # we'll just use the first values in approximants, and adjust later
+            approximant, taper = approximants.items()[0]
             tmplt = Template(approximant=approximant, f_min=f_min,
                 amp_order=amp_order, phase_order=phase_order,
                 spin_order=spin_order, taper=taper, **args)
+            # if more than one approximant specified, set via the parameter
+            # ranges
+            if len(approximants.keys()) > 1:
+                possibles = [apprx \
+                    for (param, ranges, apprx) in apprx_seglookup \
+                    if getattr(tmplt, param) in ranges]
+                if len(possibles) == 0:
+                    raise ValueError("template %i " %(tmplt.tmplt_id) +
+                        "is outside of the provided approximant ranges")
+                if len(possibles) > 1:
+                    raise ValueError("template %i" %(tmplt.tmplt_id) +
+                        "matches multiple approximant ranges")
+                tmplt.approximant = possibles[0]
+                tmplt.taper = approximants[possibles[0]]
             if calc_f_final:
                 tmplt.set_f_final()
                 if tmplt.f_final > max_f_final:
@@ -1542,6 +1636,7 @@ class InjectionDict(dict):
         'phi0': 'phi0',
         'inclination': 'inclination',
         'amp_order': 'amp_order',
+        'f_lower': 'f_min',
         'f_final': '_f_final',
         'taper': 'taper',
         'waveform': 'approximant',
@@ -1559,7 +1654,7 @@ class InjectionDict(dict):
         self._sort_key = None
         self._as_list = None
 
-    def get_injections(self, connection, f_min, archive={}, calc_f_final=True,
+    def get_injections(self, connection, archive={}, calc_f_final=True,
             max_f_final=numpy.inf, estimate_dur=True, verbose=False):
         if verbose:
             print >> sys.stdout, "getting injections from database"
@@ -1570,8 +1665,7 @@ class InjectionDict(dict):
         for row in connection.cursor().execute(sqlquery):
             args = dict([ [self.sim_inspiral_map[col], val] for col, val in \
                 zip(params, row)])
-            inj = Injection(f_min=f_min, **args)
-            inj.f_min = f_min
+            inj = Injection(**args)
             # inspinj will set f_final to 0; override this to None
             if inj.f_final == 0.:
                 inj._f_final = None
