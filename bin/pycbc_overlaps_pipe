@@ -188,12 +188,15 @@ elif cp.has_option('common', 'psd-model'):
     psd_type = 'psd-model'
 elif cp.has_option('common', 'asd-file'):
     psd_type = 'asd-file'
+elif cp.has_option('common', 'psd-file'):
+    psd_type = 'psd-file'
 else:
-    raise ValueError('please provide a psd-model or an asd-file in [common]')
+    raise ValueError('please provide a psd-model, asd-file, or a psd-file '+
+        'in [common]')
 
 # randomize distances
 # set common options; we only need some of the ones from [common]
-common_opts = [psd_type, 'waveform-f-min', 'overlap-f-min'] 
+common_opts = [psd_type, 'overlap-f-min'] 
 for opt in common_opts:
     randDists_job.add_opt(opt, cp.get('common', opt))
 if cp.has_option('common', 'ifo'):
@@ -266,9 +269,11 @@ if create_inj_exec.endswith('lalapps_inspinj'):
     inspinj_end_time = int(inspinj_start_time + \
         num_injections*inspinj_time_step)
     inj_cmd += ' --write-compress'
-    inj_cmd += ' --seed %i --gps-end-time %i --output %s --f-lower %f' %(
-        seed, inspinj_end_time, inj_outfile,
-        float(cp.get('common', 'waveform-f-min')))
+    inj_cmd += ' --seed %i --gps-end-time %i --output %s' %(
+        seed, inspinj_end_time, inj_outfile)
+    if not cp.has_option('create_inj', 'f-lower'):
+        # get the option from common
+        inj_cmd += ' --f-lower %f' %(float(cp.get('common', 'waveform-f-min')))
 else:
     inj_cmd += ' --output-dir %s --seed %i --n-points %i --user-tag %s' %(
         injections_dir, seed, num_injections, inj_file_tag)
