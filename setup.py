@@ -32,7 +32,6 @@ except:
 from distutils.errors import DistutilsError
 from distutils.core import setup, Command, Extension
 from distutils.command.clean import clean as _clean
-from pycbc.setuputils import pkg_config
 from distutils.file_util import write_file
 from distutils.version import LooseVersion
 
@@ -342,6 +341,7 @@ setup (
                'bin/pycbc_banksim',
                'bin/pycbc_faithsim',
                'bin/pycbc_inspiral',
+               'bin/pycbc_single_template',
                'bin/pycbc_multi_inspiral',
                'bin/pycbc_make_banksim',
                'bin/pycbc_splitbank',
@@ -363,6 +363,7 @@ setup (
                'bin/pycbc_run_sqlite',
                'bin/pycbc_inspinjfind',
                'bin/pycbc_write_results_page',
+               'bin/pycbc_upload_xml_to_gracedb',
                'bin/gstlal/pycbc_calculate_likelihood',
                'bin/gstlal/pycbc_combine_likelihood',
                'bin/gstlal/pycbc_compute_far_from_snr_chisq_histograms',

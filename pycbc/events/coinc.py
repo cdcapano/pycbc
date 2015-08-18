@@ -24,8 +24,47 @@
 """ This modules contains functions for calculating and manipulating
 coincident triggers.
 """
-import numpy, logging
+import numpy, logging, h5py
 from itertools import izip
+from scipy.interpolate import interp1d  
+
+def calculate_n_louder(bstat, fstat, dec):
+    """ Calculate for each foreground event the number of background events
+    that are louder than it.
+    
+    Parameters
+    ----------
+    bstat: numpy.ndarray
+        Array of the background statistic values
+    fstat: numpy.ndarray
+        Array of the foreground statitsic values
+    dec: numpy.ndarray
+        Array of the decimation factors for the background statistics
+    
+    Returns
+    ------- 
+    cum_back_num: numpy.ndarray
+        The cumulative array of background triggers 
+    fore_n_louder: numpy.ndarray
+        The number of background triggers above each foreground trigger
+    """
+    sort = bstat.argsort()
+    unsort = sort.argsort()
+    bstat = bstat[sort]
+    dec = dec[sort]
+    
+    # calculate cumulative number of triggers louder than the trigger in 
+    # a given index. We need to subtract the decimation factor, as the cumsum
+    # includes itself in the first sum (it is inclusive of the first value)
+    n_louder = dec[::-1].cumsum()[::-1] - dec
+    
+    # Determine how many values are louder than the foreground ones
+    # We need to subtract one from the index, to be consistent with the definition
+    # of n_louder, as here we do want to include the background value at the
+    # found index
+    fore_n_louder = n_louder[numpy.searchsorted(bstat, fstat, side='left') - 1]
+    back_cum_num = n_louder[unsort]
+    return back_cum_num, fore_n_louder
 
 def timeslide_durations(start1, start2, end1, end2, timeslide_offsets):
     """ Find the coincident time for each timeslide.
@@ -167,10 +206,40 @@ def cluster_coincs(stat, time1, time2, timeslide_id, slide, window):
     left = numpy.searchsorted(time, time - window)
     right = numpy.searchsorted(time, time + window)
     logging.info('done sorting')
-    indices = []
-    for i, (l, r) in enumerate(izip(left, right)):
-        if stat[l:r].argmax() + l == i:
-            indices += [i]
+    indices = numpy.zeros(len(left), dtype=numpy.uint32)
+    
+    # i is the index we are inspecting, j is the next one to save
+    i = 0
+    j = 0
+    while i < len(left):
+        l = left[i]
+        r = right[i]
+        
+        # If there are no other points to compare it is obviosly the max
+        if (r - l) == 1:
+            indices[j] = i
+            j += 1
+            i += 1            
+            continue            
+        
+        # Find the location of the maximum within the time interval around i
+        max_loc = stat[l:r].argmax() + l 
+        
+        # If this point is the max, we can skip to the right boundary
+        if max_loc == i:
+            indices[j] = i
+            i = r
+            j += 1
+        
+        # If the max is later than i, we can skip to it
+        elif max_loc > i:
+            i = max_loc 
+            
+        elif max_loc < i:
+            i += 1
+
+    indices = indices[:j]
+            
     logging.info('done clustering coinc triggers: %s triggers remaining' % len(indices))
-    return time_sorting[numpy.array(indices)]
+    return time_sorting[indices]
 

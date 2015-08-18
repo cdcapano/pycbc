@@ -27,8 +27,6 @@ if args.verbose:
 logging.info('Read in the data')
 f = h5py.File(args.trigger_file, 'r')
 
-print f.attrs['background_time'], f.attrs['foreground_time']
-
 try:
     cstat_fore = f['foreground/stat'][:]
     cstat_fore.sort()
@@ -43,11 +41,6 @@ back_sort = cstat_back.argsort()
 cstat_back = cstat_back[back_sort]
 far_back = 1.0 / back_ifar[back_sort]
 
-back_fan = f['background/fan'][:][back_sort]
-err_low = far_back * ((back_fan - numpy.sqrt(back_fan)) / back_fan) 
-err_low[err_low == 0] = 1e-100
-err_high = far_back * ((back_fan + numpy.sqrt(back_fan)) / back_fan)
-
 logging.info('Found %s background (inclusive zerolag) triggers' % len(cstat_back))
 
 back_ifar_exc = f['background_exc/ifar'][:]
@@ -61,13 +54,12 @@ fig = pylab.figure(1)
 pylab.scatter(cstat_back_exc, far_back_exc, color='grey', marker='x', label='Closed Box Background')
 
 if not args.closed_box:
-    for sig in [6, 5, 4, 3, 2, 1]:
+    for sig in [5, 4, 3, 2, 1]:
         p = p_from_sigma(sig)
         pylab.fill_between(cstat_back, far_back, far_back / (1 - p),
                            linewidth=0, color=pylab.cm.YlOrRd(1.0/sig), alpha=0.3) 
         pylab.text(cstat_back[-1], (far_back / (1 - p))[-1], "$\sigma = %s$" % sig)
-        
-    #pylab.fill_between(cstat_back, err_low, err_high, linewidth=0, color='tan')
+
     pylab.scatter(cstat_back, far_back, color='black', marker='x', label='Open Box Background')
 
     if cstat_fore is not None:
