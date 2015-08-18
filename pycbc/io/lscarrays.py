@@ -26,7 +26,8 @@ This modules provides definitions of, and helper functions for, LSCArrays.
 LSCArrays are wrappers of numpy recarrays with additional functionality useful for storing and retrieving data created by a search for gravitational waves.
 """
 
-import os, sys
+import os, sys, types
+import re
 import copy
 import hashlib
 import inspect
@@ -321,7 +322,7 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
             thisdict = dict(groups[group_name])
             # check if the input array has this field; if so, remove it, then
             # add it back with the other new arrays
-            if group_name in input_array.columns:
+            if group_name in input_array.fieldnames:
                 # get the data
                 new_subarray = input_array[group_name]
                 # add the new fields to the subarray
@@ -345,16 +346,10 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
             return input_array
         # also remove the subarray arrays
         arrays = [arrays[ii] for ii in keep_idx] 
-    flatten = True
     if assubarray:
         # merge all of the arrays into a single array
         if len(arrays) > 1:
             arrays = [merge_arrays(arrays, flatten=True)]
-        # if there is only one array in the subarray, we need to set flatten
-        # to -1, else recfunctions' merge_arrays will make the subarray
-        # a field of the input array
-        else:
-            flatten = -1
         # now merge all the fields as a single subarray
         merged_arr = numpy.empty(len(arrays[0]),
             dtype=[('f0', arrays[0].dtype.descr)])
@@ -364,14 +359,14 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
     if names is not None:
         names = list(input_array.dtype.names) + names
     # merge into a single array
-    return merge_arrays(merge_list, names=names, flatten=flatten,
+    return merge_arrays(merge_list, names=names, flatten=True,
         outtype=type(input_array))
 
 
 def get_fields(input_array, names, copy=False, outtype=None):
     """
     Given an array with named fields, creates a new LSCArray with the given
-    columns. Only fields in input_array that are in the list of names will be
+    fields. Only fields in input_array that are in the list of names will be
     extracted. All the fields listed in names must be present in the
     input_array. The method for creating a view is from:
     <http://stackoverflow.com/a/21819324/1366472>
@@ -380,9 +375,9 @@ def get_fields(input_array, names, copy=False, outtype=None):
     ----------
     input_array: array-like
         Anything that can be cast as a numpy array. The resulting array
-        must have a dtype with at least one field in columns.
+        must have a dtype with at least one field in names.
     names: {strings|list of strings}
-        List of column names for the returned array; may be either a single
+        List of field names for the returned array; may be either a single
         name or a list of names. All of the names must be a field in the input
         array.
     copy: bool, optional
@@ -394,7 +389,7 @@ def get_fields(input_array, names, copy=False, outtype=None):
     Returns
     -------
     output: {type(input_array)|outtype}
-        An view or copy of the input array with the given columns.
+        An view or copy of the input array with the given names.
     """
     if outtype is None:
         outtype = type(input_array)
@@ -439,8 +434,50 @@ def build_lookup_table(input_array):
                 for ii in range(len(unique_vals))
                 ])
 
+def copy_attributes(this_array, other_array):
+    """
+    Copies attributes of ``other_array`` that are not in ``this_array`` to
+    ``this_array``. Checks if each attribute is a property, a method, or
+    a plain attribute, adding each attribute accordingly. Returns a view of
+    ``this_array`` with all of the attributes added.
+    """
+    # create a view of this array so as not to add the attributes to the 
+    # original
+    new_array = this_array.view(type=type(this_array))
+    # get attributes in other that are not in this array, and figure out what
+    # are properties, what are methods, and what are just plain attributes
+    new_attrs = set(dir(other_array)) - set(dir(this_array))
+    properties = {}
+    methods = {}
+    for attrname in new_attrs:
+        # check if the attribute is a property
+        try:
+            attr = getattr(type(other_array), attrname)
+            isproperty = isinstance(attr, property)
+        except AttributeError:
+            # we'll get an attribute error if attrname is just an attribute
+            # of this instance; in that case, it cannot be a property
+            attr = getattr(other_array, attrname)
+            isproperty = False
+        if isproperty:
+            properties[attrname] = attr.fget
+        elif inspect.ismethod(attr):
+            # is an instance method
+            methods[attrname] = attr
+        else:
+            # just an ordinary attribute, just add it
+            setattr(new_array, attrname, attr)
+    # now add each thing accordingly
+    if properties != {}:
+        new_array = new_array.add_properties(properties.keys(),
+            properties.values())
+    if methods != {}:
+        new_array.add_methods(methods.keys(), methods.values())
+    return new_array
+
 def join_arrays(this_array, other_array, map_field, expand_field_name=None,
-        other_map_field=None, get_fields=None, map_indices=None):
+        other_map_field=None, get_fields=None, map_indices=None,
+        copy_methods=True):
     """
 
     Joins ``other_array`` to ``this_array`` using the provided map fields.
@@ -527,7 +564,7 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     # convert to LSCArray
     if expand_field_name is not None:
         expanded_info = LSCArray.from_records(expanded_info,
-            dtype=[(expand_field_name, other_dtdescr, maxlen)])
+            dtype=[(expand_field_name, other_dtdescr, maxlen)]).flatten()
     else:
         expanded_info = LSCArray.from_records(expanded_info,
             dtype=[(name, dt, maxlen) for (name,dt) in other_dtdescr])
@@ -536,7 +573,11 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
         if map_field == other_map_field:
             expanded_info = expanded_info.without_fields(map_field)
     # add to this_array
-    return new_array.add_fields(expanded_info)
+    new_array = new_array.add_fields(expanded_info)
+    # copy over any new methods
+    if copy_methods:
+        new_array = copy_attributes(new_array, other_array)
+    return new_array
 
 def file_checksum(filename, hasher=hashlib.sha256, buffersize=65536):
     """
@@ -565,6 +606,65 @@ def file_checksum(filename, hasher=hashlib.sha256, buffersize=65536):
         buf = f.read(buffersize)
     f.close()
     return hasher.hexdigest()
+
+def get_all_field_names(dtype):
+    """
+    Given a numpy dtype, returns a list of all the field and subfield names
+    present. Subfield names use '.' notation; e.g., if field 'foo' has subfield
+    'bar', will return 'foo.bar'.
+
+    Parameters
+    ----------
+    dtype: numpy.dtype
+        The dtype to get the field names from.
+
+    Returns
+    -------
+    names: list
+        The list of all of the field names.
+    """
+    names = []
+    for name in dtype.names:
+        if len(dtype[name]) > 0:
+            subnames = ['%s.%s' %(name, subname) \
+                for subname in get_all_field_names(dtype[name])]
+            names.extend(subnames)
+        else:
+            names.append(name)
+    return names
+
+#
+#   Argument syntax parsing
+#
+# this parser will pull out sufields as separate identifiers from their parent
+# field; e.g., foo.bar --> ['foo', 'bar']
+_pyparser = re.compile(r'(?P<identifier>[\w_][\w\d_]*)')
+# this parser treats subfields as one identifier with their parent field;
+# e.g., foo.bar --> ['foo.bar']
+_fieldparser = re.compile(r'(?P<identifier>[\w_][.\w\d_]*)')
+def get_vars_from_arg(arg):
+    """
+    Given a python string, gets the names of any identifiers use in it.
+    For example, if ``arg = '3*narf/foo.bar'``, this will return
+    ``set(['narf', 'foo', 'bar'])``.
+    """
+    return set(_pyparser.findall(arg))
+
+def get_fields_from_arg(arg):
+    """
+    Given a python string, gets LSCArray field names used in it. This differs
+    from get_vars_from_arg in that any identifier with a '.' in it will be
+    treated as one identifier. For example, if ``arg = '3*narf/foo.bar'``, this
+    will return ``set(['narf', 'foo.bar'])``.
+    """
+    return set(_fieldparser.findall(arg))
+
+def get_needed_attrs(arg, attrlist):
+    """
+    Given a python string and a list of attributes, gets the set of attributes
+    used in the python string.
+    """
+    return set(attrlist).intersection(get_vars_from_arg(arg))
 
 #
 # =============================================================================
@@ -627,11 +727,11 @@ class LSCArray(numpy.recarray):
     the array for which a paricular field matches a particular value, e.g.,
     `x.lookup('a', 10.)` will return all rows in `x` for which
     `x['a'] == 10.`.  This is done by building an internal dictionary using
-    the requested column as a key the first time it is requested. Since this
+    the requested field as a key the first time it is requested. Since this
     relies on the order of the results, the internal lookup table is not
     passed to views or copies of the array, and it cleared whenever a sort is
     carried out.  The lookup table does increase memory overhead. Also, if
-    you change a value in the column that is used as key after the lookup
+    you change a value in the field that is used as key after the lookup
     table is created, you will get spurious results. For these reasons, a
     clear_lookup method is also provided. See `lookup` and `clear_lookup` for
     details.
@@ -670,13 +770,13 @@ class LSCArray(numpy.recarray):
 
     Examples
     --------
-    * Create an empty array with four rows and two columns called ``'foo'`` and
+    * Create an empty array with four rows and two fields called ``'foo'`` and
     ``'bar'``, both of which are floats:
 ``
 >>> x = LSCArray(4, dtype=[('foo', float), ('bar', float)])
 ``
 
-    * Set/retrieve a column using index or attribute syntax:
+    * Set/retrieve a field using index or attribute syntax:
 ``
 >>> x['foo'] = [1.,2.,3.,4.]
 
@@ -694,21 +794,21 @@ LSCArray([(1.0, 5.0), (2.0, 6.0), (3.0, 7.0), (4.0, 8.0)],
     array([ 5.,  6.,  7.,  8.])
 ``
     
-    Get the names of the columns:
+    Get the names of the fields:
 ``
->>> x.columns
+>>> x.fieldnames
     ('foo', 'bar')
 ``
 
-    * Rename the columns to ``a`` and ``b``:
+    * Rename the fields to ``a`` and ``b``:
 ``
 >>> x.dtype.names = ['a', 'b']
 
->>> x.columns
+>>> x.fieldnames
     ('a', 'b')
 ``
 
-    * Retrieve a function of the columns as if it were a column:
+    * Retrieve a function of the fields as if it were a field:
 ``
 >>> x['sin(a/b)']
 array([ 0.19866933,  0.3271947 ,  0.41557185,  0.47942554])
@@ -764,7 +864,7 @@ array([u'SEOBNRv2pseudoFourPN', u'SEOBNRv2pseudoFourPN',
        u'SEOBNRv2pseudoFourPN', u'SEOBNRv2pseudoFourPN'], dtype=object)
 ``
     
-    * Only view a few of the columns:
+    * Only view a few of the fields:
 ``
 >>> sim_array.with_fields(['simulation_id', 'mass1', 'mass2'])
 LSCArray([(0, 5.943458080291748, 3.614427089691162),
@@ -776,7 +876,7 @@ LSCArray([(0, 5.943458080291748, 3.614427089691162),
       dtype={'names':['simulation_id','mass1','mass2'], 'formats':['<i8','<f4','<f4'], 'offsets':[200,236,240], 'itemsize':244})
 ``
 
-    ...or just retrieve a few of the columns to begin with:
+    ...or just retrieve a few of the fields to begin with:
 ``
 >>> sim_array = LSCArray.from_ligolw_table(sim_table, columns=['simulation_id', 'mass1', 'mass2'])
 
@@ -923,25 +1023,50 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             return super(LSCArray, self).__setitem__(item, values)
 
 
-    def __getitem__(self, item):
+    def __getsubitem__(self, item):
         """
-        Wraps recarray's  __getitem__ so that math functions on columns can be
-        retrieved. Any function in numpy's library may be used.
+        Gets a subfield using 'field.subfield' notation.
         """
         try:
             return super(LSCArray, self).__getitem__(item)
+        except ValueError as err:
+            subitems = item.split('.')
+            if len(subitems) > 1:
+                return super(LSCArray, self).__getitem__(subitems[0]
+                    ).__getsubitem__('.'.join(subitems[1:]))
+            else:
+                raise ValueError(err.message)
+
+
+    def __getitem__(self, item):
+        """
+        Wraps recarray's  __getitem__ so that math functions on fields and
+        attributes can be retrieved. Any function in numpy's library may be
+        used.
+        """
+        try:
+            return self.__getsubitem__(item)
         except ValueError:
             # arg isn't a simple argument of row, so we'll have to eval it
-            item_dict = dict([ [col, super(LSCArray, self).__getitem__(col)]\
-                for col in self.dtype.names])
+            # get the set of fields & attributes we will need
+            #itemvars = get_fields_from_arg(item)
+            itemvars = get_vars_from_arg(item)
+            # pull out the fields: note, by getting the parent fields, we
+            # also get the sub fields name
+            item_dict = dict([ [fn,
+                super(LSCArray, self).__getitem__(fn)] \
+                for fn in set(self.fieldnames).intersection(itemvars)])
             # add any aliases
             item_dict.update({alias: item_dict[name] \
-                for alias,name in self.aliases.items()})
-            safe_dict = {}
-            safe_dict.update(item_dict)
-            # add self's funciton dict
-            safe_dict.update(numpy.__dict__)
-            return eval(item, {"__builtins__": None}, safe_dict)
+                for alias,name in self.aliases.items()
+                    if name in item_dict})
+            # pull out any attributes needed
+            itemvars = get_fields_from_arg(item)
+            item_dict.update({attr: getattr(self, attr) for attr in \
+                set(dir(self)).intersection(itemvars)})
+            # add numpy functions
+            item_dict.update(numpy.__dict__)
+            return eval(item, {"__builtins__": None}, item_dict)
 
     def addattr(self, attrname, value=None, persistent=True):
         """
@@ -954,6 +1079,34 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         # add as persistent
         if persistent and attrname not in self.__persistent_attributes__:
             self.__persistent_attributes__.append(attrname)
+
+    def add_methods(self, names, methods):
+        """
+        Adds the given method(s) as instance method(s) of self. The method(s)
+        must take ``self`` as a first argument.
+        """
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+            methods = [methods]
+        for name,method in zip(names, methods):
+            setattr(self, name, types.MethodType(method, self))
+        
+    def add_properties(self, names, methods):
+        """
+        Returns a view of self with the given methods added as properties.
+
+        From: <http://stackoverflow.com/a/2954373/1366472>.
+        """
+        cls = type(self)
+        if not hasattr(cls, '__perinstance'):
+            cls = type(cls.__name__, (cls,), {})
+            cls.__perinstance = True
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+            methods = [methods]
+        for name,method in zip(names, methods):
+            setattr(cls, name, property(method))
+        return self.view(type=cls)
 
     @classmethod
     def from_arrays(cls, arrays, name=None, **kwargs):
@@ -1066,12 +1219,20 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             name=name)
 
     @property
-    def columns(self):
+    def fieldnames(self):
         """
         Returns a tuple listing the field names in self. Equivalent to
         ``array.dtype.names``, where ``array`` is self.
         """
         return self.dtype.names
+
+    @property
+    def all_fieldnames(self):
+        """
+        Returns a list of all of the field names in self, including subfields.
+        Subfields are named "field.subfield".
+        """
+        return get_all_field_names(self.dtype)
 
     @property
     def aliases(self):
@@ -1183,7 +1344,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         Parameters
         ----------
         names: {strings|list of strings}
-            List of column names for the returned array; may be either a
+            List of field names for the returned array; may be either a
             single name or a list of names.
         copy: bool, optional
             If True, will return a copy of the array rather than a view.
@@ -1207,7 +1368,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         Parameters
         ----------
         names: {strings|list of strings}
-            List of column names for the returned array; may be either a
+            List of field names for the returned array; may be either a
             single name or a list of names.
         copy: bool, optional
             If True, will return a copy of the array rather than a view.
@@ -1229,40 +1390,40 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         return newself
 
 
-    def lookup(self, column, value, default=KeyError):
+    def lookup(self, field, value, default=KeyError):
         """
-        Returns the elements in self for which the given column(s) matches the
-        given value(s). If this is the first time that the column(s) has been
+        Returns the elements in self for which the given field(s) matches the
+        given value(s). If this is the first time that the field(s) has been
         requested, an internal dictionary is built first, then the elements
         returned. If the value(s) cannot be found, a KeyError is raised, or
-        a default is returned if provided. To lookup multiple columns, pass
-        the column names and the corresponding values as tuples.
+        a default is returned if provided. To lookup multiple fields, pass
+        the field names and the corresponding values as tuples.
         
         .. note::
-            Every time a lookup on a new column is done, an array of indices
-            is created that maps every unique value in the column to the
+            Every time a lookup on a new field is done, an array of indices
+            is created that maps every unique value in the field to the
             indices in self that match that value. Since this mapping will
             change if the array is sorted, or if a slice of self is created,
             this look up table is not passed to new views of self. To reduce
-            memory overhead, run clear_lookup on a column if you will no
-            longer need to look up self using that column. See clear_look up
+            memory overhead, run clear_lookup on a field if you will no
+            longer need to look up self using that field. See clear_look up
             for details.
 
         .. warning::
             If you change the value of an item that is used as a look
             up item, the internal lookup dictionary will not give correct
             values. Always run clear_lookup if you change the value of
-            a column that you intend to use as a lookup key.
+            a field that you intend to use as a lookup key.
 
         Parameters
         ----------
-        column: (tuple of) string(s)
-            The name(s) of the column to look up.
+        field: (tuple of) string(s)
+            The name(s) of the field to look up.
         value: (tuple of) value(s)
-            The value(s) in the columns to get.
+            The value(s) in the fields to get.
         default: {KeyError | value}
             Optionally specify a value to return is the value is not found
-            in self's column. Otherwise, a KeyError is raised.
+            in self's field. Otherwise, a KeyError is raised.
 
         Returns
         -------
@@ -1270,19 +1431,19 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
             The rows in self that match the requested value.
         """
         try:
-            return self[self.__lookuptable__[column][value]]
+            return self[self.__lookuptable__[field][value]]
         except KeyError:
-            # build the look up for this column
-            if column not in self.__lookuptable__:
-                # if column is a joint column, convert to list
-                if isinstance(column, tuple):
-                    colvals = self[list(column)]
+            # build the look up for this field
+            if field not in self.__lookuptable__:
+                # if field is a joint field, convert to list
+                if isinstance(field, tuple):
+                    colvals = self[list(field)]
                 else:
-                    colvals = self[column]
-                self.__lookuptable__[column] = build_lookup_table(colvals)
+                    colvals = self[field]
+                self.__lookuptable__[field] = build_lookup_table(colvals)
             # try again
             try:
-                return self[self.__lookuptable__[column][value]]
+                return self[self.__lookuptable__[field][value]]
             except KeyError as err:
                 if inspect.isclass(default) and issubclass(default, Exception):
                     raise default(err.message)
@@ -1290,20 +1451,20 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
                     return default
 
 
-    def clear_lookup(self, column=None):
+    def clear_lookup(self, field=None):
         """
         Clears the internal lookup table used to provide fast lookup of
-        the given column. If no column is specified, the entire table will
+        the given field. If no field is specified, the entire table will
         be deleted. Run this if you will no longer need to look up self
-        using a particular column (or, if column is None, any look ups at
-        all). Note: if you clear the lookup table of a column, then try to
-        lookup that column again, a new lookup table will be created.
+        using a particular field (or, if field is None, any look ups at
+        all). Note: if you clear the lookup table of a field, then try to
+        lookup that field again, a new lookup table will be created.
         """
-        if column is None:
+        if field is None:
             self.__lookuptable__.clear()
         else:
-            self.__lookuptable__[column].clear()
-            del self.__lookuptable__[column]
+            self.__lookuptable__[field].clear()
+            del self.__lookuptable__[field]
 
 
     def sort(self, *args, **kwargs):
@@ -1570,7 +1731,7 @@ class Waveform(_LSCArrayWithDefaults):
     """
     Subclasses LSCArrayWithDefaults, with default name ``waveform``. Has
     class attributes instrinsic_params, extrinsic_params, and waveform_params.
-    These are concatenated together to make the default columns.
+    These are concatenated together to make the default fields.
 
     Also adds various common functions decorated as properties, such as
     mtotal = mass1+mass2.
@@ -1678,12 +1839,12 @@ class Waveform(_LSCArrayWithDefaults):
 class TmpltInspiral(Waveform):
     """
     Subclasses Waveform, with default name ``tmplt_inspiral``. Adds attributes
-    ids and ifo_params; the columns defined in those are added to Waveform's
-    default columns.
+    ids and ifo_params; the fields defined in those are added to Waveform's
+    default fields.
 
     Notes
     -----
-    The attribute ``ifo_params`` defines the ``ifo`` column, which is a
+    The attribute ``ifo_params`` defines the ``ifo`` field, which is a
     subarray. The default length is 1; but this can be changed using the
     ``default_nifos`` class attribute. If a larger number, a single row
     of a TmpltInspiral can store information about one or more ifos.
@@ -1698,7 +1859,7 @@ class TmpltInspiral(Waveform):
 
 >>> templates = templates.add_fields(numpy.arange(len(templates)), names='template_id')
 
->>> templates.columns
+>>> templates.fieldnames
     ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> templates.mass1
@@ -1743,7 +1904,7 @@ array([(1.7173138856887817, 1.2124452590942383),
 class SnglEvent(_LSCArrayWithDefaults):
     """
     Subclasses _LSCArrayWithDefaults, adding ranking_stat, snr, chisq, and
-    end time as default columns. Also has a 'template' column, which is a
+    end time as default fields. Also has a 'template' field, which is a
     sub-array of with fields ifo and template_id. If given a TmpltInspiral
     array, the template field can be expanded to have all the parameters of
     each single event; see expand_templates for details.
@@ -1796,15 +1957,15 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
     * Expand the template field (see TmpltInspiral help for how to create
     ``templates`` from an hdf bank file):
 ``
->>> hsngls.template.columns
+>>> hsngls.template.fieldnames
     ('template_id',)
 
->>> templates.columns
+>>> templates.fieldnames
     ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> hsngls = hsngls.expand_templates(templates)
 
->>> hsngls.template.columns
+>>> hsngls.template.fieldnames
     ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> hsngls.ranking_stat, hsngls.template.template_id, hsngls.template.mass1
@@ -1876,7 +2037,7 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
             selfs_map_field='template_id', tmplts_map_field='template_id'):
         """
-        Given an array of templates, replaces the template column with a
+        Given an array of templates, replaces the template field with a
         sub-array of the template data. This is done by getting all rows in
         the ``tmplt_inspiral_array`` such that:
         ``self[selfs_map_field] == tmplt_inspiral_array[tmplts_map_field]``.
@@ -1938,7 +2099,7 @@ class CoincEvent(SnglEvent):
     * Add information about the single events (see SnglEvent help for how to
       create ``hsngls`` and ``lsngls`` in this example):
 ``
->>> coincs.columns
+>>> coincs.fieldnames
     ('fap', 'event_id', 'ranking_stat', 'template', 'sngl_events', 'far')
 
 >>> coincs.sngl_events.ifos
@@ -1954,10 +2115,10 @@ chararray(['H1', 'H1', 'H1', ..., 'H1', 'H1', 'H1'],
 
 >>> coincs = coincs.add_sngls_data(hsngls)
 
->>> coincs.columns
+>>> coincs.fieldnames
     ('fap', 'event_id', 'ranking_stat', 'template', 'sngl_events', 'far', 'H1')
 
->>> coincs['H1'].columns
+>>> coincs['H1'].fieldnames
 ('event_id',
  'ranking_stat',
  'chisq',
@@ -1979,7 +2140,7 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
 
 >>> coincs = coincs.add_sngls_data(lsngls)
 
->>> coincs.columns
+>>> coincs.fieldnames
 ('fap',
  'event_id',
  'ranking_stat',
@@ -1998,15 +2159,15 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
     * Expand the template field (see TmpltInspiral help for how to create
       ``templates`` from an hdf bank file):
 ``
->>> coincs.template.columns
+>>> coincs.template.fieldnames
     ('template_id',)
 
->>> templates.columns
+>>> templates.fieldnames
     ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> coincs = coincs.expand_templates(templates)
 
->>> coincs.template.columns
+>>> coincs.template.fieldnames
     ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 ``
     """
@@ -2023,10 +2184,10 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         fields can be set.
         """
         fields = {
-            ('false_alarm_rate', 'far'): float,
-            ('false_alarm_probability', 'fap'): float,
-            ('false_alarm_rate_exc', 'far_exc'): float,
-            ('false_alarm_probability_exc', 'fap_exc'): float,
+            'ifar': float,
+            'ifar_exc': float,
+            'ifap': float,
+            'ifap_exc': float,
             (ranking_stat_alias, 'ranking_stat'): float,
             'snr': float,
             }
@@ -2064,6 +2225,38 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         # set the detectors attribute
         obj.addattr('detectors', tuple(sorted(detectors)))
         return obj
+
+    @property
+    def far(self):
+        return 1./self.ifar
+
+    @property
+    def false_alarm_rate(self):
+        return self.far
+
+    @property
+    def far_exc(self):
+        return 1./self.ifar_exc
+
+    @property
+    def false_alarm_rate_exc(self):
+        return self.far_exc
+
+    @property
+    def fap(self):
+        return 1./self.ifap
+
+    @property
+    def false_alarm_probability(self):
+        return self.fap
+
+    @property
+    def fap_exc(self):
+        return 1./self.ifap_exc
+
+    @property
+    def false_alarm_probability_exc(self):
+        return self.fap_exc
 
     @property
     def detected_in(self):
@@ -2136,12 +2329,12 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         # sngl_event_array
         others_dets = numpy.unique(sngl_event_array['detector'])
         if not any(others_dets):
-            raise ValueError("sngl_event_array's detector column is not " +
+            raise ValueError("sngl_event_array's detector field is not " +
                 "populated!")
         # if getting all fields, exclude the detector field, since that will
         # be the sub-array's name
         if get_fields is None:
-            get_fields = [name for name in sngl_event_array.columns \
+            get_fields = [name for name in sngl_event_array.fieldnames \
                 if name != 'detector']
         new_self = self
         for det in self.detectors:
@@ -2183,7 +2376,7 @@ class SimInspiral(Waveform):
     fields for a source's location, distance, and end time (both geocentric
     and in each detector) , whether the injection recovered, any recovered
     statistics, and the distribution used to create the injections.  Also has
-    columns ``process_id`` and ``simulation_id``.  The ``recovered`` field is
+    fields ``process_id`` and ``simulation_id``.  The ``recovered`` field is
     a subarray with field ``event_id``.  If given a CoincEvent or SnglEvent
     array, this can be expanded to have all of the recovered parameters and
     statistics; see expand_recovered for details.
@@ -2261,18 +2454,18 @@ SimInspiral([['H1', 'L1'],
 
 >>> coincs = coincs.expand_templates(templates)
 
->>> sims.recovered.columns
+>>> sims.recovered.fieldnames
     ('event_id',)
 
->>> sims['recovered'].columns
+>>> sims['recovered'].fieldnames
     ('event_id',)
 
 >>> sims = sims.expand_recovered(coincs)
 
->>> sims['recovered'].columns
+>>> sims['recovered'].fieldnames
     ('event_id', 'ranking_stat', 'far', 'fap', 'L1', 'H1', 'template')
 
->>> sims['recovered']['template'].columns
+>>> sims['recovered']['template'].fieldnames
     ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
 
 >>> recsims = sims[numpy.where(sims.isrecovered)]
@@ -2376,7 +2569,7 @@ SimInspiral([['H1', 'L1'],
             selfs_map_field='recovered.event_id',
             events_map_field='event_id'):
         """
-        Given an array of (coinc) events, replaces the recovered column with a
+        Given an array of (coinc) events, replaces the recovered field with a
         sub-array of the recovered data. This is done by getting
         all rows in the ``event_array`` such that:
         ``self[numpy.where(self['isrecovered'])][selfs_map_field] == event_array[events_map_field]``.
@@ -2446,7 +2639,7 @@ SimInspiral([['H1', 'L1'],
         events.
         """
         detectors = numpy.array([det for det in self.detectors \
-            if det in self['recovered'].columns])
+            if det in self['recovered'].fieldnames])
         if detectors.size == 0:
             raise ValueError("No detectors found in this array's recovered " +
                 "field. Did you run expand_recovered?")
