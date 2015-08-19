@@ -488,7 +488,8 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     retrieved. If multiple elements in ``other_array`` map to a single
     element in ``this_array``, the expanded sub-array will have a shape equal
     to the maximum number of elements in ``other_array`` that map to a single
-    element in ``this_array``.
+    element in ``this_array``. Instance methods and properties of
+    ``other_array`` that are not in ``this_array`` will also be copied.
 
     Parameters
     ----------
@@ -499,10 +500,11 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
         ``with_fields`` methods.
     map_field: string
         The name of the field in ``this_array`` to use for mapping.
-    expand_field_name: string
-        The name of the field that will be added to ``this_array``. The
-        information from ``other_array`` will be contained as a subarray
-        under this field.
+    expand_field_name: {None|string}
+        If provided, all of the fields from ``other_array`` will be added
+        as a subfield with name ``expand_field_name`` to the output array.
+        Otherwise, all requested fields (see ``get_fields``) are added as
+        fields to ``this_array``.
     other_map_field: {None | string}
         The name of the field in ``other_array`` to use for mapping. If None,
         ``map_field`` will be used.
@@ -512,14 +514,16 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     map_indices: {None | array of ints}
         If provided, will only map rows in ``this_array`` that have indices in
         the given array of indices. Any rows that are skipped will have a
-        zeroed element in the expand field of the returned array. If None (the
+        zeroed element in the new fields of the returned array. If None (the
         default), all rows in ``this_array`` are mapped.
+    copy_methods: bool
+        Copy instance methods and properties of ``other_array`` that are not
+        in ``this_array`` to ``this_array``. Default is True.
 
     Returns
     -------
     new_array: type(this_array)
-        A copy of ``this_array`` with the mapped information added to
-        ``this_array[expand_field_name]``.
+        A copy of ``this_array`` with the mapped fields added.
     """
     if other_map_field is None:
         other_map_field = map_field
@@ -659,13 +663,6 @@ def get_fields_from_arg(arg):
     """
     return set(_fieldparser.findall(arg))
 
-def get_needed_attrs(arg, attrlist):
-    """
-    Given a python string and a list of attributes, gets the set of attributes
-    used in the python string.
-    """
-    return set(attrlist).intersection(get_vars_from_arg(arg))
-
 #
 # =============================================================================
 #
@@ -681,7 +678,8 @@ class LSCArray(numpy.recarray):
     that a "name" attribute can be passed to name the output array. When you
     initialize an array it creates a new zeroed array. This is similar to
     numpy.recarray, except that ``numpy.recarray(shape)`` will create an empty
-    array, whereas here the default is to zero all of the elements. If you
+    array, whereas here the default is to zero all of the elements (see
+    ``default_zero`` for definition of zero for different data types). If you
     prefer an empty array, set ``zero=False`` when initializing.
     
     You cannot pass an array or sequence as input as you do with numpy.array.
@@ -711,30 +709,114 @@ class LSCArray(numpy.recarray):
     Arbitrary functions
     +++++++++++++++++++
     You can retrive functions on fields in the same manner that you access
-    individual fields. For example, if you have an LSCArray `x` with fields
-    'a' and 'b', you can access each field with `x['a'], x['b']`.
-    You can also do `x['a*b/(a+b)**2.']`, `x[cos(a)*sin(b)]`, etc. Logical
-    operations are also possible, e.g., `x['(a < 3) & (b < 2)']. Syntax
+    individual fields. For example, if you have an LSCArray ``x`` with fields
+    ``a`` and ``b``, you can access each field with ``x['a'], x['b']``.
+    You can also do ``x['a*b/(a+b)**2.']``, ``x[cos(a)*sin(b)]``, etc. Boolean
+    operations are also possible, e.g., ``x['(a < 3) & (b < 2)']``. Syntax
     for functions is python, and any numpy ufunc can be used to operate
     on the fields. Note that while fields may be accessed as
-    attributes (e.g, field `a` can be accessed via `x['a']` or `x.a`),
-    functions on multiple fields may not; e.g. `x.a+b` does not work, for
-    obvious reasons.
+    attributes (e.g, field ``a`` can be accessed via ``x['a']`` or ``x.a``),
+    functions on multiple fields may not (``x.a+b`` does not work, for obvious
+    reasons).
+
+    Subfields and '.' indexing
+    ++++++++++++++++++++++++++
+    Structured arrays, which are the base class for recarrays and, by
+    inheritance, LSCArrays, allows for fields to themselves have fields. For
+    example, an array ``x`` may have fields ``a`` and ``b``, with ``b`` having
+    subfields ``c`` and ``d``. You can access subfields using other index
+    notation or attribute notation. So, the subfields ``d`` may be retrieved
+    via ``x['b']['d']``, ``x.b.d``, ``x['b'].d`` or ``x['b.d']``. Likewise,
+    functions can be carried out on the subfields, as they can on fields. If
+    ``d`` is a float field, we could get the log of it via ``x['log(b.d)']``.
+    There is no limit to the number of subfields. So, ``c`` could also have
+    subfield ``c0``, which would be accessed via ``x.c.c0``, or any of the
+    other methods.
+
+    .. warning::
+        Record arrays also allow you to set values of a field using attribute
+        notation. However, this can lead to unexpected results if you
+        accidently misspell the attribute. For example, if ``x`` has field
+        ``foo``, and you misspell this when setting, e.g., you try to do
+        ``x.fooo = numpy.arange(x.size)``, ``foo`` will not be set, nor will
+        you get an error. Instead, the attribute ``fooo`` will be added to
+        ``x``. If you tried to do this using index notation, however ---
+        ``x['fooo'] = numpy.arange(x.size)`` --- you will
+        get an ``AttributeError`` as you might expect. For this reason, it is
+        recommended that you always use index notation when *setting* values;
+        you can use either index or attribute notation when *retrieving*
+        values.
+
+    Properties and methods as fields
+    ++++++++++++++++++++++++++++++++
+    If a propety or instance method is defined for a class that inherits from
+    LSCArray, those can be accessed in the same way as fields are. For example,
+    define ``Foo`` as:
+``
+class Foo(LSCArray):
+    @property
+    def bar(self):
+        return self['a']**2.
+
+    def narf(self, y):
+        return self['a'] + y
+``
+    Then if we have an instance:
+``
+foo = Foo(100, dtype=[('a', float)])
+``
+    The ``bar`` and ``narf`` attributes may be accessed via field notation:
+    ``foo.bar``, ``foo['bar']``, ``foo.narf(10)`` and ``foo['narf(10)']``.
+
+    Add/drop fields
+    +++++++++++++++
+    Fields may be added or dropped to an already intialized array using
+    ``add_fields`` and ``with[out]_fields``; see the documentation for
+    those functions for details.
+
+
+    Appending arrays
+    ++++++++++++++++
+    Two instances of LSCArrays may be appended together if they have the
+    same fields using the append instance method. If the array has an id
+    field that you want incremented with the append to prevent collisions,
+    you can indicate this in the append. For example, say you have array ``x``
+    and ``y`` both with fields ``event_id`` that go from ``0-1000``. To append
+    ``y`` to ``x``, while keeping ``event_id`` unique:
+``
+z = x.append(y, remap_ids='event_id')
+``
+    This will result in the elements from ``y`` having event ids 1001-2001
+    in ``z``. A dictionary mapping the new ids to original is stored in the
+    ``id_maps`` attribute. See ``append`` for more details.
+
+    Joining arrays
+    ++++++++++++++
+    You can join two arrays using a common field with the ``join`` method.
+    One-to-one, one-to-many, many-to-one, and many-to-many joins are supported.
+    For example, if ``x`` has fields ``event_id, a`` and ``y`` has fields
+    ``event_id, b``, then ``z = x.join(y, 'event_id')`` will have fields
+    ``event_id, a, b``, with ``b`` set such that ``x.event_id == y.event_id``.
+    In addition, all properties and methods of ``y`` that are not in ``x``
+    will be copied to ``z``. For example, if ``y`` had property ``foo`` that
+    operated on field ``b``, ``z`` will inherit that property. See ``join``
+    for details.
+
 
     Lookup tables
     +++++++++++++
     A lookup function is provided that allows you to quickly get all rows in
     the array for which a paricular field matches a particular value, e.g.,
-    `x.lookup('a', 10.)` will return all rows in `x` for which
-    `x['a'] == 10.`.  This is done by building an internal dictionary using
-    the requested field as a key the first time it is requested. Since this
-    relies on the order of the results, the internal lookup table is not
-    passed to views or copies of the array, and it cleared whenever a sort is
-    carried out.  The lookup table does increase memory overhead. Also, if
-    you change a value in the field that is used as key after the lookup
-    table is created, you will get spurious results. For these reasons, a
-    clear_lookup method is also provided. See `lookup` and `clear_lookup` for
-    details.
+    ``x.lookup('a', 10.)`` will return all rows in ``x`` for which ``x['a'] ==
+    10.``.  This is done by building an internal dictionary using the
+    requested field as a key the first time it is requested. Since this relies
+    on the order of the results, the internal lookup table is not passed to
+    views or copies of the array, and it cleared is whenever an in-place sort
+    is carried out.  The lookup table does increase memory overhead. Also, if
+    you change a value in the field that is used as key after the lookup table
+    is created, you will get spurious results. For these reasons, a
+    clear_lookup method is also provided. See ``lookup`` and ``clear_lookup``
+    for details.
 
     Notes
     -----
@@ -752,9 +834,9 @@ class LSCArray(numpy.recarray):
     memory striding abilities (see `this question/answer on stackoverflow
     <http://stackoverflow.com/a/14639568/1366472>`_ for details). Also,
     numpy's support of object arrays is more limited.  In particular, prior
-    to version 1.9.2, you cannot create a view of an array in which the dtype
-    is changed that has any fields that are object data types, even if the
-    view does not touch the object fields. (This has since been relaxed.)
+    to version 1.9.2, you cannot create a view of an array that changes the 
+    dtype if the array has any fields that are objects, even if the view does
+    not affect the object fields. (This has since been relaxed.)
 
     The second option, using strings of a fixed length, solves the issues
     with object fields. However, if you try to change one of the strings
@@ -765,22 +847,28 @@ class LSCArray(numpy.recarray):
 
     This class offers the option to set strings designated as 'lstring' as
     objects, or as fixed-length strings. To toggle what it does use
-    lscarrays.set_lstring_as_obj (see the docstring for that function for
+    ``lscarrays.set_lstring_as_obj`` (see the docstring for that function for
     more details).
 
     Examples
     --------
+
+    .. note:: For some predefined arrays with default fields, see the other
+        array classes defined below. For utilities that make loading arrays
+        from data sources easier, see ``lscarray_utils.py`` in the various
+        sub-directories of ``io``.
+
     * Create an empty array with four rows and two fields called ``'foo'`` and
     ``'bar'``, both of which are floats:
 ``
 >>> x = LSCArray(4, dtype=[('foo', float), ('bar', float)])
 ``
 
-    * Set/retrieve a field using index or attribute syntax:
+    * Set/retrieve a fields using index or attribute syntax:
 ``
 >>> x['foo'] = [1.,2.,3.,4.]
 
->>> x.bar = [5.,6.,7.,8.]
+>>> x['bar'] = [5.,6.,7.,8.]
 
 >>> x
     
@@ -814,65 +902,79 @@ LSCArray([(1.0, 5.0), (2.0, 6.0), (3.0, 7.0), (4.0, 8.0)],
 array([ 0.19866933,  0.3271947 ,  0.41557185,  0.47942554])
 ``
 
+    * Create an array with subfields:
+``
+>>> x = LSCArray(4, dtype=[('foo', [('cat', float), ('hat', int)]), ('bar', float)])
+
+>>> x.all_fieldnames
+    ['foo.cat', 'foo.hat', 'bar']
+``
+
     * Load from a list of arrays (in this case, from an hdf5 file):
 ``
->>> f = h5py.File('bank/H1L1-BANK2HDF-1117400416-928800.hdf', 'r')
+>>> bankhdf = h5py.File('bank/H1L1-BANK2HDF-1117400416-928800.hdf')
 
->>> f.keys()
+>>> bankhdf.keys()
     [u'mass1', u'mass2', u'spin1z', u'spin2z', u'template_hash']
 
->>> templates = LSCArray.from_arrays(f.values(), names=f.keys())
+>>> templates = LSCArray.from_arrays(bankhdf.values(), names=bankhdf.keys())
+
+>>> templates.fieldnames
+    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash')
 
 >>> templates.mass1
 array([ 1.71731389,  1.10231435,  2.99999857, ...,  1.67488706,
         1.00531888,  2.11106491], dtype=float32)
+``
 
->>> templates[['mass1', 'spin1z']]
-array([(1.7173138856887817, 0.0), (1.1023143529891968, 0.0),
-       (2.9999985694885254, 0.0), ..., (1.6748870611190796, 0.0),
-       (1.0053188800811768, 0.0), (2.111064910888672, 0.0)], 
-      dtype=[('mass1', '<f4'), ('spin1z', '<f4')])
+    * Sort by a field without having to worry about also sorting the other
+      fields:
+``
+>>> templates[['mass1', 'mass2']]
+array([(1.7173138856887817, 1.2124452590942383),
+       (1.1023143529891968, 1.0074082612991333),
+       (2.9999985694885254, 1.0578444004058838), ...,
+       (1.6748870611190796, 1.1758257150650024),
+       (1.0053188800811768, 1.0020891427993774),
+       (2.111064910888672, 1.0143394470214844)], 
+      dtype=[('mass1', '<f4'), ('mass2', '<f4')])
+
+>>> templates.sort(order='mass1')
+
+>>> templates[['mass1', 'mass2']]
+array([(1.000025987625122, 1.0000133514404297),
+       (1.0002814531326294, 1.0002814531326294),
+       (1.0005437135696411, 1.0005437135696411), ...,
+       (2.999999523162842, 1.371169090270996),
+       (2.999999523162842, 1.4072519540786743), (3.0, 1.4617927074432373)], 
+      dtype=[('mass1', '<f4'), ('mass2', '<f4')])
 ``
 
     * Convert a LIGOLW xml table:
 ``
 >>> type(sim_table)
-glue.ligolw.lsctables.SimInspiralTable
+    glue.ligolw.lsctables.SimInspiralTable
 
 >>> sim_array = LSCArray.from_ligolw_table(sim_table)
 
 >>> sim_array.mass1
-array([ 5.94345808,  3.34226608,  3.73025393, ...,  4.75996208,
-        4.23756123,  4.62750006], dtype=float32)
+array([ 2.27440691,  1.85058105,  1.61507106, ...,  2.0504961 ,
+        2.33554196,  2.02732205], dtype=float32)
 
 >>> sim_array.waveform
-chararray(['SEOBNRv2pseudoFourPN', 'SEOBNRv2pseudoFourPN',
-       'SEOBNRv2pseudoFourPN', ..., 'SEOBNRv2pseudoFourPN',
-       'SEOBNRv2pseudoFourPN', 'SEOBNRv2pseudoFourPN'], 
-      dtype='|S22')
-``
-    
-    * Make lstrings be objects instead of strings:
-``
->>> lscarrays.set_lstring_as_obj(True)
-
->>> sim_array = LSCArray.from_ligolw_table(sim_table)
-
->>> sim_array.waveform
-array([u'SEOBNRv2pseudoFourPN', u'SEOBNRv2pseudoFourPN',
-       u'SEOBNRv2pseudoFourPN', ..., u'SEOBNRv2pseudoFourPN',
-       u'SEOBNRv2pseudoFourPN', u'SEOBNRv2pseudoFourPN'], dtype=object)
+array([u'SpinTaylorT2', u'SpinTaylorT2', u'SpinTaylorT2', ...,
+       u'SpinTaylorT2', u'SpinTaylorT2', u'SpinTaylorT2'], dtype=object)
 ``
     
     * Only view a few of the fields:
 ``
 >>> sim_array.with_fields(['simulation_id', 'mass1', 'mass2'])
-LSCArray([(0, 5.943458080291748, 3.614427089691162),
-       (1, 3.342266082763672, 3.338679075241089),
-       (2, 3.7302539348602295, 6.2023820877075195), ...,
-       (9236, 4.75996208190918, 4.678255081176758),
-       (9237, 4.237561225891113, 2.1022119522094727),
-       (9238, 4.627500057220459, 3.251383066177368)], 
+LSCArray([(0, 2.274406909942627, 2.6340370178222656),
+       (1, 1.8505810499191284, 2.8336880207061768),
+       (2, 1.6150710582733154, 2.2336490154266357), ...,
+       (11607, 2.0504961013793945, 2.6019821166992188),
+       (11608, 2.3355419635772705, 1.2164380550384521),
+       (11609, 2.0273220539093018, 2.2453839778900146)], 
       dtype={'names':['simulation_id','mass1','mass2'], 'formats':['<i8','<f4','<f4'], 'offsets':[200,236,240], 'itemsize':244})
 ``
 
@@ -881,12 +983,12 @@ LSCArray([(0, 5.943458080291748, 3.614427089691162),
 >>> sim_array = LSCArray.from_ligolw_table(sim_table, columns=['simulation_id', 'mass1', 'mass2'])
 
 >>> sim_array
-LSCArray([(0, 5.943458080291748, 3.614427089691162),
-       (1, 3.342266082763672, 3.338679075241089),
-       (2, 3.7302539348602295, 6.2023820877075195), ...,
-       (9236, 4.75996208190918, 4.678255081176758),
-       (9237, 4.237561225891113, 2.1022119522094727),
-       (9238, 4.627500057220459, 3.251383066177368)], 
+LSCArray([(0, 2.274406909942627, 2.6340370178222656),
+       (1, 1.8505810499191284, 2.8336880207061768),
+       (2, 1.6150710582733154, 2.2336490154266357), ...,
+       (11607, 2.0504961013793945, 2.6019821166992188),
+       (11608, 2.3355419635772705, 1.2164380550384521),
+       (11609, 2.0273220539093018, 2.2453839778900146)], 
       dtype=[('simulation_id', '<i8'), ('mass1', '<f4'), ('mass2', '<f4')])
 ``
 
@@ -894,74 +996,15 @@ LSCArray([(0, 5.943458080291748, 3.614427089691162),
 ``
 >>> optimal_snrs = numpy.random.uniform(4.,40., size=len(sim_array))
 
->>> sim_array.optimal_snr
-array([ 11.16132242,  21.05959836,  27.543917  , ...,  35.48635821,
-        23.8457928 ,  14.93213006])
-``
+>>> sim_array = sim_array.add_fields(optimal_snrs, 'optimal_snrs')
 
-    * Create an array with nested fields:
-``
->>> more_info = LSCArray(len(sim_array), dtype=[('site_params', [('ifos', 'S2'), ('eff_dists', float)], 2)])
-
->>> more_info.site_params.ifos = ['H1', 'L1']
-
->>> more_info.site_params.eff_dists[:,0] = [row.eff_dist_h for row in sim_table]
-
->>> more_info.site_params.eff_dists[:,1] = [row.eff_dist_l for row in sim_table]
-
->>> more_info.site_params.ifos
-chararray([['H1', 'L1'],
-       ['H1', 'L1'],
-       ['H1', 'L1'],
-       ..., 
-       ['H1', 'L1'],
-       ['H1', 'L1'],
-       ['H1', 'L1']], 
-      dtype='|S2')
-
->>> more_info.site_params.eff_dists
-array([[  395.0081,   405.4235],
-       [  467.1236,   333.3516],
-       [  470.7249,   543.3748],
-       ..., 
-       [ 2424.947 ,  2011.257 ],
-       [  354.6583,   483.3423],
-       [ 1148.264 ,  1093.221 ]])
-``
-    
-    * Add the nested fields to another array:
-``
->>> sim_array = sim_array.add_fields(more_info)
-
->>> sim_array.site_params
-LSCArray([[('H1', 395.0081), ('L1', 405.4235)],
-       [('H1', 467.1236), ('L1', 333.3516)],
-       [('H1', 470.7249), ('L1', 543.3748)],
-       ..., 
-       [('H1', 2424.947), ('L1', 2011.257)],
-       [('H1', 354.6583), ('L1', 483.3423)],
-       [('H1', 1148.264), ('L1', 1093.221)]], 
-      dtype=[('ifos', 'S2'), ('eff_dists', '<f8')])
-``
-
-    * Sort by one of the fields (in this case, decisive distance):
-``
->>> sort_idx = numpy.argsort(sim_array['site_params.eff_dists'].min(axis=1))
-
->>> sim_array[sort_idx]
-LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [('H1', 14.89811), ('L1', 21.8963)]),
-       (1387, 2.7829830646514893, 2.214693069458008, 29.092840816763346, [('H1', 18.14495), ('L1', 23.38128)]),
-       (2928, 3.3857719898223877, 2.5695199966430664, 31.27512113467619, [('H1', 19.6899), ('L1', 20.47152)]),
-       ...,
-       (858, 3.4494340419769287, 5.6560869216918945, 39.45165010161026, [('H1', 9966.197), ('L1', 11871.26)]),
-       (261, 2.9730420112609863, 4.851998805999756, 19.983317475299707, [('H1', 12378.11), ('L1', 10544.48)]),
-       (8619, 2.506516933441162, 2.3052260875701904, 33.229039459442454, [('H1', 20041.22), ('L1', 17056.87)])], 
-      dtype=[('simulation_id', '<i8'), ('mass1', '<f4'), ('mass2', '<f4'), ('optimal_snr', '<f8'), ('site_params', [('ifos', 'S2'), ('eff_dists', '<f8')], (2,))])
+>>> sim_array.fieldnames
+    ('simulation_id', 'mass1', 'mass2', 'optimal_snrs')
 ``
     """
     __persistent_attributes__ = ['name', 'source_files', 'id_maps']
 
-    def __new__(cls, shape, name=None, set_default_empty=True, **kwargs):
+    def __new__(cls, shape, name=None, zero=True, **kwargs):
         """
         Initializes a new empty array.
         """
@@ -972,7 +1015,7 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         obj.id_maps = None
         obj.__persistent_attributes__ = cls.__persistent_attributes__
         # zero out the array if desired
-        if set_default_empty:
+        if zero:
             default = default_empty(1, dtype=obj.dtype)
             obj[:] = default
         return obj
@@ -1482,7 +1525,11 @@ LSCArray([ (6812, 2.0183539390563965, 2.2284369468688965, 28.000550054717195, [(
         Join another array to this array such that:
         ``self[map_field]`` == ``other[other_map_field]``. The fields from
         ``other`` are added as a sub-array to self with field name
-        ``expand_field_name``.
+        ``expand_field_name``. Any attributes in ``other`` that are not
+        attributes of this array are copied to the output array. Therefore, if
+        ``other`` array has properties/methods that use the fields
+        that are added to this array, the properties/methods will continue to
+        work on the output array.
 
         Parameters
         ----------
@@ -1729,9 +1776,9 @@ class _LSCArrayWithDefaults(LSCArray):
 
 class Waveform(_LSCArrayWithDefaults):
     """
-    Subclasses LSCArrayWithDefaults, with default name ``waveform``. Has
-    class attributes instrinsic_params, extrinsic_params, and waveform_params.
-    These are concatenated together to make the default fields.
+    Subclasses LSCArrayWithDefaults, with default name ``waveform``. The
+    ``_static_fields`` define fields needed to describe a CBC waveform in the
+    radiation frame. These are returned by ``default_fields``.
 
     Also adds various common functions decorated as properties, such as
     mtotal = mass1+mass2.
