@@ -22,21 +22,18 @@
 # =============================================================================
 #
 import numpy
-import events, pycbc
 from scipy.weave import inline
-
-if pycbc.HAVE_OMP:
-    omp_libs = ['gomp']
-    omp_flags = ['-fopenmp']
-else:
-    omp_libs = []
-    omp_flags = []
+from .simd_threshold import thresh_cluster_support, default_segsize
+from .events import _BaseThresholdCluster
+from pycbc.opt import omp_libs, omp_flags
 
 def threshold_numpy(series, value):
     arr = series.data
     locs = numpy.where(arr.real**2 + arr.imag**2 > value**2)[0]
     vals = arr[locs]
     return locs, vals
+
+threshold_only = threshold_numpy
 
 outl = None
 outv = None
@@ -94,3 +91,37 @@ def threshold_inline(series, value):
         return numpy.array([], numpy.uint32), numpy.array([], numpy.float32)
 
 threshold=threshold_inline
+
+class CPUThresholdCluster(_BaseThresholdCluster):
+    def __init__(self, series):
+        self.series = numpy.array(series.data, copy=False)
+
+        self.slen = len(series)
+        self.outv = numpy.zeros(self.slen, numpy.complex64)
+        self.outl = numpy.zeros(self.slen, numpy.uint32)
+        self.segsize = default_segsize
+        self.code = """
+             return_val = parallel_thresh_cluster(series, (uint32_t) slen, values, locs,
+                                         (float) threshold, (uint32_t) window, (uint32_t) segsize);
+              """
+        self.support = thresh_cluster_support
+
+    def threshold_and_cluster(self, threshold, window):
+        series = self.series
+        slen = self.slen
+        values = self.outv
+        locs = self.outl
+        segsize = self.segsize
+        self.count = inline(self.code, ['series', 'slen', 'values', 'locs', 'threshold', 'window', 'segsize'],
+                            extra_compile_args = ['-march=native -O3 -w'] + omp_flags,
+                            #extra_compile_args = ['-mno-avx -mno-sse2 -mno-sse3 -mno-ssse3 -mno-sse4 -mno-sse4.1 -mno-sse4.2 -mno-sse4a -O2 -w'] + omp_flags,
+                            #extra_compile_args = ['-msse3 -O3 -w'] + omp_flags,
+                            support_code = self.support, libraries = omp_libs,
+                            auto_downcast = 1)
+        if self.count > 0:
+            return values[0:self.count], locs[0:self.count]
+        else:
+            return numpy.array([], dtype = numpy.complex64), numpy.array([], dtype = numpy.uint32)
+
+def _threshold_cluster_factory(series):
+    return CPUThresholdCluster

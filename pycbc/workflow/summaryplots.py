@@ -21,11 +21,12 @@
 #
 # =============================================================================
 #
-import os
 import itertools
+import logging
+import os
 import urllib
 
-from pycbc.workflow.core import *
+from pycbc.workflow.core import Executable, Node, File, FileList, make_external_call
 
 import Pegasus.DAX3 as dax
 

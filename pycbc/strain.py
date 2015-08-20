@@ -26,10 +26,10 @@ from pycbc.types import MultiDetOptionActionSpecial
 from pycbc.types import required_opts, required_opts_multi_ifo
 from pycbc.types import ensure_one_opt, ensure_one_opt_multi_ifo
 from pycbc.types import copy_opts_for_single_ifo
-from pycbc.frame import read_frame
+from pycbc.frame import read_frame, query_and_read_frame
 from pycbc.inject import InjectionSet, SGBurstInjectionSet
 from pycbc.filter import resample_to_delta_t, highpass, make_frequency_series
-from pycbc.filter.zpk import filter_zpk_factored
+from pycbc.filter.zpk import filter_zpk
 
 def from_cli(opt, dyn_range_fac=1, precision='single'):
     """Parses the CLI options related to strain data reading and conditioning.
@@ -50,23 +50,32 @@ def from_cli(opt, dyn_range_fac=1, precision='single'):
     strain : TimeSeries
         The time series containing the conditioned strain data.
     """
-    if opt.frame_cache or opt.frame_files:
+    if opt.frame_cache or opt.frame_files or opt.frame_type:
         if opt.frame_cache:
             frame_source = opt.frame_cache
         if opt.frame_files:
             frame_source = opt.frame_files
 
         logging.info("Reading Frames")
-        strain = read_frame(frame_source, opt.channel_name,
+        
+        if opt.frame_type:
+            strain = query_and_read_frame(opt.frame_type, opt.channel_name,
+                                          start_time=opt.gps_start_time-opt.pad_data,
+                                          end_time=opt.gps_end_time+opt.pad_data)
+        else:
+            strain = read_frame(frame_source, opt.channel_name,
                             start_time=opt.gps_start_time-opt.pad_data,
                             end_time=opt.gps_end_time+opt.pad_data)
 
         if opt.zpk_z and opt.zpk_p and opt.zpk_k:
+            logging.info("Highpass Filtering")
+            strain = highpass(strain, frequency=opt.strain_high_pass)
+
             logging.info("Applying zpk filter")
-            z = -2*numpy.pi* numpy.array(opt.zpk_z)
-            p = -2*numpy.pi* numpy.array(opt.zpk_p)
-            k = opt.zpk_k
-            strain = filter_zpk_factored(strain.astype(numpy.float64), z, p, k)
+            z = numpy.array(opt.zpk_z)
+            p = numpy.array(opt.zpk_p)
+            k = float(opt.zpk_k)
+            strain = filter_zpk(strain.astype(numpy.float64), z, p, k)
 
         if opt.normalize_strain:
             logging.info("Dividing strain by constant")
@@ -163,7 +172,7 @@ def from_cli_multi_ifos(opt, ifos, **kwargs):
     return strain
 
 
-def insert_strain_option_group(parser):
+def insert_strain_option_group(parser, gps_times=True):
     """
     Adds the options used to call the pycbc.strain.from_cli function to an
     optparser as an OptionGroup. This should be used if you
@@ -182,12 +191,16 @@ def insert_strain_option_group(parser):
                   " if the --psd-estimation option is given.")
 
     # Required options
-    data_reading_group.add_argument("--gps-start-time",
-                            help="The gps start time of the data "
-                                 "(integer seconds)", type=int)
-    data_reading_group.add_argument("--gps-end-time",
-                            help="The gps end time of the data "
-                                 " (integer seconds)", type=int)
+    
+    if gps_times:
+        data_reading_group.add_argument("--gps-start-time",
+                                help="The gps start time of the data "
+                                     "(integer seconds)", type=int)
+        data_reading_group.add_argument("--gps-end-time",
+                                help="The gps end time of the data "
+                                     " (integer seconds)", type=int)
+                                     
+                                 
     data_reading_group.add_argument("--strain-high-pass", type=float,
                             help="High pass frequency")
     data_reading_group.add_argument("--pad-data",
@@ -206,6 +219,12 @@ def insert_strain_option_group(parser):
     data_reading_group.add_argument("--frame-files",
                             type=str, nargs="+",
                             help="list of frame files")
+
+    #Use datafind to get frame files 
+    data_reading_group.add_argument("--frame-type",
+                            type=str,
+                            help="(optional), replaces frame-files. Use datafind "
+                                 "to get the needed frame file(s) of this type.")
 
     #Generate gaussian noise with given psd
     data_reading_group.add_argument("--fake-strain",
@@ -364,7 +383,7 @@ def insert_strain_option_group_multi_ifo(parser):
 
 
 ensure_one_opt_groups = []
-ensure_one_opt_groups.append(['--frame-cache','--fake-strain','--frame-files'])
+ensure_one_opt_groups.append(['--frame-cache','--fake-strain','--frame-files', '--frame-type'])
 
 required_opts_list = ['--gps-start-time', '--gps-end-time',
                       '--strain-high-pass', '--pad-data', '--sample-rate',

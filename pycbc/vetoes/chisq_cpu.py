@@ -22,7 +22,7 @@
 # =============================================================================
 #
 import numpy, pycbc
-from pycbc.types import Array, real_same_precision_as, complex_same_precision_as
+from pycbc.types import real_same_precision_as
 from scipy.weave import inline
 
 if pycbc.HAVE_OMP:
@@ -170,4 +170,4 @@ def shift_sum(v1, shifts, bins):
                     libraries=omp_libs
           )
           
-    return  Array(chisq, copy=False)
+    return  chisq

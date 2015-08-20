@@ -19,17 +19,13 @@
 #  MA  02111-1307  USA
 
 
-import lalsimulation
 import lal
 import numpy
 from numpy import sqrt
 
-import pycuda.tools
 from pycuda.elementwise import ElementwiseKernel
-from pycuda.gpuarray import to_gpu
-
-from pycbc.setuputils import pkg_config_header_strings
-from pycbc.types import FrequencySeries,zeros
+from pycbc.libutils import pkg_config_header_strings
+from pycbc.types import FrequencySeries, zeros
 import pycbc.pnutils
 
 preamble = """

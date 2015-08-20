@@ -26,29 +26,21 @@ This module provides the worker functions and classes that are used when
 creating a workflow. For details about the workflow module see here:
 https://ldas-jobs.ligo.caltech.edu/~cbc/docs/pycbc/ahope.html
 """
-import os, sys, subprocess, logging, math, string, urlparse, ConfigParser
-import numpy, cPickle
-import string, random
+import os, subprocess, logging, math, string, urlparse, ConfigParser, copy
+import numpy, cPickle, random
 from itertools import combinations, groupby
 from operator import attrgetter
-from os.path import splitext, basename, isfile
 import lal as lalswig
-from glue import lal
-from glue import segments
+from glue import lal, segments
 from pycbc.workflow.configuration import WorkflowConfigParser
-
-# The following syntax is convoluted, but designed to make
-# it easy to change when pegasus_workflow is moved upstream
-# into Pegasus.
-from pycbc.workflow import pegasus_workflow as pegasus_workflow
-import copy
+from pycbc.workflow import pegasus_workflow
 
 # workflow should never be using the glue LIGOTimeGPS class, override this with
 # the nice SWIG-wrapped class in lal
 lal.LIGOTimeGPS = lalswig.LIGOTimeGPS
 
 #REMOVE THESE FUNCTIONS  FOR PYTHON >= 2.7 ####################################
-def check_output(*popenargs, **kwargs):
+def check_output_error_and_retcode(*popenargs, **kwargs):
     """
     This function is used to obtain the stdout of a command. It is only used
     internally, recommend using the make_external_call command if you want
@@ -59,8 +51,13 @@ def check_output(*popenargs, **kwargs):
     process = subprocess.Popen(stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE,
                                *popenargs, **kwargs)
-    output, unused_err = process.communicate()
+    output, error = process.communicate()
     retcode = process.poll()
+    return output, error, retcode
+
+def check_output(*popenargs, **kwargs):
+    output, unused_error, unused_retcode = \
+                           check_output_error_and_retcode(*popenargs, **kwargs)
     return output
 
 ###############################################################################
@@ -213,7 +210,6 @@ class Executable(pegasus_workflow.Executable):
              if cp.has_section(section):
                 sections.append(section)
         self.sections = sections   
-        
         # Do some basic sanity checking on the options      
         for sec1, sec2 in combinations(sections, 2):
             cp.check_duplicate_options(sec1, sec2, raise_error=True)
@@ -526,6 +522,7 @@ class Node(pegasus_workflow.Node):
                    directory=self.executable.out_dir, tags=all_tags,
                    use_tmp_subdirs=use_tmp_subdirs)
         self.add_output_opt(option_name, fil)
+        return fil
         
     @property    
     def output_files(self):
@@ -607,6 +604,7 @@ class File(pegasus_workflow.File):
             e.g. this might be ["BNSINJECTIONS" ,"LOWMASS","CAT_2_VETO"].
             These are used in file naming.
         """
+        self.metadata = {}
         
         # Set the science metadata on the file
         if isinstance(ifos, (str, unicode)):
@@ -655,9 +653,9 @@ class File(pegasus_workflow.File):
         # Let's do a test here
         if use_tmp_subdirs and len(self.segment_list):
             pegasus_lfn = str(int(self.segment_list.extent()[0]))[:-4]
-            pegasus_lfn = pegasus_lfn + '/' + basename(file_url)
+            pegasus_lfn = pegasus_lfn + '/' + os.path.basename(file_url)
         else:
-            pegasus_lfn = basename(file_url)
+            pegasus_lfn = os.path.basename(file_url)
         super(File, self).__init__(pegasus_lfn)
         
         if store_file:
@@ -675,6 +673,10 @@ class File(pegasus_workflow.File):
         safe_dict = copy.copy(self.__dict__)
         safe_dict['cache_entry'] = None
         return safe_dict   
+
+    def add_metadata(self, key, value):
+        """ Add arbitrary metadata to this file """
+        self.metadata[key] = value
 
     @property
     def ifo(self):

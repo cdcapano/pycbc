@@ -24,7 +24,47 @@
 """ This modules contains functions for calculating and manipulating
 coincident triggers.
 """
-import numpy
+import numpy, logging, h5py
+from itertools import izip
+from scipy.interpolate import interp1d  
+
+def calculate_n_louder(bstat, fstat, dec):
+    """ Calculate for each foreground event the number of background events
+    that are louder than it.
+    
+    Parameters
+    ----------
+    bstat: numpy.ndarray
+        Array of the background statistic values
+    fstat: numpy.ndarray
+        Array of the foreground statitsic values
+    dec: numpy.ndarray
+        Array of the decimation factors for the background statistics
+    
+    Returns
+    ------- 
+    cum_back_num: numpy.ndarray
+        The cumulative array of background triggers 
+    fore_n_louder: numpy.ndarray
+        The number of background triggers above each foreground trigger
+    """
+    sort = bstat.argsort()
+    unsort = sort.argsort()
+    bstat = bstat[sort]
+    dec = dec[sort]
+    
+    # calculate cumulative number of triggers louder than the trigger in 
+    # a given index. We need to subtract the decimation factor, as the cumsum
+    # includes itself in the first sum (it is inclusive of the first value)
+    n_louder = dec[::-1].cumsum()[::-1] - dec
+    
+    # Determine how many values are louder than the foreground ones
+    # We need to subtract one from the index, to be consistent with the definition
+    # of n_louder, as here we do want to include the background value at the
+    # found index
+    fore_n_louder = n_louder[numpy.searchsorted(bstat, fstat, side='left') - 1]
+    back_cum_num = n_louder[unsort]
+    return back_cum_num, fore_n_louder
 
 def timeslide_durations(start1, start2, end1, end2, timeslide_offsets):
     """ Find the coincident time for each timeslide.
@@ -103,7 +143,12 @@ def time_coincidence(t1, t2, window, slide_step=0):
     right = numpy.searchsorted(fold2, fold1 + window)
 
     idx1 = numpy.repeat(sort1, right-left)
-    idx2 = numpy.concatenate([sort2[l:r] for l,r in zip(left, right)])
+    idx2 = [sort2[l:r] for l,r in zip(left, right)]
+
+    if len(idx2) > 0:
+        idx2 = numpy.concatenate(idx2)
+    else:
+        idx2 = numpy.array([])
     
     if slide_step:
         diff = ((t1 / slide_step)[idx1] - (t2 / slide_step)[idx2])
@@ -113,4 +158,88 @@ def time_coincidence(t1, t2, window, slide_step=0):
         
     return idx1, idx2, slide
 
+
+def cluster_coincs(stat, time1, time2, timeslide_id, slide, window):
+    """Cluster coincident events for each timeslide separately, across 
+    templates, based on the ranking statistic 
+
+    Parameters
+    ----------
+    stat: numpy.ndarray
+        vector of ranking values to maximize
+    time1: numpy.ndarray
+        first time vector
+    time2: numpy.ndarray
+        second time vector
+    timeslide_id: numpy.ndarray
+        vector that determines the timeslide offset
+    slide: float
+        length of the timeslides offset interval
+    window: float
+        length to cluster over
+
+    Returns
+    -------
+    cindex: numpy.ndarray 
+        The set of indices corresponding to the surviving coincidences.
+    """
+    
+    logging.info('clustering coinc triggers over %ss window' % window)
+    
+    indices = []
+    if numpy.isfinite(slide):
+        time = (time2 + (time1 + timeslide_id * slide)) / 2
+    else:
+        time = 0.5 * (time2 + time1)
+        
+    tslide = timeslide_id.astype(numpy.float128)
+    time = time.astype(numpy.float128)
+    span = (time.max() - time.min()) + window * 10
+    time = time + span * tslide
+    
+    time_sorting = time.argsort()
+    stat = stat[time_sorting]
+    time = time[time_sorting]
+    tslide = tslide[time_sorting]
+    
+    logging.info('sorting...')
+    left = numpy.searchsorted(time, time - window)
+    right = numpy.searchsorted(time, time + window)
+    logging.info('done sorting')
+    indices = numpy.zeros(len(left), dtype=numpy.uint32)
+    
+    # i is the index we are inspecting, j is the next one to save
+    i = 0
+    j = 0
+    while i < len(left):
+        l = left[i]
+        r = right[i]
+        
+        # If there are no other points to compare it is obviosly the max
+        if (r - l) == 1:
+            indices[j] = i
+            j += 1
+            i += 1            
+            continue            
+        
+        # Find the location of the maximum within the time interval around i
+        max_loc = stat[l:r].argmax() + l 
+        
+        # If this point is the max, we can skip to the right boundary
+        if max_loc == i:
+            indices[j] = i
+            i = r
+            j += 1
+        
+        # If the max is later than i, we can skip to it
+        elif max_loc > i:
+            i = max_loc 
+            
+        elif max_loc < i:
+            i += 1
+
+    indices = indices[:j]
+            
+    logging.info('done clustering coinc triggers: %s triggers remaining' % len(indices))
+    return time_sorting[indices]
 

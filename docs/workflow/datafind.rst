@@ -88,6 +88,7 @@ When using any of the AT_RUNTIME sub-modules the following other configuration o
 
 * datafind-X1-frame-type = NAME - REQUIRED. Where X1 is replaced by the ifo name for each ifo. The NAME should be the full frame type, which is used when querying the database.
 * datafind-ligo-datafind-server = URL - OPTIONAL. If provided use this server when querying for frames. If not provided, which is recommended for most applications, then the LIGO_DATAFIND_SERVER environment variable will be used to determine this.
+* datafind-backup-datafind-server = URL - OPTIONAL. This option is only available when using AT_RUNTIME_SINGLE_FRAMES or AT_RUNTIME_MULTIPLE_FRAMES. If given it will query a second datafind server (ie. a remote server) using gsiftp urltypes. This will then allow frames to be associated with both a file:// and gsiftp:// url, in the case that your local site is missing a frame file, or the file is not accessible, pegasus will copy the file from gsiftp://. **NOTE** This will not catch the case that the frame file is available at the **start** of a workflow but goes missing later. Pegasus can copy **all** frame files around at the start of the workflow, but you may not want this (remove symlink option from the basic_pegasus.conf if you want this).
 
 When using the PREGENERATED sub-module the following configuartion options apply in the [workflow-datafind] section:
 
@@ -95,17 +96,22 @@ When using the PREGENERATED sub-module the following configuartion options apply
 
 The following configuration options apply in the [workflow-datafind] section for all sub-modules and can be used as sanity checks:
 
-* datafind-check-segment-gaps = STRING - OPTIONAL (default = "no_test"). If this option takes any value other than 'no_test' the workflow module will check that the local datafind server has returned frames covering all of the listed science times. Its behaviour is then as follows
+* datafind-check-segment-gaps = STRING - OPTIONAL (default = "no_test"). If this option takes any value other than 'no_test' the workflow module will check that the local datafind server has returned frames covering all of the listed science times. Its behaviour is then as follows:
+
   * 'no_test': Do not perform this test. Any discrepancies will cause later failures.
   * 'warn': Perform the test, print warnings covering any discrepancies but do nothing about them. Discrepancies will cause failures later in the workflow.
   * 'update_times': Perform the test, print warnings covering any discrepancies and update the input science times to remove times that are not present on the host cluster.
   * 'raise_error': Perform the test. If any discrepancies occur, raise a ValueError.
-* datafind-check-frames-exist = STRING - OPTIONAL (default = "no_test"). If this options takes any value other than 'no_test' the workflow module will check that the frames returned by the local datafind server are accessible from the machine that is running the workflow generation. Its behaviour is then as follows
+
+* datafind-check-frames-exist = STRING - OPTIONAL (default = "no_test"). If this options takes any value other than 'no_test' the workflow module will check that the frames returned by the local datafind server are accessible from the machine that is running the workflow generation. Its behaviour is then as follows:
+
   * 'no_test': Do not perform this test. Any discrepancies will cause later failures.
   * 'warn': Perform the test, print warnings covering any discrepancies but do nothing about them. Discrepancies will cause failures later in the workflow.
   * 'update_times': Perform the test, print warnings covering any discrepancies and update the input science times to remove times that are not present on the host cluster.
   * 'raise_error': Perform the test. If any discrepancies occur, raise a ValueError.
+
 * datafind-check-segment-summary = STRING - OPTIONAL (default = "no_test"). If this option takes any value other than 'no_test' the workflow module will check that all frames returned by datafind are covered by the segment_summary table (for the science flag). Its behaviour is then as follows:
+
   * 'no_test': Do not perform this test. 
   * 'warn': Perform the test, print warnings covering any discrepancies but do nothing about them.
   * 'raise_error': Perform the test. If any discrepancies occur, raise a ValueError.

@@ -18,14 +18,14 @@ import copy
 from pycbc.psd.read import *
 from pycbc.psd.analytical import *
 from pycbc.psd.estimate import *
-from pycbc.types import float64
+from pycbc.types import float32,float64
 from pycbc.types import MultiDetOptionAppendAction, MultiDetOptionAction
 from pycbc.types import copy_opts_for_single_ifo
 from pycbc.types import required_opts, required_opts_multi_ifo
 from pycbc.types import ensure_one_opt, ensure_one_opt_multi_ifo
 
 def from_cli(opt, length, delta_f, low_frequency_cutoff, 
-             strain=None, dyn_range_factor=1):
+             strain=None, dyn_range_factor=1, precision=None):
     """Parses the CLI options related to the noise PSD and returns a
     FrequencySeries with the corresponding PSD. If necessary, the PSD is
     linearly interpolated to achieve the resolution specified in the CLI.
@@ -49,6 +49,13 @@ def from_cli(opt, length, delta_f, low_frequency_cutoff,
     dyn_range_factor : {1, float}
         For PSDs taken from models or text files, if `dyn_range_factor` is
         not None, then the PSD is multiplied by `dyn_range_factor` ** 2.
+    precision : str, choices (None,'single','double')
+        If not specified, or specified as None, the precision of the returned
+        PSD will match the precision of the data, if measuring a PSD, or will
+        match the default precision of the model if using an analytical PSD.
+        If 'single' the PSD will be converted to float32, if not already in
+        that precision. If 'double' the PSD will be converted to float64, if
+        not already in that precision.
 
     Returns
     -------
@@ -81,16 +88,28 @@ def from_cli(opt, length, delta_f, low_frequency_cutoff,
 
         if delta_f != psd.delta_f:
             psd = interpolate(psd, delta_f)
+    else:
+        # no PSD options given
+        return None
 
     if opt.psd_inverse_length:
         psd = inverse_spectrum_truncation(psd, 
             int(opt.psd_inverse_length * sample_rate),
             low_frequency_cutoff=f_low)
 
-    if opt.psd_output:
+    if hasattr(opt, 'psd_output') and opt.psd_output:
         (psd.astype(float64) / (dyn_range_factor ** 2)).save(opt.psd_output)
 
-    return psd
+    if precision is None:
+        return psd
+    elif precision == 'single':
+        return psd.astype(float32)
+    elif precision == 'double':
+        return psd.astype(float64)
+    else:
+        err_msg = "If provided the precision kwarg must be either 'single' "
+        err_msg += "or 'double'. You provided %s." %(precision)
+        raise ValueError(err_msg)
 
 def from_cli_single_ifo(opt, length, delta_f, low_frequency_cutoff, ifo,
              **kwargs):
@@ -118,7 +137,7 @@ def from_cli_multi_ifos(opt, length_dict, delta_f_dict,
                                        strain=strain, **kwargs)
     return psd
 
-def insert_psd_option_group(parser):
+def insert_psd_option_group(parser, output=True):
     """
     Adds the options used to call the pycbc.psd.from_cli function to an
     optparser as an OptionGroup. This should be used if you
@@ -153,7 +172,8 @@ def insert_psd_option_group(parser):
     psd_options.add_argument("--psd-inverse-length", type=float, 
                           help="(Optional) The maximum length of the impulse"
                           " response of the overwhitening filter (s)")
-    psd_options.add_argument("--psd-output", 
+    if output:
+        psd_options.add_argument("--psd-output", 
                           help="(Optional) Write PSD to specified file")
 
     return psd_options

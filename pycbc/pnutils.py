@@ -485,6 +485,20 @@ def frequency_cutoff_from_name(name, m1, m2, s1z, s2z):
     params = {"m1":m1, "m2":m2, "s1z":s1z, "s2z":s2z}
     return named_frequency_cutoffs[name](params)
 
+def get_inspiral_tf(tc, mass1, mass2, f_low, f_high, n_points=50, pn_2order=7):
+    """Compute the time-frequency evolution of an inspiral signal.
+
+    Return a tuple of time and frequency vectors tracking the evolution of an
+    inspiral signal in the time-frequency plane.
+    """
+    from pycbc.waveform.spa_tmplt import findchirp_chirptime
+    
+    # FIXME spins are not taken into account
+    track_f = numpy.logspace(numpy.log10(f_low), numpy.log10(f_high), n_points)
+    track_t = numpy.array([findchirp_chirptime(float(mass1), float(mass2), 
+                                        float(f), pn_2order) for f in track_f])
+    return (tc - track_t, track_f)
+
 
 ##############################This code was taken from Andy ###########
 

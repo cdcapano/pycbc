@@ -2,11 +2,18 @@
 import h5py, argparse, logging, numpy, numpy.random
 from pycbc import events, detector
 from pycbc.events import veto, coinc
+import pycbc.version
        
 parser = argparse.ArgumentParser()
 parser.add_argument("--verbose", action="count")
-parser.add_argument("--veto-files", 
-                    help="Optional veto file. Injections within these times are ignored")
+parser.add_argument("--version", action="version", version=pycbc.version.git_verbose_msg)
+parser.add_argument("--veto-files", nargs='*',
+                    help="Optional veto file. Triggers within these times are ignored")
+parser.add_argument("--strict-coinc-time", action='store_true',
+                    help="Optional, only allow coincidences between triggers that are "
+                         "in coincident time after applying vetoes ")
+parser.add_argument('--segment-name', default=None, type=str,
+                    help='Optional, name of segment list to use for vetoes')
 parser.add_argument("--trigger-files", nargs=2,
                     help="File containing the single-detector triggers")
 parser.add_argument("--template-bank",
@@ -16,13 +23,17 @@ parser.add_argument("--coinc-threshold", type=float, default=0.0,
                     help="Seconds to add to time-of-flight coincidence window")
 parser.add_argument("--timeslide-interval", type=float, default=0,
                     help="Inverval between timeslides in seconds.")
-parser.add_argument("--decimation-factor", type=int, default=1000,
+parser.add_argument("--decimation-factor", type=int,
                     help="The factor to reduce the background trigger rate.")
-parser.add_argument("--loudest-keep", type=int, default=200,
+parser.add_argument("--loudest-keep", type=int,
                     help="Number of the loudest triggers to keep from each template.")
+parser.add_argument("--loudest-keep-value", type=float,
+                    help="Keep all coincident triggers above this value.")
 parser.add_argument("--template-fraction-range", help="Optional, format string to"
                     "analyze part of template bank. Format is PART/NUM_PARTS",
                     default="0/1")
+parser.add_argument("--cluster-window", help="Optional, window size in seconds to "
+                    "cluster coincidences over the bank", type=float)
 parser.add_argument("--output-file", help="File to store the coincident triggers")
 parser.add_argument("--statistic-files", help="Statistic mapping files", nargs='*', default=[])
 args = parser.parse_args()    
@@ -33,10 +44,12 @@ if args.verbose:
 def get_statistic(option, files):
     if option == 'newsnr':
         return NewSNRStatistic(files)
-    if option == 'newsnr_cut':
+    elif option == 'newsnr_cut':
         return NewSNRCutStatistic(files)
-    if option == 'phasetd_newsnr':
+    elif option == 'phasetd_newsnr':
         return PhaseTDStatistic(files)
+    elif option == 'max_cont_trad_newsnr':
+        return MaxContTradNewSNRStatistic(files)
     else:
         raise ValueError('%s is not an available detection statistic' % option)
 
@@ -51,7 +64,6 @@ class Stat(object):
     def __init__(self, files):
         self.files = {}
         for filename in files:
-            print files
             f = h5py.File(filename, 'r')
             stat = f.attrs['stat']
             self.files[stat] = f
@@ -114,43 +126,109 @@ class PhaseTDStatistic(NewSNRStatistic):
          
         return cstat
 
+class MaxContTradNewSNRStatistic(NewSNRStatistic):
+    def single(self, trigs):
+        """Combined chisq calculation for each trigger."""
+        chisq_dof = 2 * trigs['chisq_dof'] - 2
+        chisq_newsnr = events.newsnr(trigs['snr'], trigs['chisq'] / chisq_dof)
+        autochisq_dof = trigs['cont_chisq_dof']
+        autochisq_newsnr = events.newsnr(trigs['snr'],
+                                         trigs['cont_chisq'] / autochisq_dof)
+        return numpy.array(numpy.minimum(chisq_newsnr, autochisq_newsnr,
+                             dtype=numpy.float32), ndmin=1, copy=False)
+
 class ReadByTemplate(object):
-    def __init__(self, filename, vetofile=None):
+    def __init__(self, filename, bank=None, segment_name=None, veto_files=[]):
         self.filename = filename
         self.file = h5py.File(filename, 'r')
         self.ifo = self.file.keys()[0]
-        self.veto_times = None
-        
+        self.valid = None
+        self.bank = h5py.File(bank) if bank else None
+
+        # Determine the segments which define the boundaries of valid times
+        # to use triggers
         from glue.segments import segmentlist, segment
-        key = '%s/search/' % self.ifo + '%s_time'
-        s, e = self.file[key % 'start'][:], self.file[key % 'end'][:]
+        key = '%s/search/' % self.ifo
+        s, e = self.file[key + 'start_time'][:], self.file[key + 'end_time'][:]
         self.segs = veto.start_end_to_segments(s, e).coalesce()
-        if vetofile is not None:
-            self.veto_times = veto.start_end_from_segments(vetofile)
-            self.veto_segs = veto.start_end_to_segments(*self.veto_times).coalesce()
-            self.segs = (self.segs - self.veto_segs).coalesce()
-        self.valid = veto.segments_to_start_end(self.segs)
+        for vfile in veto_files:
+            veto_segs = veto.select_segments_by_definer(vfile, ifo=self.ifo, 
+                                                     segment_name=segment_name)
+            self.segs = (self.segs - veto_segs).coalesce()
+            self.valid = veto.segments_to_start_end(self.segs)
     
     def get_data(self, col, num):
+        """ Get a column of data for template with id 'num'
+        
+        Parameters
+        ----------
+        col: str
+            Name of column to read
+        num: int
+            The template id to read triggers for
+        
+        Returns
+        -------
+        data: numpy.ndarray
+            The requested column of data       
+        """
         ref = self.file['%s/%s_template' % (self.ifo, col)][num]
-        return self.file[ref][ref]   
+        return self.file['%s/%s' % (self.ifo, col)][ref]   
        
     def set_template(self, num):
+        """ Set the active template to read from
+        
+        Parameters
+        ----------
+        num: int
+            The template id to read triggers for
+        
+        Returns
+        -------
+        trigger_id: numpy.ndarray
+            The indices of this templates triggers
+        """
         self.template_num = num
         times = self.get_data('end_time', num)
-        if self.veto_times:
+        
+        # Determine which of these template's triggers are kept after
+        # applying vetoes
+        if self.valid:
             self.keep = veto.indices_within_times(times, self.valid[0], self.valid[1]) 
             logging.info('applying vetoes')
         else:
             self.keep = numpy.arange(0, len(times))
-        return self.keep + self.file['%s/template_boundaries' % self.ifo][num]
+
+        if self.bank is not None:
+            self.param = {} 
+            for col in self.bank:
+                self.param[col] = self.bank[col][self.template_num]
+            
+        # Calculate the trigger id by adding the relative offset in self.keep
+        # to the absolute beginning index of this templates triggers stored
+        # in 'template_boundaries'
+        trigger_id = self.keep + self.file['%s/template_boundaries' % self.ifo][num]
+        return trigger_id
         
     def __getitem__(self, col):
+        """ Return the column of data for current active template after
+        applying vetoes
+        
+        Parameters
+        ----------
+        col: str
+            Name of column to read
+        
+        Returns
+        -------
+        data: numpy.ndarray
+            The requested column of data  
+        """
         if self.template_num == None:
             raise ValueError('You must call set_template to first pick the '
                              'template to read data from')    
         data = self.get_data(col, self.template_num)         
-        data = data[self.keep] if self.veto_times else data
+        data = data[self.keep] if self.valid else data
         return data
 
 logging.info('Starting...')
@@ -160,10 +238,18 @@ tmin, tmax = parse_template_range(num_templates, args.template_fraction_range)
 logging.info('Analyzing template %s - %s' % (tmin, tmax-1))
 
 logging.info('Opening first trigger file: %s' % args.trigger_files[0]) 
-trigs0= ReadByTemplate(args.trigger_files[0], args.veto_files)
+trigs0= ReadByTemplate(args.trigger_files[0], 
+                       args.template_bank, args.segment_name, args.veto_files)
 logging.info('Opening second trigger file: %s' % args.trigger_files[1]) 
-trigs1 = ReadByTemplate(args.trigger_files[1], args.veto_files)
+trigs1 = ReadByTemplate(args.trigger_files[1], 
+                        args.template_bank, args.segment_name, args.veto_files)
 coinc_segs = (trigs0.segs & trigs1.segs).coalesce()
+
+if args.strict_coinc_time:
+    trigs0.segs = coinc_segs
+    trigs1.segs = coinc_segs
+    trigs0.valid = veto.segments_to_start_end(trigs0.segs)
+    trigs1.valid = veto.segments_to_start_end(trigs1.segs)
 
 rank_method = get_statistic(args.ranking_statistic, args.statistic_files)
 det0, det1 = detector.Detector(trigs0.ifo), detector.Detector(trigs1.ifo)
@@ -176,12 +262,17 @@ data = {'stat':[], 'decimation_factor':[], 'time1':[], 'time2':[],
 for tnum in range(tmin, tmax):
     tid0 = trigs0.set_template(tnum)
     tid1 = trigs1.set_template(tnum)
+
+    if (len(tid0) == 0) or (len(tid1) == 0):
+        continue
+
     t0 = trigs0['end_time']
     t1 = trigs1['end_time']
     logging.info('Trigs for template %s, %s:%s %s:%s' % \
                 (tnum, trigs0.ifo, len(t0), trigs1.ifo, len(t1)))
 
     i0, i1, slide = coinc.time_coincidence(t0, t1, time_window, args.timeslide_interval)
+
     logging.info('Coincident Trigs: %s' % (len(i1)))
     
     logging.info('Calculating Single Detector Statistic')
@@ -194,27 +285,37 @@ for tnum in range(tmin, tmax):
     bi = numpy.where(slide != 0)[0]
     logging.info('%s foreground triggers' % len(fi))
     logging.info('%s background triggers' % len(bi))
-    
-    sep = len(bi) - args.loudest_keep
-    sep = 0 if sep < 0 else sep
-    bsort = numpy.argpartition(c[bi], sep)
- 
-    bl = bi[bsort[0:sep]]
-    bh = bi[bsort[sep:]]
-    del bsort 
-    del bi
-    bl = bl[slide[bl] % args.decimation_factor == 0]
-    
-    ti = numpy.concatenate([bl, bh, fi])
+
+    if args.loudest_keep:    
+        sep = len(bi) - args.loudest_keep
+        sep = 0 if sep < 0 else sep
+
+        bsort = numpy.argpartition(c[bi], sep) 
+        bl = bi[bsort[0:sep]]
+        bh = bi[bsort[sep:]]
+        del bsort 
+        del bi
+        if args.decimation_factor:
+            bl = bl[slide[bl] % args.decimation_factor == 0]
+        else:
+            bl = []
+    elif args.loudest_keep_value:
+        bl, bh = [], bi[c[bi] > args.loudest_keep_value]
+    else:
+        bl, bh = [], bi
+
+    ti = numpy.concatenate([bl, bh, fi]).astype(numpy.uint32)
     logging.info('%s after decimation' % len(ti))
    
     g0 = i0[ti]
     g1 = i1[ti] 
     del i0
     del i1
-       
+    
     data['stat'] += [c[ti]]
-    data['decimation_factor'] += [numpy.repeat([args.decimation_factor, 1, 1], [len(bl), len(bh), len(fi)])]
+    dec_fac = numpy.repeat([args.decimation_factor, 1, 1], 
+                           [len(bl), len(bh), len(fi)]).astype(numpy.uint32)
+    data['decimation_factor'] += [dec_fac]
     data['time1'] += [t0[g0]]
     data['time2'] += [t1[g1]]
     data['trigger_id1'] += [tid0[g0]]
@@ -222,12 +323,25 @@ for tnum in range(tmin, tmax):
     data['timeslide_id'] += [slide[ti]]
     data['template_id'] += [numpy.zeros(len(ti), dtype=numpy.uint32) + tnum]
 
+for key in data:
+    data[key] = numpy.concatenate(data[key])
+
+if args.cluster_window and len(data['stat']) > 0:
+    cid = coinc.cluster_coincs(data['stat'], data['time1'], data['time2'], 
+                               data['timeslide_id'], args.timeslide_interval, 
+                               args.cluster_window)
+
 logging.info('saving coincident triggers')
 f = h5py.File(args.output_file, 'w')
-for key in data:
-    f[key] = numpy.concatenate(data[key])
+if len(data['stat']) > 0:
+    for key in data:
+        f[key] = data[key][cid] if args.cluster_window else data[key]
+            
+f['segments/coinc/start'], f['segments/coinc/end'] = veto.segments_to_start_end(coinc_segs)
 
-f['analyzed_start'], f['analyzed_end'] = veto.segments_to_start_end(coinc_segs)
+for t in [trigs0, trigs1]:
+    f['segments/%s/start' % t.ifo], f['segments/%s/end' % t.ifo] = t.valid
+    
 f.attrs['timeslide_interval'] = args.timeslide_interval
 f.attrs['detector_1'] = det0.name
 f.attrs['detector_2'] = det1.name

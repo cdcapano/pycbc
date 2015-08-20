@@ -28,15 +28,12 @@
 
 import numpy as np
 import lal
-import lalinspiral
 import lalsimulation as sim
-from pycbc.waveform import get_td_waveform, get_sgburst_waveform, utils as wfutils
+from pycbc.waveform import get_td_waveform, utils as wfutils
 from glue.ligolw import utils as ligolw_utils
 from glue.ligolw import ligolw, table, lsctables
 from pycbc.types import float64, float32, TimeSeries
 from pycbc.detector import Detector
-import lalmetaio as lmt
-
 
 injection_func_map = {
     np.dtype(float32): sim.SimAddInjectionREAL4TimeSeries,
@@ -89,6 +86,7 @@ class InjectionSet(object):
 
     def getswigrow(self, glue_row):
         """Translates glue row from the table to libmetaio row"""
+        import lalmetaio as lmt
         swigrow = lmt.SimInspiralTable()
         for simattr in lsctables.SimInspiralTable.validcolumns.keys():
             if simattr in ["waveform", "source", "numrel_data", "taper"]:
@@ -155,6 +153,7 @@ class InjectionSet(object):
                 # performing NR waveform injection
                 # reading Hp and Hc from the frame files
                 swigrow = self.getswigrow(inj)
+                import lalinspiral
                 Hp, Hc = lalinspiral.NRInjectionFromSimInspiral(swigrow,
                                                                 strain.delta_t)
                 # converting to pycbc timeseries
@@ -265,6 +264,7 @@ class SGBurstInjectionSet(object):
 
     def getswigrow(self, glue_row):
         """Translates glue row from the table to libmetaio row"""
+        import lalmetaio as lmt
         swigrow = lmt.SimBurstTable()
         for simattr in lsctables.SimBurstTable.validcolumns.keys():
             if simattr in ["waveform"]:

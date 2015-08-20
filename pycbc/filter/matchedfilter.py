@@ -22,20 +22,19 @@
 # =============================================================================
 #
 """
-This modules provides functions for matched filtering along with associated 
-utilities. 
+This modules provides functions for matched filtering along with associated
+utilities.
 """
 
 import logging
-from math import log, ceil, sqrt
-from pycbc.types import TimeSeries, FrequencySeries, zeros, Array, complex64
+from math import sqrt
+from pycbc.types import TimeSeries, FrequencySeries, zeros, Array
 from pycbc.types import complex_same_precision_as, real_same_precision_as
-from pycbc.fft import fft, ifft
+from pycbc.fft import fft, ifft, IFFT
 import pycbc.scheme
 from pycbc import events
 import pycbc
 import numpy
-from scipy import interpolate
 
 BACKEND_PREFIX="pycbc.filter.matchedfilter_"
 
@@ -43,11 +42,56 @@ BACKEND_PREFIX="pycbc.filter.matchedfilter_"
 def correlate(x, y, z):
     pass
 
+@pycbc.scheme.schemed(BACKEND_PREFIX)
+def _correlate_factory(x, y, z):
+    pass
+
+class Correlator(object):
+    """ Create a correlator engine
+
+    Parameters
+    ---------
+    x : complex64
+      Input pycbc.types.Array (or subclass); it will be conjugated
+    y : complex64
+      Input pycbc.types.Array (or subclass); it will not be conjugated
+    z : complex64
+      Output pycbc.types.Array (or subclass).
+      It will contain conj(x) * y, element by element
+
+    The addresses in memory of the data of all three parameter vectors
+    must be the same modulo pycbc.PYCBC_ALIGNMENT
+    """
+    def __new__(cls, *args, **kwargs):
+        real_cls = _correlate_factory(*args, **kwargs)
+        return real_cls(*args, **kwargs)
+
+# The class below should serve as the parent for all schemed classes.
+# The intention is that this class serves simply as the location for
+# all documentation of the class and its methods, though that is not
+# yet implemented.  Perhaps something along the lines of:
+#
+#    http://stackoverflow.com/questions/2025562/inherit-docstrings-in-python-class-inheritance
+#
+# will work? Is there a better way?
+class _BaseCorrelator(object):
+    def correlate(self):
+        """
+        Compute the correlation of the vectors specified at object
+        instantiation, writing into the output vector given when the
+        object was instantiated. The intention is that this method
+        should be called many times, with the contents of those vectors
+        changing between invocations, but not their locations in memory
+        or length.
+        """
+        pass
+
 
 class MatchedFilterControl(object):
-    def __init__(self, low_frequency_cutoff, high_frequency_cutoff, 
-                snr_threshold, tlen, delta_f, dtype, downsample_factor=1, 
-                upsample_threshold=1, upsample_method='pruned_fft'):
+    def __init__(self, low_frequency_cutoff, high_frequency_cutoff, snr_threshold, tlen,
+                 delta_f, dtype, segment_list, template_output, use_cluster,
+                 downsample_factor=1, upsample_threshold=1, upsample_method='pruned_fft',
+                 gpu_callback_method='none'):
         """ Create a matched filter engine.
 
         Parameters
@@ -56,10 +100,17 @@ class MatchedFilterControl(object):
             The frequency to begin the filter calculation. If None, begin at the
             first frequency after DC.
         high_frequency_cutoff : {None, float}, optional
-            The frequency to stop the filter calculation. If None, continue to the 
+            The frequency to stop the filter calculation. If None, continue to the
             the nyquist frequency.
         snr_threshold : float
             The minimum snr to return when filtering
+        segment_list : list
+            List of FrequencySeries that are the Fourier-transformed data segments
+        template_output : complex64
+            Array of memory given as the 'out' parameter to waveform.FilterBank
+        use_cluster : boolean
+            If true, cluster triggers above threshold using a window; otherwise,
+            only apply a threshold.
         downsample_factor : {1, int}, optional
             The factor by which to reduce the sample rate when doing a heirarchical
             matched filter
@@ -68,91 +119,157 @@ class MatchedFilterControl(object):
         upsample_method : {pruned_fft, str}
             The method to upsample or interpolate the reduced rate filter.
         """
-
+        # Assuming analysis time is constant across templates and segments, also
+        # delta_f is constant across segments.
         self.tlen = tlen
+        self.flen = self.tlen / 2 + 1
         self.delta_f = delta_f
         self.dtype = dtype
-        self.snr_threshold = snr_threshold    
+        self.snr_threshold = snr_threshold
         self.flow = low_frequency_cutoff
-        self.fhigh = high_frequency_cutoff    
-                
+        self.fhigh = high_frequency_cutoff
+        self.gpu_callback_method = gpu_callback_method
+
         if downsample_factor == 1:
-            self.matched_filter_and_cluster = self.full_matched_filter_and_cluster
             self.snr_mem = zeros(self.tlen, dtype=self.dtype)
-            self.corr_mem = zeros(self.tlen, dtype=self.dtype)           
+            self.corr_mem = zeros(self.tlen, dtype=self.dtype)
+            self.segments = segment_list
+
+            if use_cluster:
+                self.matched_filter_and_cluster = self.full_matched_filter_and_cluster
+                # setup the threasholding/clustering operations for each segment
+                self.threshold_and_clusterers = []
+                for seg in self.segments:
+                    thresh = events.ThresholdCluster(self.snr_mem[seg.analyze])
+                    self.threshold_and_clusterers.append(thresh)
+            else:
+                self.matched_filter_and_cluster = self.full_matched_filter_thresh_only
+                
+            # Assuming analysis time is constant across templates and segments, also
+            # delta_f is constant across segments.
+            self.htilde = template_output
+            self.kmin, self.kmax = get_cutoff_indices(self.flow, self.fhigh, 
+                                                      self.delta_f, self.tlen)   
+                                                      
+            # Set up the correlation operations for each analysis segment
+            corr_slice = slice(self.kmin, self.kmax)
+            self.correlators = []      
+            for seg in self.segments:
+                corr = Correlator(self.htilde[corr_slice], 
+                                  seg[corr_slice], 
+                                  self.corr_mem[corr_slice])
+                self.correlators.append(corr)
+            
+            # setup up the ifft we will do
+            self.ifft = IFFT(self.corr_mem, self.snr_mem)
+
         elif downsample_factor >= 1:
             self.matched_filter_and_cluster = self.heirarchical_matched_filter_and_cluster
             self.downsample_factor = downsample_factor
             self.upsample_method = upsample_method
-            self.upsample_threshold = upsample_threshold  
-            
-            N_full = self.tlen 
-            N_red = N_full / downsample_factor  
+            self.upsample_threshold = upsample_threshold
+
+            N_full = self.tlen
+            N_red = N_full / downsample_factor
             self.kmin_full, self.kmax_full = get_cutoff_indices(self.flow,
-                                              self.fhigh, self.delta_f, N_full)  
-    
+                                              self.fhigh, self.delta_f, N_full)
+
             self.kmin_red, _ = get_cutoff_indices(self.flow,
-                                              self.fhigh, self.delta_f, N_red)
-            
+                                                  self.fhigh, self.delta_f, N_red)
+
             if self.kmax_full < N_red:
                 self.kmax_red = self.kmax_full
             else:
-                self.kmax_red = N_red - 1  
-                
+                self.kmax_red = N_red - 1
+
             self.snr_mem = zeros(N_red, dtype=self.dtype)
             self.corr_mem_full = FrequencySeries(zeros(N_full, dtype=self.dtype), delta_f=self.delta_f)
             self.corr_mem = Array(self.corr_mem_full[0:N_red], copy=False)
-            self.inter_vec = zeros(N_full, dtype=self.dtype)                      
-                                                 
+            self.inter_vec = zeros(N_full, dtype=self.dtype)
+
         else:
             raise ValueError("Invalid downsample factor")
-              
-    def full_matched_filter_and_cluster(self, template, template_norm, stilde, window):
-        """ Return the complex snr and normalization. 
-    
-        Calculated the matched filter, threshold, and cluster. 
+
+    def full_matched_filter_and_cluster(self, segnum, template_norm, window):
+        """ Return the complex snr and normalization.
+
+        Calculated the matched filter, threshold, and cluster.
 
         Parameters
         ----------
-        htilde : FrequencySeries 
-            The template waveform. Must come from the FilterBank class.
+        segnum : int
+            Index into the list of segments at MatchedFilterControl construction
+            against which to filter.
         template_norm : float
             The htilde, template normalization factor.
-        stilde : FrequencySeries 
-            The strain data to be filtered.
         window : int
-            The size of the cluster window in samples.
+            Size of the window over which to cluster triggers, in samples
 
         Returns
         -------
         snr : TimeSeries
             A time series containing the complex snr.
         norm : float
-            The normalization of the complex snr.  
+            The normalization of the complex snr.
         corrrelation: FrequencySeries
-            A frequency series containing the correlation vector. 
+            A frequency series containing the correlation vector.
         idx : Array
             List of indices of the triggers.
         snrv : Array
             The snr values at the trigger locations.
         """
-        snr, corr, norm = matched_filter_core(template, stilde, 
-                                              low_frequency_cutoff=self.flow, 
-                                              high_frequency_cutoff=self.fhigh, 
-                                              h_norm=template_norm,
-                                              out=self.snr_mem,
-                                              corr_out=self.corr_mem)
-        idx, snrv = events.threshold(snr[stilde.analyze], self.snr_threshold / norm)            
+        norm = (4.0 * self.delta_f) / sqrt(template_norm)
+        self.correlators[segnum].correlate()
+        self.ifft.execute()
+        snrv, idx = self.threshold_and_clusterers[segnum].threshold_and_cluster(self.snr_threshold / norm, window)
 
         if len(idx) == 0:
-            return [], [], [], [], []            
-        logging.info("%s points above threshold" % str(len(idx)))              
-  
-        idx, snrv = events.cluster_reduce(idx, snrv, window)
-        logging.info("%s clustered points" % str(len(idx)))
-        
-        return snr, norm, corr, idx, snrv   
-        
+            return [], [], [], [], []
+
+        logging.info("%s points above threshold" % str(len(idx)))
+        return self.snr_mem, norm, self.corr_mem, idx, snrv
+
+    def full_matched_filter_thresh_only(self, segnum, template_norm, window):
+        """ Return the complex snr and normalization.
+
+        Calculated the matched filter, threshold, and cluster.
+
+        Parameters
+        ----------
+        segnum : int
+            Index into the list of segments at MatchedFilterControl construction
+            against which to filter.
+        template_norm : float
+            The htilde, template normalization factor.
+        window : int
+            Size of the window over which to cluster triggers, in samples.
+            This is IGNORED by this function, and provided only for API compatibility.
+
+        Returns
+        -------
+        snr : TimeSeries
+            A time series containing the complex snr.
+        norm : float
+            The normalization of the complex snr.
+        corrrelation: FrequencySeries
+            A frequency series containing the correlation vector.
+        idx : Array
+            List of indices of the triggers.
+        snrv : Array
+            The snr values at the trigger locations.
+        """
+        norm = (4.0 * self.stilde_delta_f) / sqrt(template_norm)
+        self.correlators[segnum].correlate()
+        self.ifft.execute()
+        snrv, idx = events.threshold_only(self.snr_mem[self.segments[segnum].analyze],
+                                          self.snr_threshold / norm)
+
+        if len(idx) == 0:
+            return [], [], [], [], []
+
+        logging.info("%s points above threshold" % str(len(idx)))
+        return self.snr_mem, norm, self.corr_mem, idx, snrv
+
     def heirarchical_matched_filter_and_cluster(self, htilde, template_norm, stilde, window):
         """ Return the complex snr and normalization. 
     

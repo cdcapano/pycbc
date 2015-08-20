@@ -15,9 +15,13 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import argparse
+import logging
 import textwrap
-from pycbc.tmpltbank.lambda_mapping import *
+import numpy
+from pycbc.tmpltbank.lambda_mapping import get_ethinca_orders, pycbcValidOrdersHelpDescriptions
 from pycbc import pnutils
+from pycbc.tmpltbank.em_progenitors import load_ns_sequence
+from pycbc.types import positive_float, nonnegative_float
 
 class IndentedHelpFormatterWithNL(argparse.ArgumentDefaultsHelpFormatter):
     """
@@ -102,6 +106,29 @@ def get_options_from_group(option_group):
                 command_lines.append(string)
     return command_lines
 
+def insert_base_bank_options(parser):
+    """
+    Adds essential common options for template bank generation to an
+    ArgumentParser instance.
+    """
+
+    def match_type(s):
+        err_msg = "must be a number between 0 and 1 excluded, not %r" % s
+        try:
+            value = float(s)
+        except ValueError, e:
+            raise argparse.ArgumentTypeError(err_msg)
+        if value <= 0 or value >= 1:
+            raise argparse.ArgumentTypeError(err_msg)
+        return value
+
+    parser.add_argument(
+            '-m', '--min-match', type=match_type, required=True,
+            help="Generate bank with specified minimum match. Required.")
+    parser.add_argument(
+            '-O', '--output-file', required=True,
+            help="Output file name. Required.")
+
 def insert_metric_calculation_options(parser):
     """
     Adds the options used to obtain a metric in the bank generation codes to an
@@ -111,12 +138,12 @@ def insert_metric_calculation_options(parser):
     metricOpts = parser.add_argument_group(
                 "Options related to calculating the parameter space metric")
     metricOpts.add_argument("--pn-order", action="store", type=str,
-                default=None,\
+                required=True,
                 help="Determines the PN order to use.  For a bank of "
                      "non-spinning templates, spin-related terms in the "
                      "metric will be zero.  REQUIRED. "
                      "Choices: %s" %(pycbcValidOrdersHelpDescriptions))
-    metricOpts.add_argument("--f0", action="store", type=float,
+    metricOpts.add_argument("--f0", action="store", type=positive_float,
                 default=70.,\
                 help="f0 is used as a dynamic scaling factor when "
                      "calculating integrals used in metric construction.  "
@@ -125,16 +152,16 @@ def insert_metric_calculation_options(parser):
                      "should be fine for most applications.  OPTIONAL. "
                      "UNITS=Hz. **WARNING: If the ethinca metric is to be "
                      "calculated, f0 must be set equal to f-low**")
-    metricOpts.add_argument("--f-low", action="store", type=float,
-                default=None,\
+    metricOpts.add_argument("--f-low", action="store", type=positive_float,
+                required=True,
                 help="Lower frequency cutoff used in computing the "
                      "parameter space metric.  REQUIRED. UNITS=Hz")
-    metricOpts.add_argument("--f-upper", action="store", type=float,
-                default=None,\
+    metricOpts.add_argument("--f-upper", action="store", type=positive_float,
+                required=True,
                 help="Upper frequency cutoff used in computing the "
                      "parameter space metric.  REQUIRED. UNITS=Hz")
-    metricOpts.add_argument("--delta-f", action="store", type=float,
-                default=None,
+    metricOpts.add_argument("--delta-f", action="store", type=positive_float,
+                required=True,
                 help="Frequency spacing used in computing the parameter "
                      "space metric:  integrals of the form \int F(f) df "
                      "are approximated as \sum F(f) delta_f.  REQUIRED. "
@@ -158,12 +185,6 @@ def verify_metric_calculation_options(opts, parser):
     """
     if not opts.pn_order:
         parser.error("Must supply --pn-order")
-    if not opts.f_low:
-        parser.error("Must supply --f-low")
-    if not opts.f_upper:
-        parser.error("Must supply --f-upper")
-    if not opts.delta_f:
-        parser.error("Must supply --delta-f")
 
 class metricParameters(object):
     """
@@ -407,63 +428,94 @@ def insert_mass_range_option_group(parser,nonSpin=False):
     """
     massOpts = parser.add_argument_group("Options related to mass and spin "
                   "limits for bank generation")
-    massOpts.add_argument("--min-mass1", action="store", type=float,
-                  default=None, 
+    massOpts.add_argument("--min-mass1", action="store", type=positive_float,
+                  required=True, 
                   help="Minimum mass1: must be >= min-mass2. "
                        "REQUIRED. UNITS=Solar mass")
-    massOpts.add_argument("--max-mass1", action="store", type=float,
-                  default=None, 
+    massOpts.add_argument("--max-mass1", action="store", type=positive_float,
+                  required=True,
                   help="Maximum mass1: must be >= max-mass2. "
                        "REQUIRED. UNITS=Solar mass")
-    massOpts.add_argument("--min-mass2", action="store", type=float,
-                  default=None, 
+    massOpts.add_argument("--min-mass2", action="store", type=positive_float,
+                  required=True,
                   help="Minimum mass2. REQUIRED. UNITS=Solar mass")
-    massOpts.add_argument("--max-mass2", action="store", type=float,
-                  default=None, 
+    massOpts.add_argument("--max-mass2", action="store", type=positive_float,
+                  required=True,
                   help="Maximum mass2. REQUIRED. UNITS=Solar mass")
-    massOpts.add_argument("--max-total-mass", action="store", type=float,
-                  default=None, 
-                  help="Maximum total mass. OPTIONAL, if not provided the "
-                       "max total mass is determined by the component masses."
-                       " UNITS=Solar mass")
-    massOpts.add_argument("--min-total-mass", action="store", type=float,
-                  default=None, 
+    massOpts.add_argument("--max-total-mass", action="store",
+                          type=positive_float, default=None, 
+                          help="Maximum total mass. OPTIONAL, if not provided "
+                          "the max total mass is determined by the component "
+                          "masses. UNITS=Solar mass")
+    massOpts.add_argument("--min-total-mass", action="store",
+                          type=positive_float, default=None, 
                   help="Minimum total mass. OPTIONAL, if not provided the "
                        "min total mass is determined by the component masses."
                        " UNITS=Solar mass")
-    massOpts.add_argument("--max-chirp-mass", action="store", type=float,
-                  default=None,
+    massOpts.add_argument("--max-chirp-mass", action="store",
+                          type=positive_float, default=None,
                   help="Maximum chirp mass. OPTIONAL, if not provided the "
                        "max chirp mass is determined by the component masses."
                        " UNITS=Solar mass")
-    massOpts.add_argument("--min-chirp-mass", action="store", type=float,
-                  default=None,
+    massOpts.add_argument("--min-chirp-mass", action="store",
+                          type=positive_float, default=None,
                   help="Minimum total mass. OPTIONAL, if not provided the "
                        "min chirp mass is determined by the component masses."
                        " UNITS=Solar mass")
-    massOpts.add_argument("--max-eta", action="store", type=float,
-                  default=0.25, 
+    massOpts.add_argument("--max-eta", action="store", type=positive_float,
+                  default=0.25,
                   help="Maximum symmetric mass ratio. OPTIONAL, no upper bound"
                        " on eta will be imposed if not provided. "
                        "UNITS=Solar mass.")
-    massOpts.add_argument("--min-eta", action="store", type=float,
-                  default=0., 
+    massOpts.add_argument("--min-eta", action="store", type=nonnegative_float,
+                  default=0.,
                   help="Minimum symmetric mass ratio. OPTIONAL, no lower bound"
                        " on eta will be imposed if not provided. "
                        "UNITS=Solar mass.")
-
+    massOpts.add_argument("--ns-eos", action="store",
+                  default=None,
+                  help="Select the EOS to be used for the NS when calculating "
+                       "the remnant disk mass. Only 2H is currently supported. "
+                       "OPTIONAL")
+    massOpts.add_argument("--remnant-mass-threshold", action="store",
+                          type=positive_float, default=None,
+                  help="Setting this filters EM dim NS-BH binaries: if the "
+                       "remnant disk mass does not exceed this value, the NS-BH "
+                       "binary is dropped from the target parameter space. "
+                       "When it is set to None (default value) the EM dim "
+                       "filter is not activated. OPTIONAL")
+    massOpts.add_argument("--use-eos-max-ns-mass", action="store_true", default=False,
+                  help="Cut the mass range of the smaller object to the maximum "
+                       "mass allowed by EOS. "
+                       "OPTIONAL")
+    massOpts.add_argument("--delta-bh-spin", action="store",
+                          type=positive_float, default=None,
+                  help="Grid spacing used for the BH spin z component when "
+                       "generating the surface of the minumum minimum symmetric "
+                       "mass ratio as a function of BH spin and NS mass required "
+                       "to produce a remnant disk mass that exceeds the threshold "
+                       "specificed in --remnant-mass-threshold. "
+                       "OPTIONAL (0.1 by default) ")
+    massOpts.add_argument("--delta-ns-mass", action="store",
+                          type=positive_float, default=None,
+                  help="Grid spacing used for the NS mass when generating the "
+                       "surface of the minumum minimum symmetric mass ratio as "
+                       "a function of BH spin and NS mass required to produce "
+                       "a remnant disk mass that exceeds the thrsehold specified "
+                       "in --remnant-mass-threshold. "
+                       "OPTIONAL (0.1 by default) ")
     if nonSpin:
         parser.add_argument_group(massOpts)
         return massOpts
 
-    massOpts.add_argument("--max-ns-spin-mag", action="store", type=float,
-                  default=None,
+    massOpts.add_argument("--max-ns-spin-mag", action="store",
+                          type=nonnegative_float, default=None,
                   help="Maximum neutron star spin magnitude.  Neutron stars "
                        "are defined as components lighter than the NS-BH "
                        "boundary (3 Msun by default). REQUIRED if min-mass2 "
                        "< ns-bh-boundary-mass")
-    massOpts.add_argument("--max-bh-spin-mag", action="store", type=float,
-                  default=None,
+    massOpts.add_argument("--max-bh-spin-mag", action="store",
+                          type=nonnegative_float, default=None,
                   help="Maximum black hole spin magnitude.  Black holes are "
                        "defined as components at or above the NS-BH boundary "
                        "(3 Msun by default). REQUIRED if max-mass1 >= "
@@ -472,7 +524,8 @@ def insert_mass_range_option_group(parser,nonSpin=False):
     # If --nsbh-flag is True then spinning bank generation must ignore the
     # default value of ns-bh-boundary-mass.
     action = massOpts.add_mutually_exclusive_group(required=False)
-    action.add_argument("--ns-bh-boundary-mass", action='store', type=float,
+    action.add_argument("--ns-bh-boundary-mass", action='store',
+                        type=positive_float,
                   help="Mass boundary between neutron stars and black holes. "
                        "Components below this mass are considered neutron "
                        "stars and are subject to the neutron star spin limits. "
@@ -503,35 +556,41 @@ def verify_mass_range_options(opts, parser, nonSpin=False):
     nonSpin : boolean, optional (default=False)
         If this is provided the spin-related options will not be checked.
     """
-    if not opts.min_mass1:
-        parser.error("Must supply --min-mass1")
-    if not opts.min_mass2:
-        parser.error("Must supply --min-mass2")
-    if not opts.max_mass1:
-        parser.error("Must supply --max-mass1")
-    if not opts.max_mass2:
-        parser.error("Must supply --max-mass2")
     # Mass1 must be the heavier!
     if opts.min_mass1 < opts.min_mass2:
         parser.error("min-mass1 cannot be less than min-mass2!")
     if opts.max_mass1 < opts.max_mass2:
         parser.error("max-mass1 cannot be less than max-mass2!")
     # If given are min/max total mass/chirp mass possible?
-    if opts.min_total_mass:
-        if opts.min_total_mass > opts.max_mass1 + opts.max_mass2:
-            err_msg = "Supplied minimum total mass %f " %(opts.min_total_mass,)
-            err_msg += "greater than the sum of the two max component masses "
-            err_msg += " %f and %f." %(opts.max_mass1,opts.max_mass2)
-    if opts.max_total_mass:
-        if opts.max_total_mass < opts.min_mass1 + opts.min_mass2:
-            err_msg = "Supplied maximum total mass %f " %(opts.max_total_mass,)
-            err_msg += "smaller than the sum of the two min component masses "
-            err_msg += " %f and %f." %(opts.min_mass1,opts.min_mass2)
-            raise ValueError(err_msg)
-    if opts.max_total_mass and opts.min_total_mass:
-        if opts.max_total_mass < opts.min_total_mass:
-            err_msg = "Min total mass must be larger than max total mass."
-            raise ValueError(err_msg)
+    if opts.min_total_mass \
+            and (opts.min_total_mass > opts.max_mass1 + opts.max_mass2):
+        err_msg = "Supplied minimum total mass %f " %(opts.min_total_mass,)
+        err_msg += "greater than the sum of the two max component masses "
+        err_msg += " %f and %f." %(opts.max_mass1,opts.max_mass2)
+        parser.error(err_msg)
+    if opts.max_total_mass \
+            and (opts.max_total_mass < opts.min_mass1 + opts.min_mass2):
+        err_msg = "Supplied maximum total mass %f " %(opts.max_total_mass,)
+        err_msg += "smaller than the sum of the two min component masses "
+        err_msg += " %f and %f." %(opts.min_mass1,opts.min_mass2)
+        parser.error(err_msg)
+    if opts.max_total_mass and opts.min_total_mass \
+            and (opts.max_total_mass < opts.min_total_mass):
+        parser.error("Min total mass must be larger than max total mass.")
+    # Warn the user that his/her setup is such that EM dim NS-BH binaries
+    # will not be targeted by the template bank that is being built.  Also
+    # inform him/her about the caveats involved in this.
+    if hasattr(opts, 'remnant_mass_threshold') \
+            and opts.remnant_mass_threshold is not None:
+        logging.info("""You have asked to exclude EM dim NS-BH systems from the
+                        target parameter space. The script will assume that m1 is
+                        the BH and m2 is the NS: make sure that your settings
+                        respect this convention. The script will also treat the
+                        NS as non-spinning: use NS spins in the template bank
+                        at your own risk!""")
+        if opts.use_eos_max_ns_mass:
+            logging.info("""You have asked to take into account the maximum NS
+                        mass value for the EOS in use.""")
 
     # Assign min/max total mass from mass1, mass2 if not specified
     if (not opts.min_total_mass) or \
@@ -678,10 +737,17 @@ def verify_mass_range_options(opts, parser, nonSpin=False):
         elif m2_at_min_m1 > opts.max_mass2:
             # This is the redundant case, ignore
             min_tot_mass = opts.min_total_mass
+        elif opts.max_eta == 0.25 and (m1_at_min_m2 < opts.min_mass2 or \
+                                                m2_at_min_m1 > opts.min_mass1): 
+            # This just catches potential roundoff issues in the case that
+            # max-eta is not used
+            min_tot_mass = opts.min_total_mass
         else:
             # And this is the bad case
             err_msg = "The maximum eta provided is not possible given "
             err_msg += "restrictions on component masses."
+            print m1_at_min_m2, m2_at_min_m1, m1_at_max_m2, m2_at_max_m1
+            print opts.min_mass1, opts.max_mass1, opts.min_mass2, opts.max_mass2
             raise ValueError(err_msg)
         # Update min_tot_mass if needed
         if min_tot_mass > opts.min_total_mass:
@@ -758,9 +824,8 @@ def verify_mass_range_options(opts, parser, nonSpin=False):
         err_msg += "eta and total mass, no physical systems are possible."
         raise ValueError(err_msg)
 
-    if opts.max_eta and opts.min_eta:
-        if opts.max_eta < opts.min_eta:
-            parser.error("--max-eta must be larger than --min-eta.")
+    if opts.max_eta and opts.min_eta and (opts.max_eta < opts.min_eta):
+        parser.error("--max-eta must be larger than --min-eta.")
     if nonSpin:
         return
 
@@ -795,12 +860,17 @@ class massRangeParameters(object):
     """
 
     default_nsbh_boundary_mass = 3.
+    default_ns_eos = '2H'
+    default_delta_bh_spin = 0.1
+    default_delta_ns_mass = 0.1
 
     def __init__(self, minMass1, maxMass1, minMass2, maxMass2,
                  maxNSSpinMag=0, maxBHSpinMag=0, maxTotMass=None,
                  minTotMass=None, maxEta=None, minEta=0, 
                  max_chirp_mass=None, min_chirp_mass=None, 
-                 ns_bh_boundary_mass=None, nsbhFlag=False):
+                 ns_bh_boundary_mass=None, nsbhFlag=False,
+                 remnant_mass_threshold=None, ns_eos=None, use_eos_max_ns_mass=False,
+                 delta_bh_spin=None, delta_ns_mass=None):
         """
         Initialize an instance of the massRangeParameters by providing all
         options directly. See the help message associated with any code
@@ -831,6 +901,37 @@ class massRangeParameters(object):
         self.ns_bh_boundary_mass = (
             ns_bh_boundary_mass or self.default_nsbh_boundary_mass)
         self.nsbhFlag=nsbhFlag
+        self.remnant_mass_threshold = remnant_mass_threshold
+        self.ns_eos = (
+            ns_eos or self.default_ns_eos)
+        self.delta_bh_spin = (
+            delta_bh_spin or self.default_delta_bh_spin)
+        self.delta_ns_mass = (
+            delta_ns_mass or self.default_delta_ns_mass)
+        self.use_eos_max_ns_mass = use_eos_max_ns_mass
+        if not self.remnant_mass_threshold is None:
+            if not self.ns_eos is '2H':
+                errMsg = """
+                         By setting a value for --remnant-mass-threshold
+                         you have asked to filter out EM dim NS-BH templates.
+                         The EOS you chose is not supported currently: please
+                         remove the --ns-eos option from your command line or
+                         set it to '2H'.
+                         """
+                raise ValueError(errMsg)
+            if use_eos_max_ns_mass:
+                ns_sequence, max_ns_g_mass = load_ns_sequence(self.ns_eos)
+                if(self.maxMass2 > max_ns_g_mass):
+                    errMsg = """
+                             The maximum NS mass supported by this EOS is
+                             {0}. Please set --max-mass2 to this value or run
+                             without the --use-eos-max-ns-mass flag.
+                             """.format(max_ns_g_mass-0.0000000001)
+                    raise ValueError(errMsg)
+            self.delta_bh_spin = (
+                delta_bh_spin or self.default_delta_bh_spin)
+            self.delta_ns_mass = (
+                delta_ns_mass or self.default_delta_ns_mass)
 
         # FIXME: This may be inaccurate if Eta limits are given
         # This will not cause any problems, but maybe could be fixed.
@@ -864,7 +965,10 @@ class massRangeParameters(object):
                        opts.max_mass2, maxTotMass=opts.max_total_mass,
                        minTotMass=opts.min_total_mass, maxEta=opts.max_eta,
                        minEta=opts.min_eta, max_chirp_mass=opts.max_chirp_mass,
-                       min_chirp_mass=opts.min_chirp_mass)
+                       min_chirp_mass=opts.min_chirp_mass,
+                       remnant_mass_threshold=opts.remnant_mass_threshold,
+                       ns_eos=opts.ns_eos, use_eos_max_ns_mass=opts.use_eos_max_ns_mass,
+                       delta_bh_spin=opts.delta_bh_spin, delta_ns_mass=opts.delta_ns_mass)
         else:
             return cls(opts.min_mass1, opts.max_mass1, opts.min_mass2,
                        opts.max_mass2, maxTotMass=opts.max_total_mass,
@@ -874,7 +978,10 @@ class massRangeParameters(object):
                        nsbhFlag=opts.nsbh_flag,
                        max_chirp_mass=opts.max_chirp_mass,
                        min_chirp_mass=opts.min_chirp_mass,
-                       ns_bh_boundary_mass=opts.ns_bh_boundary_mass)
+                       ns_bh_boundary_mass=opts.ns_bh_boundary_mass,
+                       remnant_mass_threshold=opts.remnant_mass_threshold,
+                       ns_eos=opts.ns_eos, use_eos_max_ns_mass=opts.use_eos_max_ns_mass,
+                       delta_bh_spin=opts.delta_bh_spin, delta_ns_mass=opts.delta_ns_mass)
 
     def is_outside_range(self, mass1, mass2, spin1z, spin2z):
         """
@@ -1112,4 +1219,3 @@ def check_ethinca_against_bank_opts(opts, parser):
                          "support a f-low value different from the bank "
                          "metric!")
     else: pass
-

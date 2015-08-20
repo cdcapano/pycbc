@@ -3,6 +3,7 @@
 in preparation for coincidence
 """
 import numpy, argparse, h5py, os, logging
+import pycbc.version
 
 def read_files(trigger_files, columns, column_types, attribute_columns):
     """ Read in the column of data from the ligolw xml format
@@ -66,6 +67,7 @@ def find_ids(template_hash, trig_hash):
     return numpy.array([template_map[i] for i in trig_hash], dtype=numpy.uint32) 
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--version', action='version', version=pycbc.version.git_verbose_msg)
 parser.add_argument('--trigger-files', nargs='+')
 parser.add_argument('--bank-file')
 parser.add_argument('--output-file')
@@ -99,6 +101,7 @@ data, attrs, other = read_files(args.trigger_files,
                          'chisq_dof',
                          'bank_chisq_dof',
                          'cont_chisq_dof',
+                         'template_duration',
                         ],
                 column_types=[numpy.float32,
                               numpy.float32,
@@ -113,6 +116,7 @@ data, attrs, other = read_files(args.trigger_files,
                               numpy.uint32,
                               numpy.uint32,
                               numpy.uint32,
+                              numpy.float32,
                               ],
                  attribute_columns=[
                                     ])

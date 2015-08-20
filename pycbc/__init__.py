@@ -26,6 +26,43 @@
 
 """
 import subprocess, os, sys, tempfile
+import logging
+import signal
+
+try:
+    # This will fail when pycbc is imported during the build process,
+    # before version.py has been generated.
+    from version import git_hash
+    from version import version as pycbc_version
+except:
+    git_hash = 'none'
+    pycbc_version = 'none'
+
+def init_logging(verbose=False):
+    """
+    Common utility for setting up logging in PyCBC. Installs a signal handler
+    such that verbosity can be activated at run-time by sending a SIGUSR1 to
+    the process.
+    """
+    def sig_handler(signum, frame):
+        logger = logging.getLogger()
+        log_level = logger.level
+        if log_level == logging.DEBUG:
+            log_level = logging.WARN
+        else:
+            log_level = logging.DEBUG
+        logging.warn('Got signal %d, setting log level to %d',
+                     signum, log_level)
+        logger.setLevel(log_level)
+
+    signal.signal(signal.SIGUSR1, sig_handler)
+
+    if verbose:
+        initial_level = logging.DEBUG
+    else:
+        initial_level = logging.WARN
+    logging.basicConfig(format='%(asctime)s %(message)s', level=initial_level)
+
 
 # Check for optional components of the PyCBC Package
 try:
@@ -44,21 +81,6 @@ try:
 except ImportError:
     HAVE_CUDA=False
     
-try:
-    # This is a crude check to make sure that the driver is installed
-    try:
-        err = subprocess.call(["nvidia-smi"], stdout=open(os.devnull, 'wb'), stderr=open(os.devnull, 'wb'))
-        if err != 0:
-            raise ImportError("Cannot access 'nvidia-smi', driver may not be installed correctly")
-    except OSError:
-        pass
-
-    import pyopencl as _pyopencl
-    import pyfft.cl as _pyfftcl
-    HAVE_OPENCL=True
-except ImportError:
-    HAVE_OPENCL=False
-
 # Check for openmp suppport, currently we pressume it exists, unless on 
 # platforms (mac) that are silly and don't use the standard gcc. 
 if sys.platform == 'darwin':
@@ -85,6 +107,21 @@ _python_name =  "python%d%d_compiled" % tuple(sys.version_info[:2])
 _tmp_dir = tempfile.gettempdir()
 _cache_dir_name = repr(os.getuid()) + '_' + _python_name
 _cache_dir_path = os.path.join(_tmp_dir, _cache_dir_name)
+# Append the git hash to the cache path.  This will ensure that cached 
+# files are correct even in cases where weave currently doesn't realize
+# that a recompile is needed.
+# FIXME: It would be better to find a way to trigger a recompile off
+# of all the arguments to weave.
+_cache_dir_path = os.path.join(_cache_dir_path, pycbc_version)
+_cache_dir_path = os.path.join(_cache_dir_path, git_hash)
 try: os.makedirs(_cache_dir_path)
 except OSError: pass
 os.environ['PYTHONCOMPILED'] = _cache_dir_path
+
+# Check for MKL capability
+try:
+    import pycbc.fft.mkl
+    HAVE_MKL=True
+except ImportError as e:
+    print e
+    HAVE_MKL=False

@@ -28,16 +28,16 @@ https://ldas-jobs.ligo.caltech.edu/~cbc/docs/pycbc/ahope/segments.html
 """
 
 import os,sys,shutil
-import subprocess
 import logging
 import urllib, urlparse
-from glue import segments, pipeline
+import lal
+from glue import segments
 from glue.ligolw import utils, table, lsctables, ligolw
 from pycbc.workflow.core import Executable, FileList, Node, OutSegFile, make_analysis_dir, make_external_call, File
 from pycbc.workflow.jobsetup import LigolwAddExecutable, LigoLWCombineSegsExecutable
 
 class ContentHandler(ligolw.LIGOLWContentHandler):
-        pass
+    pass
 
 lsctables.use_in(ContentHandler)
 
@@ -678,20 +678,20 @@ def add_cumulative_files(workflow, output_file, input_files, out_dir,
         workflow.add_node(add_node)
     return add_node.output_files[0]
 
-def fromsegmentxml(file, dict=False, id=None):
+def fromsegmentxml(xml_file, return_dict=False, select_seg_def_id=None):
     """
     Read a glue.segments.segmentlist from the file object file containing an
     xml segment table.
 
     Parameters
     -----------
-    file : file object
+    xml_file : file object
         file object for segment xml file
-    dict : boolean, optional (default = False)
+    return_dict : boolean, optional (default = False)
         returns a glue.segments.segmentlistdict containing coalesced
         glue.segments.segmentlists keyed by seg_def.name for each entry in the
-        contained segment_def_table. Default False
-    id : int, optional (default = None)
+        contained segment_def_table.
+    select_seg_def_id : int, optional (default = None)
         returns a glue.segments.segmentlist object containing only those
         segments matching the given segment_def_id integer
 
@@ -702,17 +702,14 @@ def fromsegmentxml(file, dict=False, id=None):
     """
 
     # load xmldocument and SegmentDefTable and SegmentTables
-    xmldoc, digest = utils.load_fileobj(file, gz=file.name.endswith(".gz"),
-                             contenthandler=ContentHandler)
+    xmldoc, digest = utils.load_fileobj(xml_file,
+                                        gz=xml_file.name.endswith(".gz"),
+                                        contenthandler=ContentHandler)
+    seg_def_table = table.get_table(xmldoc,
+                                    lsctables.SegmentDefTable.tableName)
+    seg_table = table.get_table(xmldoc, lsctables.SegmentTable.tableName)
 
-    seg_def_table  = table.get_table(xmldoc,
-                                     lsctables.SegmentDefTable.tableName)
-    seg_table      = table.get_table(xmldoc, lsctables.SegmentTable.tableName)
-
-    for seg in seg_table:
-        pass
-
-    if dict:
+    if return_dict:
         segs = segments.segmentlistdict()
     else:
         segs = segments.segmentlist()
@@ -720,23 +717,26 @@ def fromsegmentxml(file, dict=False, id=None):
     seg_id = {}
     for seg_def in seg_def_table:
         # Here we want to encode ifo, channel name and version
-        full_channel_name = ':'.join([str(seg_def.ifos), str(seg_def.name), 
-                                                         str(seg_def.version)])
+        full_channel_name = ':'.join([str(seg_def.ifos),
+                                      str(seg_def.name),
+                                      str(seg_def.version)])
         seg_id[int(seg_def.segment_def_id)] = full_channel_name
-        if dict:
+        if return_dict:
             segs[full_channel_name] = segments.segmentlist()
 
     for seg in seg_table:
-        if dict:
-            segs[seg_id[int(seg.segment_def_id)]]\
-                .append(segments.segment(seg.start_time, seg.end_time))
-            continue
-        if id and int(seg.segment_def_id)==id:
-            segs.append(segments.segment(seg.start_time, seg.end_time))
-            continue
-        segs.append(segments.segment(seg.start_time, seg.end_time))
+        seg_obj = segments.segment(
+                lal.LIGOTimeGPS(seg.start_time, seg.start_time_ns),
+                lal.LIGOTimeGPS(seg.end_time, seg.end_time_ns))
+        if return_dict:
+            segs[seg_id[int(seg.segment_def_id)]].append(seg_obj)
+        elif select_seg_def_id is not None:
+            if int(seg.segment_def_id) == select_seg_def_id:
+                segs.append(seg_obj)
+        else:
+            segs.append(seg_obj)
 
-    if dict:
+    if return_dict:
         for seg_name in seg_id.values():
             segs[seg_name] = segs[seg_name].coalesce()
     else:
@@ -772,34 +772,34 @@ def find_playground_segments(segs):
 
     # loop over segments
     for seg in segs:
-      start = seg[0]
-      end = seg[1]
+        start = seg[0]
+        end = seg[1]
 
-      # the first playground segment whose end is after the start of seg
-      playground_start = start_s2 + playground_stride * ( 1 + \
-                      int(start-start_s2-playground_length) / playground_stride)
+        # the first playground segment whose end is after the start of seg
+        playground_start = start_s2 + playground_stride * ( 1 + \
+                     int(start-start_s2-playground_length) / playground_stride)
 
-      while playground_start < end:
-        # find start of playground segment
-        if playground_start > start:
-          ostart = playground_start
-        else:
-          ostart = start
+        while playground_start < end:
+            # find start of playground segment
+            if playground_start > start:
+                ostart = playground_start
+            else:
+                ostart = start
 
-        playground_end = playground_start + playground_length
+            playground_end = playground_start + playground_length
 
-        # find end of playground segment
-        if playground_end < end:
-          oend = playground_end
-        else:
-          oend = end
+            # find end of playground segment
+            if playground_end < end:
+                oend = playground_end
+            else:
+                oend = end
 
-        # append segment
-        x = segments.segment(ostart, oend)
-        outlist.append(x)
+            # append segment
+            x = segments.segment(ostart, oend)
+            outlist.append(x)
 
-        # increment
-        playground_start = playground_start + playground_stride
+            # increment
+            playground_start = playground_start + playground_stride
 
     return outlist
 
@@ -1047,13 +1047,18 @@ def get_analyzable_segments(workflow, out_dir, tags=[]):
     Returns
     --------
     segs : glue.segments.segmentlist instance
-        The segment list specifying the analyzable times
+        The segment list specifying the times to analyze
+    data_segs : glue.segments.segmentlist
+        The segment list specifying the time where data exists
     seg_files : workflow.core.FileList instance
         The cumulative segment files from each ifo that determined the
         analyzable time.
     """
     from pycbc.events import segments_to_file
     logging.info('Entering generation of science segments')
+    segments_method = workflow.cp.get_opt_tags("workflow-segments", 
+                                      "segments-method", tags)
+    
     make_analysis_dir(out_dir)
     start_time = workflow.analysis_time[0]
     end_time = workflow.analysis_time[1]
@@ -1068,12 +1073,13 @@ def get_analyzable_segments(workflow, out_dir, tags=[]):
     
     veto_gen_job = create_segs_from_cats_job(workflow.cp, out_dir, 
                                              workflow.ifo_string) 
-    sci_segs = {}
+    sci_segs, data_segs = {}, {}
     seg_files = FileList()
     for ifo in workflow.ifos:
         sci_segs[ifo], sci_xml = get_science_segments(ifo, workflow.cp, 
                                                  start_time, end_time, out_dir) 
-        seg_files += [sci_xml]      
+        seg_files += [sci_xml]    
+        data_segs[ifo] = sci_segs[ifo]  
         for category in cat_set:
             curr_veto_file = get_veto_segs(workflow, ifo, 
                                         cat_to_pipedown_cat(category), 
@@ -1084,13 +1090,29 @@ def get_analyzable_segments(workflow, out_dir, tags=[]):
             f.close()    
             sci_segs[ifo] -= cat_segs
             
-            seg_ok_path = os.path.abspath(os.path.join(out_dir, '%s-SCIENCE-OK.xml' % ifo))
-            seg_files += [segments_to_file(sci_segs[ifo], seg_ok_path, 
-                                          "SCIENCE_OK", ifo=ifo)]
-            
         sci_segs[ifo].coalesce()
+        seg_ok_path = os.path.abspath(os.path.join(out_dir, '%s-SCIENCE-OK.xml' % ifo))
+        seg_files += [segments_to_file(sci_segs[ifo], seg_ok_path, 
+                                          "SCIENCE_OK", ifo=ifo)]  
+
+    if segments_method == 'ALL_SINGLE_IFO_TIME':
+        pass
+    elif segments_method == 'COINC_TIME':
+        cum_segs = None
+        for ifo in sci_segs:
+            if cum_segs is not None:
+                cum_segs = (cum_segs & sci_segs[ifo]).coalesce() 
+            else:
+                cum_segs = sci_segs[ifo]
+                
+        for ifo in sci_segs:
+            sci_segs[ifo] = cum_segs 
+    else:
+        raise ValueError("Invalid segments-method, %s. Options are "
+                         "ALL_SINGLE_IFO_TIME and COINC_TIME" % segments_method)
+
     logging.info('Leaving generation of science segments')
-    return sci_segs, seg_files
+    return sci_segs, data_segs, seg_files
     
 def get_cumulative_veto_group_files(workflow, option, out_dir, tags=[]):
     """
@@ -1136,12 +1158,13 @@ def get_cumulative_veto_group_files(workflow, option, out_dir, tags=[]):
                                         start_time, end_time, out_dir,
                                         veto_gen_job, execute_now=True))
 
-    cum_seg_files = FileList()        
+    cum_seg_files = FileList()     
+    names = []   
     for cat_set in cat_sets:
-        segment_name = ''.join(sorted(cat_set))
-        logging.info('getting information for cumulative CAT %s' % segment_name)
+        segment_name = "CUMULATIVE_CAT_%s" % (''.join(sorted(cat_set)))
+        logging.info('getting information for %s' % segment_name)
         categories = [cat_to_pipedown_cat(c) for c in cat_set]
-        path = os.path.join(out_dir, '%s-CUMULATIVE_CAT_%s_VETO_SEGMENTS.xml' \
+        path = os.path.join(out_dir, '%s-%s_VETO_SEGMENTS.xml' \
                             % (workflow.ifo_string, segment_name))
         path = os.path.abspath(path)
         url = urlparse.urlunparse(['file', 'localhost', path, None, None, None])
@@ -1149,9 +1172,10 @@ def get_cumulative_veto_group_files(workflow, option, out_dir, tags=[]):
                         file_url=url, tags=[segment_name])
                         
         cum_seg_files += [get_cumulative_segs(workflow, seg_file,  categories,
-              cat_files, out_dir, execute_now=False, segment_name=segment_name)]
+              cat_files, out_dir, execute_now=True, segment_name=segment_name)]
+        names.append(segment_name)
               
-    return cum_seg_files, cat_files
+    return cum_seg_files, names, cat_files
 
 def file_needs_generating(file_path):
     """
