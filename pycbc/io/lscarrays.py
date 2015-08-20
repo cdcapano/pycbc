@@ -1861,6 +1861,18 @@ class TmpltInspiral(Waveform):
             field_args={'nifos': nifos}, **kwargs)
 
 
+def end_time_from_float(end_time):
+    """Given an end time as a float, returns the seconds and nanoseconds.
+    """
+    try:
+        end_time_s = end_time.astype(int)
+        end_time_ns = (end_time % 1 * 1e9).astype(int)
+    except AttributeError:
+        end_time_s = int(end_time)
+        end_time_ns = (end_time % 1 * 1e9).astype(int)
+    return end_time_s, end_time_ns
+
+
 class SnglEvent(_LSCArrayWithDefaults):
     """
     Has default fields for storing information about an event found in a single

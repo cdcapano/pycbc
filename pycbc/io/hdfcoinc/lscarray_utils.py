@@ -275,7 +275,8 @@ def coinc_events_from_statmap(statmaphdf, datatype='foreground', names=None):
     # copy detector data over
     for det,detname in detectors.items():
         coincs[detname]['event_id'] = data['trigger_id%s' % det[-1]]
-        coincs[detname]['end_time'] = data['time%s' % det[-1]]
+        coincs[detname]['end_time_s'], coincs[detname]['end_time_ns'] = \
+            lscarrays.end_time_from_float(data['time%s' % det[-1]].value)
     # add the source filename
     coincs.add_source_file(statmaphdf.filename, 'event_id')
     return coincs
@@ -406,7 +407,13 @@ def sim_inspiral_from_filelist(filenames, tag=None,
         bank_array = tmplt_inspiral_from_bankhdf(bankhdf, names=param_names)
     # cycle over the injection files, loading into the sim array
     sim_array = None
-    for inj_file in injection_files:
+
+    if verbose:
+        print >> sys.stdout, "Loading from file:"
+    for ii,inj_file in enumerate(injection_files):
+        if verbose:
+            print >> sys.stdout, "%i / %i\r" %(ii+1, len(injection_files)),
+            sys.stdout.flush()
         xmldoc, _ = ligolw_utils.load_xmldoc(inj_file)
         this_sim = ligolw_utils.sim_inspiral_from_xmldoc(xmldoc,
             names=injection_fields, detectors=detectors)
@@ -431,13 +438,11 @@ def sim_inspiral_from_filelist(filenames, tag=None,
                 recovered_events = recovered_events.expand_templates(
                     bank_array, get_fields=param_names)
             # add to this sim
-            this_sim = this_sim.add_default_fields(['isrecovered',
-                'recovered'])
+            this_sim = this_sim.add_default_fields(['recovered'])
             # set what was recovered...
-            this_sim['isrecovered'][hdfinjfind['found']['injection_index']] \
-                = True
-            this_sim['recovered']['event_id'][this_sim.recovered_idx] = \
-                numpy.arange(len(hdfinjfind['found']['injection_index']))
+            recidx = hdfinjfind['found']['injection_index']
+            this_sim['recovered']['event_id'][recidx] = \
+                numpy.arange(recidx.size)
             # ...and expand
             this_sim = this_sim.expand_recovered(recovered_events)
         # add information about source files and set the indices to remap
@@ -455,9 +460,11 @@ def sim_inspiral_from_filelist(filenames, tag=None,
         if sim_array is None:
             sim_array = this_sim
         else:
-            sim_array = sim_array.append(this_sim, remap_indices=remap_indices)
+            sim_array = sim_array.append(this_sim, remap_ids=remap_indices)
             if load_recovered_fields:
-                hdfinjfind_file.close()
+                hdfinjfind.close()
+    if verbose:
+        print >> sys.stdout, ""
     # close the bank file
     if load_recovered_param_fields:
         bankhdf.close()
