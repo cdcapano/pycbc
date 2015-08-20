@@ -70,8 +70,7 @@ def set_default_empty(array):
             set_default_empty(array[name])
 
 def default_empty(shape, dtype):
-    """
-    Numpy's empty array can have random values in it. To prevent that, we
+    """Numpy's empty array can have random values in it. To prevent that, we
     define here a default emtpy array. This default empty is a numpy.zeros
     array, except that objects are set to None, and all ints to ID_NOT_SET.
     """
@@ -87,42 +86,35 @@ _default_types_status = {
 }
 
 def lstring_as_obj(true_or_false=None):
-    """
-    Toggles whether lstrings should be treated as strings or as objects.
+    """Toggles whether lstrings should be treated as strings or as objects.
     When lscarrays is first loaded, the default is True.
 
     Parameters
     ----------
-    true_or_false: {None|bool}
+    true_or_false : {None|bool}
         Pass True to map lstrings to objects; False otherwise. If None
         provided, just returns the current state.
 
     Return
     ------
-    current_stat: bool
+    current_stat : bool
         The current state of lstring_as_obj.
 
-    Example
-    -------
-    ``
->>> from pycbc.io import lscarrays
-
->>> lscarrays.lstring_as_obj()
-    True
-
->>> lscarrays.LSCArray.from_arrays([numpy.zeros(10)], dtype=[('foo', 'lstring')])
-LSCArray([(0.0,), (0.0,), (0.0,), (0.0,), (0.0,), (0.0,), (0.0,), (0.0,),
-       (0.0,), (0.0,)], 
-      dtype=[('foo', 'O')])
-
->>> lscarrays.lstring_as_obj(False)
-    False
-
->>> lscarrays.LSCArray.from_arrays([numpy.zeros(10)], dtype=[('foo', 'lstring')])
-LSCArray([('0.0',), ('0.0',), ('0.0',), ('0.0',), ('0.0',), ('0.0',),
-       ('0.0',), ('0.0',), ('0.0',), ('0.0',)], 
-      dtype=[('foo', 'S50')])
-``
+    Examples
+    --------
+    >>> from pycbc.io import lscarrays
+    >>> lscarrays.lstring_as_obj()
+        True
+    >>> lscarrays.LSCArray.from_arrays([numpy.zeros(10)], dtype=[('foo', 'lstring')])
+    LSCArray([(0.0,), (0.0,), (0.0,), (0.0,), (0.0,), (0.0,), (0.0,), (0.0,),
+           (0.0,), (0.0,)], 
+          dtype=[('foo', 'O')])
+    >>> lscarrays.lstring_as_obj(False)
+        False
+    >>> lscarrays.LSCArray.from_arrays([numpy.zeros(10)], dtype=[('foo', 'lstring')])
+    LSCArray([('0.0',), ('0.0',), ('0.0',), ('0.0',), ('0.0',), ('0.0',),
+           ('0.0',), ('0.0',), ('0.0',), ('0.0',)], 
+          dtype=[('foo', 'S50')])
     """
     if true_or_false is not None:
         _default_types_status['lstring_as_obj'] = true_or_false
@@ -133,8 +125,7 @@ LSCArray([('0.0',), ('0.0',), ('0.0',), ('0.0',), ('0.0',), ('0.0',),
     return _default_types_status['lstring_as_obj']
 
 def ilwd_as_int(true_or_false=None):
-    """
-    Similar to lstring_as_obj, sets whether or not ilwd:chars should be
+    """Similar to lstring_as_obj, sets whether or not ilwd:chars should be
     treated as strings or as ints. Default is True.
     """
     if true_or_false is not None:
@@ -146,8 +137,7 @@ def ilwd_as_int(true_or_false=None):
 
 
 def default_strlen(strlen=None):
-    """
-    Sets the default string length for lstring and ilwd:char, if they are
+    """Sets the default string length for lstring and ilwd:char, if they are
     treated as strings. Default is 50.
     """
     if strlen is not None:
@@ -170,8 +160,7 @@ ilwd_as_int(True)
 # =============================================================================
 #
 def get_dtype_descr(dtype):
-    """
-    Numpy's dtype.descr will return empty void fields if a dtype has
+    """Numpy's ``dtype.descr`` will return empty void fields if a dtype has
     offsets specified. This function tries to fix that by not including
     fields that have no names and are void types.
     """
@@ -183,12 +172,12 @@ def combine_fields(dtypes):
 
     Parameters
     ----------
-    dtypes: (list of) numpy.dtype(s)
+    dtypes : (list of) numpy.dtype(s)
         Either a numpy.dtype, or a list of numpy.dtypes.
 
     Returns
     -------
-    combined_dtype: numpy.dtype
+    numpy.dtype
         A new dtype combining the fields in the list of dtypes.
     """
     if not isinstance(dtypes, list):
@@ -201,35 +190,34 @@ def combine_fields(dtypes):
 
 
 def merge_arrays(merge_list, names=None, flatten=True, outtype=None):
-    """
-    Merges the given arrays into a single array. The arrays must all have
+    """Merges the given arrays into a single array. The arrays must all have
     the same shape. If one or more of the given arrays has multiple fields,
     all of the fields will be included as separate fields in the new array.
 
     Parameters
     ----------
-    merge_list: list of arrays
+    merge_list : list of arrays
         The list of arrays to merge.
-    names: {None | sequence of strings}
+    names : {None | sequence of strings}
         Optional, the names of the fields in the output array. If flatten is
         True, must be the same length as the total number of fields in
         merge_list.  Otherise, must be the same length as the number of
         arrays in merge_list.  If None provided, and flatten is True, names
         used will be the same as the name of the fields in the given arrays.
         If the datatype has no name, or flatten is False, the new field will
-        be ``'fi'`` where i is the index of the array in arrays.
-    flatten: bool
+        be `fi` where i is the index of the array in arrays.
+    flatten : bool
         Make all of the fields in the given arrays separate fields in the
         new array. Otherwise, each array will be added as a field. If an
         array has fields, they will be subfields in the output array. Default
         is True.
-    outtype: {None | class}
+    outtype : {None | class}
         Cast the new array to the given type. Default is to return a
         numpy structured array.
 
     Returns
     -------
-    new array: {numpy.ndarray | outtype}
+    new array : {numpy.ndarray | outtype}
         A new array with all of the fields in all of the arrays merged into
         a single array.
     """
@@ -263,33 +251,32 @@ def merge_arrays(merge_list, names=None, flatten=True, outtype=None):
 
 
 def add_fields(input_array, arrays, names=None, assubarray=False):
-    """
-    Adds the given array(s) as new field(s) to the given input array.
+    """Adds the given array(s) as new field(s) to the given input array.
     Returns a new instance of the input_array with the new fields added.
 
     Parameters
     ----------
-    input_array: instance of a numpy.ndarray or numpy recarray
+    input_array : instance of a numpy.ndarray or numpy recarray
         The array to to add the fields to.
-    arrays: (list of) numpy array(s)
+    arrays : (list of) numpy array(s)
         The arrays to add. If adding multiple arrays, must be a list;
         if adding a single array, can just be that array.
-    names: (list of) strings
+    names : (list of) strings
         Optional, the name(s) of the new fields in the output array. If
         adding multiple fields, must be a list of strings with the same
         length as the list of arrays. If None provided, names used will
         be the same as the name of the datatype in the given arrays.
         If the datatype has no name, the new field will be ``'fi'`` where
         i is the index of the array in arrays.
-    assubarray: bool
+    assubarray : bool
         Add the list of arrays as a single subarray field. If True, and names
         provided, names should be a string or a length-1 sequence. Default is
         False, in which case each array will be added as a separate field.
 
     Returns
     -------
-    new_array: new instance of ``input_array``
-        A copy of the ``input_array`` with the desired fields added.
+    new_array : new instance of `input_array`
+        A copy of the `input_array` with the desired fields added.
     """
     if not isinstance(arrays, list):
         arrays = [arrays]
@@ -364,8 +351,7 @@ def add_fields(input_array, arrays, names=None, assubarray=False):
 
 
 def get_fields(input_array, names, copy=False, outtype=None):
-    """
-    Given an array with named fields, creates a new LSCArray with the given
+    """Given an array with named fields, creates a new LSCArray with the given
     fields. Only fields in input_array that are in the list of names will be
     extracted. All the fields listed in names must be present in the
     input_array. The method for creating a view is from:
@@ -373,22 +359,22 @@ def get_fields(input_array, names, copy=False, outtype=None):
 
     Parameters
     ----------
-    input_array: array-like
+    input_array : array-like
         Anything that can be cast as a numpy array. The resulting array
         must have a dtype with at least one field in names.
-    names: {strings|list of strings}
+    names : {strings|list of strings}
         List of field names for the returned array; may be either a single
         name or a list of names. All of the names must be a field in the input
         array.
-    copy: bool, optional
+    copy : bool, optional
         If True, will force a copy of the input array rather than a view.
-    outtype: optional
+    outtype : optional
         Make the output array be the given type. If None, the type of the
         output will be the same as the input.
 
     Returns
     -------
-    output: {type(input_array)|outtype}
+    output : {type(input_array)|outtype}
         An view or copy of the input array with the given names.
     """
     if outtype is None:
@@ -408,8 +394,7 @@ def get_fields(input_array, names, copy=False, outtype=None):
     
 
 def build_lookup_table(input_array):
-    """
-    Given an array, builds a dictionary of the values of the array.
+    """Given an array, builds a dictionary of the values of the array.
     """
     unique_vals, unique_idx, map_idx = numpy.unique(input_array,
         return_index=True, return_inverse=True)
@@ -435,11 +420,10 @@ def build_lookup_table(input_array):
                 ])
 
 def copy_attributes(this_array, other_array):
-    """
-    Copies attributes of ``other_array`` that are not in ``this_array`` to
-    ``this_array``. Checks if each attribute is a property, a method, or
+    """Copies attributes of `other_array` that are not in `this_array` to
+    `this_array`. Checks if each attribute is a property, a method, or
     a plain attribute, adding each attribute accordingly. Returns a view of
-    ``this_array`` with all of the attributes added.
+    `this_array` with all of the attributes added.
     """
     # create a view of this array so as not to add the attributes to the 
     # original
@@ -478,52 +462,50 @@ def copy_attributes(this_array, other_array):
 def join_arrays(this_array, other_array, map_field, expand_field_name=None,
         other_map_field=None, get_fields=None, map_indices=None,
         copy_methods=True):
-    """
-
-    Joins ``other_array`` to ``this_array`` using the provided map fields.
-    The information from ``other_array`` is added to ``this_array`` as a
-    subarray. For a given element in ``this_array``, all elements in
-    ``other_array`` with
+    """Joins `other_array` to `this_array` using the provided map fields.
+    The information from `other_array` is added to `this_array` as a
+    subarray. For a given element in `this_array`, all elements in
+    `other_array` with
     ``this_array[map_field] == other_array[(other_)map_field]`` are
-    retrieved. If multiple elements in ``other_array`` map to a single
-    element in ``this_array``, the expanded sub-array will have a shape equal
-    to the maximum number of elements in ``other_array`` that map to a single
-    element in ``this_array``. Instance methods and properties of
-    ``other_array`` that are not in ``this_array`` will also be copied.
+    retrieved. If multiple elements in `other_array` map to a single
+    element in `this_array`, the expanded sub-array will have a shape equal
+    to the maximum number of elements in `other_array` that map to a single
+    element in `this_array`. Instance methods and properties of
+    `other_array` that are not in `this_array` will also be copied.
 
     Parameters
     ----------
-    this_array: any subclass of numpy array
+    this_array : any subclass of numpy array
         The array to add the fields to.
-    other_array: LSCArray or similar
-        The array that information is retrieved from. Must have ``lookup`` and
-        ``with_fields`` methods.
-    map_field: string
-        The name of the field in ``this_array`` to use for mapping.
-    expand_field_name: {None|string}
-        If provided, all of the fields from ``other_array`` will be added
-        as a subfield with name ``expand_field_name`` to the output array.
-        Otherwise, all requested fields (see ``get_fields``) are added as
-        fields to ``this_array``.
-    other_map_field: {None | string}
-        The name of the field in ``other_array`` to use for mapping. If None,
-        ``map_field`` will be used.
-    get_fields: {None | (list of) strings}
-        Optionally specify what fields to retrieve from ``other_array``. If
-        None provided, will get all the fields in ``other_array``.
-    map_indices: {None | array of ints}
-        If provided, will only map rows in ``this_array`` that have indices in
+    other_array : LSCArray or similar
+        The array that information is retrieved from. Must have `lookup` and
+        `with_fields` methods.
+    map_field : string
+        The name of the field in `this_array` to use for mapping.
+    expand_field_name : {None|string}
+        If provided, all of the fields from `other_array` will be added
+        as a subfield with name `expand_field_name` to the output array.
+        Otherwise, all requested fields (see `get_fields`) are added as
+        fields to `this_array`.
+    other_map_field : {None | string}
+        The name of the field in `other_array` to use for mapping. If None,
+        `map_field` will be used.
+    get_fields : {None | (list of) strings}
+        Optionally specify what fields to retrieve from `other_array`. If
+        None provided, will get all the fields in `other_array`.
+    map_indices : {None | array of ints}
+        If provided, will only map rows in `this_array` that have indices in
         the given array of indices. Any rows that are skipped will have a
         zeroed element in the new fields of the returned array. If None (the
-        default), all rows in ``this_array`` are mapped.
-    copy_methods: bool
-        Copy instance methods and properties of ``other_array`` that are not
-        in ``this_array`` to ``this_array``. Default is True.
+        default), all rows in `this_array` are mapped.
+    copy_methods : bool
+        Copy instance methods and properties of `other_array` that are not
+        in `this_array` to `this_array`. Default is True.
 
     Returns
     -------
-    new_array: type(this_array)
-        A copy of ``this_array`` with the mapped fields added.
+    new_array : type(this_array)
+        A copy of `this_array` with the mapped fields added.
     """
     if other_map_field is None:
         other_map_field = map_field
@@ -584,22 +566,21 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     return new_array
 
 def file_checksum(filename, hasher=hashlib.sha256, buffersize=65536):
-    """
-    Provides a checksum of the given file. Modified from:
+    """Provides a checksum of the given file. Modified from:
     <http://stackoverflow.com/a/3431835/1366472>.
 
     Parameters
     ----------
-    filename: string
+    filename : string
         Name of the file to checksum.
-    hasher: {hashlib.sha256 | hashlib algorithm}
+    hasher : {hashlib.sha256 | hashlib algorithm}
         The algorithm used for computing the hash.
-    buffersize: {65536 | int}
+    buffersize : {65536 | int}
         The number of bytes to read in from the file at a time.
 
     Returns
     -------
-    checksum: hex
+    checksum : hex
         The checksum of the file.
     """
     hasher = hasher()
@@ -612,19 +593,18 @@ def file_checksum(filename, hasher=hashlib.sha256, buffersize=65536):
     return hasher.hexdigest()
 
 def get_all_field_names(dtype):
-    """
-    Given a numpy dtype, returns a list of all the field and subfield names
-    present. Subfield names use '.' notation; e.g., if field 'foo' has subfield
-    'bar', will return 'foo.bar'.
+    """Given a numpy dtype, returns a list of all the field and subfield names
+    present. Subfield names use `.` notation; e.g., if field `foo` has subfield
+    `bar`, will return `foo.bar`.
 
     Parameters
     ----------
-    dtype: numpy.dtype
+    dtype : numpy.dtype
         The dtype to get the field names from.
 
     Returns
     -------
-    names: list
+    names : list
         The list of all of the field names.
     """
     names = []
@@ -647,19 +627,17 @@ _pyparser = re.compile(r'(?P<identifier>[\w_][\w\d_]*)')
 # e.g., foo.bar --> ['foo.bar']
 _fieldparser = re.compile(r'(?P<identifier>[\w_][.\w\d_]*)')
 def get_vars_from_arg(arg):
-    """
-    Given a python string, gets the names of any identifiers use in it.
+    """Given a python string, gets the names of any identifiers use in it.
     For example, if ``arg = '3*narf/foo.bar'``, this will return
     ``set(['narf', 'foo', 'bar'])``.
     """
     return set(_pyparser.findall(arg))
 
 def get_fields_from_arg(arg):
-    """
-    Given a python string, gets LSCArray field names used in it. This differs
-    from get_vars_from_arg in that any identifier with a '.' in it will be
-    treated as one identifier. For example, if ``arg = '3*narf/foo.bar'``, this
-    will return ``set(['narf', 'foo.bar'])``.
+    """Given a python string, gets LSCArray field names used in it. This
+    differs from get_vars_from_arg in that any identifier with a '.' in it
+    will be treated as one identifier. For example, if
+    ``arg = '3*narf/foo.bar'``, this will return ``set(['narf', 'foo.bar'])``.
     """
     return set(_fieldparser.findall(arg))
 
@@ -689,25 +667,9 @@ class LSCArray(numpy.recarray):
     for details. For more information on initalizing an empty array, see
     ``numpy.recarray`` help.
 
-    Parameters
-    ----------
-    shape: int | tuple
-        The shape of the new array.
-    name: {None | str}
-        Optional, what to name the new array. The array's ``name`` attribute
-        is set to this.
+    Some additional features:
 
-    For details on other keyword arguments, see ``numpy.recarray`` help.
-
-    Attributes
-    ----------
-    name: str
-        Instance attribute. The name of the array.
-
-    Additional Features
-    -------------------
-    Arbitrary functions
-    +++++++++++++++++++
+    * **Arbitrary functions**:
     You can retrive functions on fields in the same manner that you access
     individual fields. For example, if you have an LSCArray ``x`` with fields
     ``a`` and ``b``, you can access each field with ``x['a'], x['b']``.
@@ -719,8 +681,7 @@ class LSCArray(numpy.recarray):
     functions on multiple fields may not (``x.a+b`` does not work, for obvious
     reasons).
 
-    Subfields and '.' indexing
-    ++++++++++++++++++++++++++
+    * **Subfields and '.' indexing**:
     Structured arrays, which are the base class for recarrays and, by
     inheritance, LSCArrays, allows for fields to themselves have fields. For
     example, an array ``x`` may have fields ``a`` and ``b``, with ``b`` having
@@ -747,51 +708,48 @@ class LSCArray(numpy.recarray):
         you can use either index or attribute notation when *retrieving*
         values.
 
-    Properties and methods as fields
-    ++++++++++++++++++++++++++++++++
+    * **Properties and methods as fields**:
     If a propety or instance method is defined for a class that inherits from
     LSCArray, those can be accessed in the same way as fields are. For example,
     define ``Foo`` as:
-``
-class Foo(LSCArray):
-    @property
-    def bar(self):
-        return self['a']**2.
 
-    def narf(self, y):
-        return self['a'] + y
-``
-    Then if we have an instance:
-``
-foo = Foo(100, dtype=[('a', float)])
-``
+    .. code-block:: python
+
+        class Foo(LSCArray):
+            @property
+            def bar(self):
+                return self['a']**2.
+
+            def narf(self, y):
+                return self['a'] + y
+
+    Then if we have an instance: ``foo = Foo(100, dtype=[('a', float)])``.
     The ``bar`` and ``narf`` attributes may be accessed via field notation:
     ``foo.bar``, ``foo['bar']``, ``foo.narf(10)`` and ``foo['narf(10)']``.
 
-    Add/drop fields
-    +++++++++++++++
+    * **Add/drop fields**:
     Fields may be added or dropped to an already intialized array using
     ``add_fields`` and ``with[out]_fields``; see the documentation for
     those functions for details.
 
 
-    Appending arrays
-    ++++++++++++++++
+    * **Appending arrays**:
     Two instances of LSCArrays may be appended together if they have the
     same fields using the append instance method. If the array has an id
     field that you want incremented with the append to prevent collisions,
     you can indicate this in the append. For example, say you have array ``x``
     and ``y`` both with fields ``event_id`` that go from ``0-1000``. To append
     ``y`` to ``x``, while keeping ``event_id`` unique:
-``
-z = x.append(y, remap_ids='event_id')
-``
+    
+    .. code-block:: python
+
+        z = x.append(y, remap_ids='event_id')
+
     This will result in the elements from ``y`` having event ids 1001-2001
     in ``z``. A dictionary mapping the new ids to original is stored in the
     ``id_maps`` attribute. See ``append`` for more details.
 
-    Joining arrays
-    ++++++++++++++
+    * **Joining arrays**
     You can join two arrays using a common field with the ``join`` method.
     One-to-one, one-to-many, many-to-one, and many-to-many joins are supported.
     For example, if ``x`` has fields ``event_id, a`` and ``y`` has fields
@@ -803,8 +761,7 @@ z = x.append(y, remap_ids='event_id')
     for details.
 
 
-    Lookup tables
-    +++++++++++++
+    * **Lookup tables**:
     A lookup function is provided that allows you to quickly get all rows in
     the array for which a paricular field matches a particular value, e.g.,
     ``x.lookup('a', 10.)`` will return all rows in ``x`` for which ``x['a'] ==
@@ -817,6 +774,141 @@ z = x.append(y, remap_ids='event_id')
     is created, you will get spurious results. For these reasons, a
     clear_lookup method is also provided. See ``lookup`` and ``clear_lookup``
     for details.
+
+    Parameters
+    ----------
+    shape : {int | tuple}
+        The shape of the new array.
+    name : {None | str}
+        Optional, what to name the new array. The array's ``name`` attribute
+        is set to this.
+
+    For details on other keyword arguments, see ``numpy.recarray`` help.
+
+    Attributes
+    ----------
+    name : str
+        Instance attribute. The name of the array.
+
+    Examples
+    --------
+    .. note:: For some predefined arrays with default fields, see the other
+        array classes defined below. For utilities that make loading arrays
+        from data sources easier, see ``lscarray_utils.py`` in the various
+        sub-directories of ``io``.
+
+    Create an empty array with four rows and two fields called `foo` and
+    `bar`, both of which are floats:
+
+    >>> x = LSCArray(4, dtype=[('foo', float), ('bar', float)])
+
+    Set/retrieve a fields using index or attribute syntax:
+
+    >>> x['foo'] = [1.,2.,3.,4.]
+    >>> x['bar'] = [5.,6.,7.,8.]
+    >>> x
+    LSCArray([(1.0, 5.0), (2.0, 6.0), (3.0, 7.0), (4.0, 8.0)], 
+          dtype=[('foo', '<f8'), ('bar', '<f8')])
+    >>> x.foo
+        array([ 1.,  2.,  3.,  4.])
+    >>> x['bar']
+        array([ 5.,  6.,  7.,  8.])
+    
+    Get the names of the fields:
+
+    >>> x.fieldnames
+        ('foo', 'bar')
+
+    Rename the fields to `a` and `b`:
+
+    >>> x.dtype.names = ['a', 'b']
+    >>> x.fieldnames
+        ('a', 'b')
+
+    Retrieve a function of the fields as if it were a field:
+
+    >>> x['sin(a/b)']
+    array([ 0.19866933,  0.3271947 ,  0.41557185,  0.47942554])
+
+    Create an array with subfields:
+
+    >>> x = LSCArray(4, dtype=[('foo', [('cat', float), ('hat', int)]), ('bar', float)])
+    >>> x.all_fieldnames
+        ['foo.cat', 'foo.hat', 'bar']
+
+    Load from a list of arrays (in this case, from an hdf5 file):
+
+    >>> bankhdf = h5py.File('bank/H1L1-BANK2HDF-1117400416-928800.hdf')
+    >>> bankhdf.keys()
+        [u'mass1', u'mass2', u'spin1z', u'spin2z', u'template_hash']
+    >>> templates = LSCArray.from_arrays(bankhdf.values(), names=bankhdf.keys())
+    >>> templates.fieldnames
+        ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash')
+    >>> templates.mass1
+    array([ 1.71731389,  1.10231435,  2.99999857, ...,  1.67488706,
+            1.00531888,  2.11106491], dtype=float32)
+
+    Sort by a field without having to worry about also sorting the other
+    fields:
+
+    >>> templates[['mass1', 'mass2']]
+    array([(1.7173138856887817, 1.2124452590942383),
+           (1.1023143529891968, 1.0074082612991333),
+           (2.9999985694885254, 1.0578444004058838), ...,
+           (1.6748870611190796, 1.1758257150650024),
+           (1.0053188800811768, 1.0020891427993774),
+           (2.111064910888672, 1.0143394470214844)], 
+          dtype=[('mass1', '<f4'), ('mass2', '<f4')])
+    >>> templates.sort(order='mass1')
+    >>> templates[['mass1', 'mass2']]
+    array([(1.000025987625122, 1.0000133514404297),
+           (1.0002814531326294, 1.0002814531326294),
+           (1.0005437135696411, 1.0005437135696411), ...,
+           (2.999999523162842, 1.371169090270996),
+           (2.999999523162842, 1.4072519540786743), (3.0, 1.4617927074432373)], 
+          dtype=[('mass1', '<f4'), ('mass2', '<f4')])
+
+    Convert a LIGOLW xml table:
+
+    >>> type(sim_table)
+        glue.ligolw.lsctables.SimInspiralTable
+    >>> sim_array = LSCArray.from_ligolw_table(sim_table)
+    >>> sim_array.mass1
+    array([ 2.27440691,  1.85058105,  1.61507106, ...,  2.0504961 ,
+            2.33554196,  2.02732205], dtype=float32)
+    >>> sim_array.waveform
+    array([u'SpinTaylorT2', u'SpinTaylorT2', u'SpinTaylorT2', ...,
+           u'SpinTaylorT2', u'SpinTaylorT2', u'SpinTaylorT2'], dtype=object)
+    
+    Only view a few of the fields:
+
+    >>> sim_array.with_fields(['simulation_id', 'mass1', 'mass2'])
+    LSCArray([(0, 2.274406909942627, 2.6340370178222656),
+           (1, 1.8505810499191284, 2.8336880207061768),
+           (2, 1.6150710582733154, 2.2336490154266357), ...,
+           (11607, 2.0504961013793945, 2.6019821166992188),
+           (11608, 2.3355419635772705, 1.2164380550384521),
+           (11609, 2.0273220539093018, 2.2453839778900146)], 
+          dtype={'names':['simulation_id','mass1','mass2'], 'formats':['<i8','<f4','<f4'], 'offsets':[200,236,240], 'itemsize':244})
+
+    ...or just retrieve a few of the fields to begin with:
+
+    >>> sim_array = LSCArray.from_ligolw_table(sim_table, columns=['simulation_id', 'mass1', 'mass2'])
+    >>> sim_array
+    LSCArray([(0, 2.274406909942627, 2.6340370178222656),
+           (1, 1.8505810499191284, 2.8336880207061768),
+           (2, 1.6150710582733154, 2.2336490154266357), ...,
+           (11607, 2.0504961013793945, 2.6019821166992188),
+           (11608, 2.3355419635772705, 1.2164380550384521),
+           (11609, 2.0273220539093018, 2.2453839778900146)], 
+          dtype=[('simulation_id', '<i8'), ('mass1', '<f4'), ('mass2', '<f4')])
+
+    Add a field to the array:
+
+    >>> optimal_snrs = numpy.random.uniform(4.,40., size=len(sim_array))
+    >>> sim_array = sim_array.add_fields(optimal_snrs, 'optimal_snrs')
+    >>> sim_array.fieldnames
+        ('simulation_id', 'mass1', 'mass2', 'optimal_snrs')
 
     Notes
     -----
@@ -849,164 +941,11 @@ z = x.append(y, remap_ids='event_id')
     objects, or as fixed-length strings. To toggle what it does use
     ``lscarrays.set_lstring_as_obj`` (see the docstring for that function for
     more details).
-
-    Examples
-    --------
-
-    .. note:: For some predefined arrays with default fields, see the other
-        array classes defined below. For utilities that make loading arrays
-        from data sources easier, see ``lscarray_utils.py`` in the various
-        sub-directories of ``io``.
-
-    * Create an empty array with four rows and two fields called ``'foo'`` and
-    ``'bar'``, both of which are floats:
-``
->>> x = LSCArray(4, dtype=[('foo', float), ('bar', float)])
-``
-
-    * Set/retrieve a fields using index or attribute syntax:
-``
->>> x['foo'] = [1.,2.,3.,4.]
-
->>> x['bar'] = [5.,6.,7.,8.]
-
->>> x
-    
-LSCArray([(1.0, 5.0), (2.0, 6.0), (3.0, 7.0), (4.0, 8.0)], 
-      dtype=[('foo', '<f8'), ('bar', '<f8')])
-
->>> x.foo
-    array([ 1.,  2.,  3.,  4.])
-
->>> x['bar']
-    array([ 5.,  6.,  7.,  8.])
-``
-    
-    Get the names of the fields:
-``
->>> x.fieldnames
-    ('foo', 'bar')
-``
-
-    * Rename the fields to ``a`` and ``b``:
-``
->>> x.dtype.names = ['a', 'b']
-
->>> x.fieldnames
-    ('a', 'b')
-``
-
-    * Retrieve a function of the fields as if it were a field:
-``
->>> x['sin(a/b)']
-array([ 0.19866933,  0.3271947 ,  0.41557185,  0.47942554])
-``
-
-    * Create an array with subfields:
-``
->>> x = LSCArray(4, dtype=[('foo', [('cat', float), ('hat', int)]), ('bar', float)])
-
->>> x.all_fieldnames
-    ['foo.cat', 'foo.hat', 'bar']
-``
-
-    * Load from a list of arrays (in this case, from an hdf5 file):
-``
->>> bankhdf = h5py.File('bank/H1L1-BANK2HDF-1117400416-928800.hdf')
-
->>> bankhdf.keys()
-    [u'mass1', u'mass2', u'spin1z', u'spin2z', u'template_hash']
-
->>> templates = LSCArray.from_arrays(bankhdf.values(), names=bankhdf.keys())
-
->>> templates.fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash')
-
->>> templates.mass1
-array([ 1.71731389,  1.10231435,  2.99999857, ...,  1.67488706,
-        1.00531888,  2.11106491], dtype=float32)
-``
-
-    * Sort by a field without having to worry about also sorting the other
-      fields:
-``
->>> templates[['mass1', 'mass2']]
-array([(1.7173138856887817, 1.2124452590942383),
-       (1.1023143529891968, 1.0074082612991333),
-       (2.9999985694885254, 1.0578444004058838), ...,
-       (1.6748870611190796, 1.1758257150650024),
-       (1.0053188800811768, 1.0020891427993774),
-       (2.111064910888672, 1.0143394470214844)], 
-      dtype=[('mass1', '<f4'), ('mass2', '<f4')])
-
->>> templates.sort(order='mass1')
-
->>> templates[['mass1', 'mass2']]
-array([(1.000025987625122, 1.0000133514404297),
-       (1.0002814531326294, 1.0002814531326294),
-       (1.0005437135696411, 1.0005437135696411), ...,
-       (2.999999523162842, 1.371169090270996),
-       (2.999999523162842, 1.4072519540786743), (3.0, 1.4617927074432373)], 
-      dtype=[('mass1', '<f4'), ('mass2', '<f4')])
-``
-
-    * Convert a LIGOLW xml table:
-``
->>> type(sim_table)
-    glue.ligolw.lsctables.SimInspiralTable
-
->>> sim_array = LSCArray.from_ligolw_table(sim_table)
-
->>> sim_array.mass1
-array([ 2.27440691,  1.85058105,  1.61507106, ...,  2.0504961 ,
-        2.33554196,  2.02732205], dtype=float32)
-
->>> sim_array.waveform
-array([u'SpinTaylorT2', u'SpinTaylorT2', u'SpinTaylorT2', ...,
-       u'SpinTaylorT2', u'SpinTaylorT2', u'SpinTaylorT2'], dtype=object)
-``
-    
-    * Only view a few of the fields:
-``
->>> sim_array.with_fields(['simulation_id', 'mass1', 'mass2'])
-LSCArray([(0, 2.274406909942627, 2.6340370178222656),
-       (1, 1.8505810499191284, 2.8336880207061768),
-       (2, 1.6150710582733154, 2.2336490154266357), ...,
-       (11607, 2.0504961013793945, 2.6019821166992188),
-       (11608, 2.3355419635772705, 1.2164380550384521),
-       (11609, 2.0273220539093018, 2.2453839778900146)], 
-      dtype={'names':['simulation_id','mass1','mass2'], 'formats':['<i8','<f4','<f4'], 'offsets':[200,236,240], 'itemsize':244})
-``
-
-    ...or just retrieve a few of the fields to begin with:
-``
->>> sim_array = LSCArray.from_ligolw_table(sim_table, columns=['simulation_id', 'mass1', 'mass2'])
-
->>> sim_array
-LSCArray([(0, 2.274406909942627, 2.6340370178222656),
-       (1, 1.8505810499191284, 2.8336880207061768),
-       (2, 1.6150710582733154, 2.2336490154266357), ...,
-       (11607, 2.0504961013793945, 2.6019821166992188),
-       (11608, 2.3355419635772705, 1.2164380550384521),
-       (11609, 2.0273220539093018, 2.2453839778900146)], 
-      dtype=[('simulation_id', '<i8'), ('mass1', '<f4'), ('mass2', '<f4')])
-``
-
-    * Add a field to the array:
-``
->>> optimal_snrs = numpy.random.uniform(4.,40., size=len(sim_array))
-
->>> sim_array = sim_array.add_fields(optimal_snrs, 'optimal_snrs')
-
->>> sim_array.fieldnames
-    ('simulation_id', 'mass1', 'mass2', 'optimal_snrs')
-``
     """
     __persistent_attributes__ = ['name', 'source_files', 'id_maps']
 
     def __new__(cls, shape, name=None, zero=True, **kwargs):
-        """
-        Initializes a new empty array.
+        """Initializes a new empty array.
         """
         obj = super(LSCArray, cls).__new__(cls, shape, **kwargs).view(
             type=cls)
@@ -1022,8 +961,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
 
     def __array_finalize__(self, obj):
-        """
-        Default values are set here.
+        """Default values are set here.
         """
         if obj is None:
             return
@@ -1039,17 +977,15 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
 
     def __copy_attributes__(self, other, default=None):
-        """
-        Copies the values of all of the attributes listed in
-        self.__persistent_attributes__ to other.
+        """Copies the values of all of the attributes listed in
+        `self.__persistent_attributes__` to other.
         """
         [setattr(other, attr, copy.deepcopy(getattr(self, attr, default))) \
             for attr in self.__persistent_attributes__]
 
 
     def __setitem__(self, item, values):
-        """
-        Wrap's recarray's setitem to allow attribute-like indexing when
+        """Wrap's recarray's setitem to allow attribute-like indexing when
         setting values.
         """
         try:
@@ -1067,8 +1003,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
 
     def __getsubitem__(self, item):
-        """
-        Gets a subfield using 'field.subfield' notation.
+        """Gets a subfield using `field.subfield` notation.
         """
         try:
             return super(LSCArray, self).__getitem__(item)
@@ -1082,8 +1017,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
 
     def __getitem__(self, item):
-        """
-        Wraps recarray's  __getitem__ so that math functions on fields and
+        """Wraps recarray's  `__getitem__` so that math functions on fields and
         attributes can be retrieved. Any function in numpy's library may be
         used.
         """
@@ -1112,8 +1046,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
             return eval(item, {"__builtins__": None}, item_dict)
 
     def addattr(self, attrname, value=None, persistent=True):
-        """
-        Adds an attribute to self. If persistent is True, the attribute will
+        """Adds an attribute to self. If persistent is True, the attribute will
         be made a persistent attribute. Persistent attributes are copied
         whenever a view or copy of this array is created. Otherwise, new views
         or copies of this will not have the attribute.
@@ -1124,9 +1057,8 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
             self.__persistent_attributes__.append(attrname)
 
     def add_methods(self, names, methods):
-        """
-        Adds the given method(s) as instance method(s) of self. The method(s)
-        must take ``self`` as a first argument.
+        """Adds the given method(s) as instance method(s) of self. The
+        method(s) must take `self` as a first argument.
         """
         if isinstance(names, str) or isinstance(names, unicode):
             names = [names]
@@ -1135,8 +1067,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
             setattr(self, name, types.MethodType(method, self))
         
     def add_properties(self, names, methods):
-        """
-        Returns a view of self with the given methods added as properties.
+        """Returns a view of self with the given methods added as properties.
 
         From: <http://stackoverflow.com/a/2954373/1366472>.
         """
@@ -1153,24 +1084,23 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
     @classmethod
     def from_arrays(cls, arrays, name=None, **kwargs):
-        """
-        Creates a new instance of self from the given (list of) array(s). This
-        is done by calling numpy.rec.fromarrays on the given arrays with the
-        given kwargs. The type of the returned array is cast to this class,
-        and the name (if provided) is set.
+        """Creates a new instance of self from the given (list of) array(s).
+        This is done by calling numpy.rec.fromarrays on the given arrays with
+        the given kwargs. The type of the returned array is cast to this
+        class, and the name (if provided) is set.
 
         Parameters
         ----------
-        arrays: (list of) numpy array(s)
+        arrays : (list of) numpy array(s)
             A list of the arrays to create the LSCArray from.
-        name: {None|str}
+        name : {None|str}
             What the output array should be named.
 
         For other keyword parameters, see the numpy.rec.fromarrays help.
 
         Returns
         -------
-        array: instance of this class
+        array : instance of this class
             An array that is an instance of this class in which the field
             data is from the given array(s).
         """
@@ -1184,22 +1114,22 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
         Creates a new instance of self from the given (list of) record(s). A
         "record" is a tuple in which each element is the value of one field
         in the resulting record array. This is done by calling
-        numpy.rec.fromrecordss on the given records with the given kwargs.
+        `numpy.rec.fromrecords` on the given records with the given kwargs.
         The type of the returned array is cast to this class, and the name
         (if provided) is set.
 
         Parameters
         ----------
-        records: (list of) tuple(s)
+        records : (list of) tuple(s)
             A list of the tuples to create the LSCArray from.
-        name: {None|str}
+        name : {None|str}
             What the output array should be named.
 
-        For other keyword parameters, see the numpy.rec.fromrecords help.
+        For other keyword parameters, see the `numpy.rec.fromrecords` help.
 
         Returns
         -------
-        array: instance of this class
+        array : instance of this class
             An array that is an instance of this class in which the field
             data is from the given record(s).
         """
@@ -1210,19 +1140,18 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
     @classmethod
     def from_ligolw_table(cls, table, columns=None, cast_to_dtypes=None):
-        """
-        Converts the given ligolw table into an LSCArray. The tableName
-        attribute is copied to the array's name.
+        """Converts the given ligolw table into an LSCArray. The `tableName`
+        attribute is copied to the array's `name`.
 
         Parameters
         ----------
-        table: LIGOLw table instance
+        table : LIGOLw table instance
             The table to convert.
-        columns: {None|list}
+        columns : {None|list}
             Optionally specify a list of columns to retrieve. All of the
             columns must be in the table's validcolumns attribute. If None
             provided, all the columns in the table will be converted.
-        dtype: {None | dict}
+        dtype : {None | dict}
             Override the columns' dtypes using the given dictionary. The
             dictionary should be keyed by the column names, with the values
             a tuple that can be understood by numpy.dtype. For example, to
@@ -1231,7 +1160,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Returns
         -------
-        array: LSCArray
+        array : LSCArray
             The input table as an LSCArray.
         """
         name = table.tableName.split(':')[0]
@@ -1263,29 +1192,26 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
     @property
     def fieldnames(self):
-        """
-        Returns a tuple listing the field names in self. Equivalent to
-        ``array.dtype.names``, where ``array`` is self.
+        """Returns a tuple listing the field names in self. Equivalent to
+        `array.dtype.names`, where `array` is self.
         """
         return self.dtype.names
 
     @property
     def all_fieldnames(self):
-        """
-        Returns a list of all of the field names in self, including subfields.
-        Subfields are named "field.subfield".
+        """Returns a list of all of the field names in self, including
+        subfields. Subfields are named `field.subfield`.
         """
         return get_all_field_names(self.dtype)
 
     @property
     def aliases(self):
-        """
-        Returns a dictionary of the aliases, or "titles", of the field names
+        """Returns a dictionary of the aliases, or "titles", of the field names
         in self. An alias can be specified by passing a tuple in the name
         part of the dtype. For example, if an array is created with
         ``dtype=[(('foo', 'bar'), float)]``, the array will have a field
-        called ``bar`` that has alias ``foo`` that can be accessed using
-        either ``arr['foo']`` or ``arr['bar']``. Note that the first string
+        called `bar` that has alias `foo` that can be accessed using
+        either `arr['foo']` or `arr['bar']`. Note that the first string
         in the dtype is the alias, the second the name. This function returns
         a dictionary in which the aliases are the keys and the names are the
         values. Only fields that have aliases are returned.
@@ -1294,8 +1220,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
     def add_source_file(self, filename, id_field=None, id_ranges=None,
             include_checksum=False, force=False):
-        """
-        Adds a source file to self.source_files. If id_field is provided,
+        """Adds a source file to self.source_files. If id_field is provided,
         will also include information about the ids that the source file
         is valid for. This information is stored in a dictionary as:
         ``self.source_files[filename][id_field] = id_ranges``
@@ -1309,22 +1234,22 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        filename: string
+        filename : string
             The name of the file.
-        id_field: {None | string}
+        id_field : {None | string}
             The name of an id field in self for which this file is valid. To
             refer to a subarray field, use "``.``", e.g.,
             ``recovered.event_id``.
-        id_ranges: {None | array}
+        id_ranges : {None | array}
             The id values for which the file is valid. Can either be an array
             of the individual id values, or just the minimum and maximum
             values, to specify a range. If provided, must also provide
             id_field. If id_field provided and id_ranges is None, the ranges
             will be ``[self[id_field].min(), self[id_field].max()]``.
-        include_checksum: bool
+        include_checksum : bool
             If True, will calculate a checksum for the file and add it to
             the checksum fields. Default is False.
-        force: bool
+        force : bool
             If the filename is already in self.source_files, overwrite it.
             Otherwise, a ValueError will be raised. Default is False.
         """
@@ -1354,17 +1279,17 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        arrays: (list of) numpy array(s)
+        arrays : (list of) numpy array(s)
             The arrays to add. If adding multiple arrays, must be a list;
             if adding a single array, can just be that array.
-        names: (list of) strings
+        names : (list of) strings
             Optional, the name(s) of the new fields in the output array. If
             adding multiple fields, must be a list of strings with the same
             length as the list of arrays. If None provided, names used will
             be the same as the name of the datatype in the given arrays.
             If the datatype has no name, the new field will be ``'fi'`` where
             i is the index of the array in arrays.
-        assubarray: bool
+        assubarray : bool
             Add the list of arrays as a single subarray field. If True, and
             names provided, names should be a string or a length-1 sequence.
             Default is False, in which case each array will be added as a
@@ -1372,7 +1297,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Returns
         -------
-        new_array: new instance of this array
+        new_array : new instance of this array
             A copy of this array with the desired fields added.
         """
         newself = add_fields(self, arrays, names=names, assubarray=assubarray)
@@ -1386,16 +1311,16 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        names: {strings|list of strings}
+        names : {strings|list of strings}
             List of field names for the returned array; may be either a
             single name or a list of names.
-        copy: bool, optional
+        copy : bool, optional
             If True, will return a copy of the array rather than a view.
             Default is False.
 
         Returns
         -------
-        lscarray: new instance of this array
+        lscarray : new instance of this array
             The view or copy of the array with only the specified fields.
         """
         newself = get_fields(self, names, copy=copy)  
@@ -1410,16 +1335,16 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        names: {strings|list of strings}
+        names : {strings|list of strings}
             List of field names for the returned array; may be either a
             single name or a list of names.
-        copy: bool, optional
+        copy : bool, optional
             If True, will return a copy of the array rather than a view.
             Default is False.
 
         Returns
         -------
-        lscarray: new instance of this array
+        lscarray : new instance of this array
             The view or copy of the array without the specified fields.
         """
         # check if only given a single name
@@ -1460,17 +1385,17 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        field: (tuple of) string(s)
+        field : (tuple of) string(s)
             The name(s) of the field to look up.
-        value: (tuple of) value(s)
+        value : (tuple of) value(s)
             The value(s) in the fields to get.
-        default: {KeyError | value}
+        default : {KeyError | value}
             Optionally specify a value to return is the value is not found
             in self's field. Otherwise, a KeyError is raised.
 
         Returns
         -------
-        matching: type(self)
+        matching : type(self)
             The rows in self that match the requested value.
         """
         try:
@@ -1533,21 +1458,21 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        other: LSCArray or similar
+        other : LSCArray or similar
             The array that information is retrieved from. Must have
             ``lookup`` and ``with_fields`` methods.
-        map_field: string
+        map_field : string
             The name of the field in self to use for mapping.
-        expand_field_name: string
+        expand_field_name : string
             The name of the field that will be added to self. The information
             from ``other`` will be contained as a subarray under this field.
-        other_map_field: {None|string}
+        other_map_field : {None|string}
             The name of the field in ``other`` to use for mapping. If None
             provided, ``map_field`` will be used.
-        get_fields: {None | (list of) strings}
+        get_fields : {None | (list of) strings}
             Optionally specify what fields to retrieve from ``other_array``.
             If None provided, will get all the fields in ``other_array``.
-        map_indices: {None | array of ints}
+        map_indices : {None | array of ints}
             If provided, will only map rows in this array that have indices
             in the given array of indices. Any rows that are skipped will
             have a zeroed element in the expand field of the returned array.
@@ -1555,7 +1480,7 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Returns
         -------
-        new_array: type(self)
+        new_array : type(self)
             A copy of this array with the mapped information added to
             ``expand_field_name``.
         """
@@ -1573,9 +1498,9 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Parameters
         ----------
-        other: array
+        other : array
             The array to append. Must have the same dtype as this array.
-        remap_ids: {None | (list of) string(s)}
+        remap_ids : {None | (list of) string(s)}
             A (list of) field name(s) to update. For every field name provided,
             the values in other array that are added to self will be increased
             by the maximum value of the field in self. The ids that are updated
@@ -1584,44 +1509,40 @@ LSCArray([(0, 2.274406909942627, 2.6340370178222656),
 
         Returns
         -------
-        combined: array
+        combined : array
             A copy of self with other appended.
 
-        Example
-        -------
+        Examples
+        --------
         Append two sim_inspiral arrays together:
-``
->>> sims1.name, sims1.size, sims1.simulation_id, sims1.process_id, sims1.source_files, sims1.id_maps
-('sim_inspiral',
- 11610,
- array([    0,     1,     2, ..., 11607, 11608, 11609]),
- array([0, 0, 0, ..., 0, 0, 0]),
- {'inj_files/HL-INJECTIONS_BNS0INJ-1117400416-928800.xml': {'_checksum': '2a7a0f88f88476cd2ae85d03f9772a8da0d49ee734352cee79cfd64943d99bbe',
-   'simulation_id': array([    0, 11609])}},
- None)
 
->>> sims2.name, sims2.size, sims2.simulation_id, sims2.process_id, sims2.source_files, sims2.id_maps
-('other_sim_inspiral',
- 11610,
- array([    0,     1,     2, ..., 11607, 11608, 11609]),
- array([0, 0, 0, ..., 0, 0, 0]),
- {'inj_files/HL-INJECTIONS_BNS1INJ-1117400416-928800.xml': {'_checksum': 'cab57e614de403fd58affa3994f5920c56280c2c283871e8b730717338629fa9',
-   'simulation_id': array([    0, 11609])}},
- None)
-
->>> sims = sims1.append(sims2, ['simulation_id', 'process_id'])
-
->>> sims.name, sims.size, sims.simulation_id, sims.process_id, sims.source_files, sims.id_maps
-('sim_inspiral',
- 23220,
- array([    0,     1,     2, ..., 23217, 23218, 23219]),
- array([0, 0, 0, ..., 1, 1, 1]),
- {'inj_files/HL-INJECTIONS_BNS0INJ-1117400416-928800.xml': {'_checksum': '2a7a0f88f88476cd2ae85d03f9772a8da0d49ee734352cee79cfd64943d99bbe',
-   'simulation_id': array([    0, 11609])},
-  'inj_files/HL-INJECTIONS_BNS1INJ-1117400416-928800.xml': {'_checksum': 'cab57e614de403fd58affa3994f5920c56280c2c283871e8b730717338629fa9',
-   'simulation_id': array([11610, 23219])}},
- {'process_id': [(1, 1, 1)], 'simulation_id': [(11610, 23219, 11610)]})
-``
+        >>> sims1.name, sims1.size, sims1.simulation_id, sims1.process_id, sims1.source_files, sims1.id_maps
+        ('sim_inspiral',
+         11610,
+         array([    0,     1,     2, ..., 11607, 11608, 11609]),
+         array([0, 0, 0, ..., 0, 0, 0]),
+         {'inj_files/HL-INJECTIONS_BNS0INJ-1117400416-928800.xml': {'_checksum': '2a7a0f88f88476cd2ae85d03f9772a8da0d49ee734352cee79cfd64943d99bbe',
+           'simulation_id': array([    0, 11609])}},
+         None)
+        >>> sims2.name, sims2.size, sims2.simulation_id, sims2.process_id, sims2.source_files, sims2.id_maps
+        ('other_sim_inspiral',
+         11610,
+         array([    0,     1,     2, ..., 11607, 11608, 11609]),
+         array([0, 0, 0, ..., 0, 0, 0]),
+         {'inj_files/HL-INJECTIONS_BNS1INJ-1117400416-928800.xml': {'_checksum': 'cab57e614de403fd58affa3994f5920c56280c2c283871e8b730717338629fa9',
+           'simulation_id': array([    0, 11609])}},
+         None)
+        >>> sims = sims1.append(sims2, ['simulation_id', 'process_id'])
+        >>> sims.name, sims.size, sims.simulation_id, sims.process_id, sims.source_files, sims.id_maps
+        ('sim_inspiral',
+         23220,
+         array([    0,     1,     2, ..., 23217, 23218, 23219]),
+         array([0, 0, 0, ..., 1, 1, 1]),
+         {'inj_files/HL-INJECTIONS_BNS0INJ-1117400416-928800.xml': {'_checksum': '2a7a0f88f88476cd2ae85d03f9772a8da0d49ee734352cee79cfd64943d99bbe',
+           'simulation_id': array([    0, 11609])},
+          'inj_files/HL-INJECTIONS_BNS1INJ-1117400416-928800.xml': {'_checksum': 'cab57e614de403fd58affa3994f5920c56280c2c283871e8b730717338629fa9',
+           'simulation_id': array([11610, 23219])}},
+         {'process_id': [(1, 1, 1)], 'simulation_id': [(11610, 23219, 11610)]})
         """
         newarr = numpy.append(self, other).view(type=type(self))
         # copy the persistent attributes from self
@@ -1744,7 +1665,7 @@ class _LSCArrayWithDefaults(LSCArray):
 
         Parameters
         ----------
-        names: (list of) string(s)
+        names : (list of) string(s)
             The names of the fields to add. Must be a field in self's default
             fields.
         
@@ -1752,7 +1673,7 @@ class _LSCArrayWithDefaults(LSCArray):
 
         Returns
         -------
-        new array: instance of this array
+        new array : instance of this array
             A copy of this array with the field added.
         """
         if isinstance(names, str) or isinstance(names, unicode):
@@ -1776,12 +1697,12 @@ class _LSCArrayWithDefaults(LSCArray):
 
 class Waveform(_LSCArrayWithDefaults):
     """
-    Subclasses LSCArrayWithDefaults, with default name ``waveform``. The
-    ``_static_fields`` define fields needed to describe a CBC waveform in the
-    radiation frame. These are returned by ``default_fields``.
+    Subclasses LSCArrayWithDefaults, with default name `waveform`. The
+    `_static_fields` define fields needed to describe a CBC waveform in the
+    radiation frame. These are returned by `default_fields`.
 
     Also adds various common functions decorated as properties, such as
-    mtotal = mass1+mass2.
+    ``mtotal = mass1+mass2``.
     """
     default_name = 'waveform'
 
@@ -1885,43 +1806,35 @@ class Waveform(_LSCArrayWithDefaults):
 
 class TmpltInspiral(Waveform):
     """
-    Subclasses Waveform, with default name ``tmplt_inspiral``. Adds attributes
-    ids and ifo_params; the fields defined in those are added to Waveform's
-    default fields.
-
-    Notes
-    -----
-    The attribute ``ifo_params`` defines the ``ifo`` field, which is a
-    subarray. The default length is 1; but this can be changed using the
-    ``default_nifos`` class attribute. If a larger number, a single row
-    of a TmpltInspiral can store information about one or more ifos.
+    Subclasses Waveform, with default name `tmplt_inspiral`. Adds fields
+    `template_id` and `process_id` as ids and an `ifo` field for listing what
+    ifo(s) the template is filtered in. The `ifo` field may have more than one
+    ifo listed. The maxium length of this field is specified at creating using
+    the `nifos` key word.
+   
+    **Default fields:**
+    %s
 
     Examples
     --------
-    * Create a TmpltInspiral array from an hdf bank file:
-``
->>> bankhdf = h5py.File('H1L1-BANK2HDF-1117400416-928800.hdf', 'r')
+    Create a TmpltInspiral array from an hdf bank file:
 
->>> templates = TmpltInspiral.from_arrays(bankhdf.values(), names=bankhdf.keys())
-
->>> templates = templates.add_fields(numpy.arange(len(templates)), names='template_id')
-
->>> templates.fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
-
->>> templates.mass1
-array([ 1.71731389,  1.10231435,  2.99999857, ...,  1.67488706,
-        1.00531888,  2.11106491], dtype=float32)
-
->>> templates[['mass1', 'mass2']]
-array([(1.7173138856887817, 1.2124452590942383),
-       (1.1023143529891968, 1.0074082612991333),
-       (2.9999985694885254, 1.0578444004058838), ...,
-       (1.6748870611190796, 1.1758257150650024),
-       (1.0053188800811768, 1.0020891427993774),
-       (2.111064910888672, 1.0143394470214844)], 
-      dtype=[('mass1', '<f4'), ('mass2', '<f4')])
-``
+    >>> bankhdf = h5py.File('H1L1-BANK2HDF-1117400416-928800.hdf', 'r')
+    >>> templates = TmpltInspiral.from_arrays(bankhdf.values(), names=bankhdf.keys())
+    >>> templates = templates.add_fields(numpy.arange(len(templates)), names='template_id')
+    >>> templates.fieldnames
+        ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
+    >>> templates.mass1
+    array([ 1.71731389,  1.10231435,  2.99999857, ...,  1.67488706,
+            1.00531888,  2.11106491], dtype=float32)
+    >>> templates[['mass1', 'mass2']]
+    array([(1.7173138856887817, 1.2124452590942383),
+           (1.1023143529891968, 1.0074082612991333),
+           (2.9999985694885254, 1.0578444004058838), ...,
+           (1.6748870611190796, 1.1758257150650024),
+           (1.0053188800811768, 1.0020891427993774),
+           (2.111064910888672, 1.0143394470214844)], 
+          dtype=[('mass1', '<f4'), ('mass2', '<f4')])
     """
     default_name = 'tmplt_inspiral'
 
@@ -1950,90 +1863,101 @@ array([(1.7173138856887817, 1.2124452590942383),
 
 class SnglEvent(_LSCArrayWithDefaults):
     """
-    Subclasses _LSCArrayWithDefaults, adding ranking_stat, snr, chisq, and
-    end time as default fields. Also has a 'template' field, which is a
-    sub-array of with fields ifo and template_id. If given a TmpltInspiral
-    array, the template field can be expanded to have all the parameters of
-    each single event; see expand_templates for details.
+    Has default fields for storing information about an event found in a single
+    detector. One of these fields is `ranking_stat`. This can be aliased to
+    any other string at initialization by setting the keyword argument
+    `ranking_stat_alias`; the default is `new_snr`.
+
+    By default, the array is initialized with a `template_id` field. If given
+    a `TmpltInspiral` array (which has a `template_id` field), the waveform
+    parameters of the events will be added to the array. See `expand_templates`
+    for details.
+
+    End times are stored in the `end_time_s` field (for seconds) and the
+    `end_time_ns` field (for nanoseconds). The `end_time` property converts
+    these into a floats.
 
     Examples
     --------
-    * Create a SngEvent array from an hdfcoinc merged file:
-``
->>> hdf = h5py.File('H1-HDF_TRIGGER_MERGE_BNS1INJ-1117400416-928800.hdf', 'r')['H1']
+    Create a new empty SnglEvent array of length 10 and default fields:
 
->>> hsngls = lscarrays.SnglEvent(len(hdf['end_time']))
+    >>> sngls = SnglEvent(10)
+    >>> sngls.all_fieldnames
+    ['end_time_s', 'detector', 'cont_chisq_dof', 'event_id', 'ranking_stat',
+     'bank_chisq', 'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr',
+     'bank_chisq_dof', 'end_time_ns', 'sigma', 'template_id']
+    >>> sngls.aliases
+        {'ifo': 'detector', 'new_snr': 'ranking_stat'}
 
->>> hsngls['event_id'] = numpy.arange(hsngls.size)
+    Create a SngEvent array from an hdfcoinc merged file:
 
->>> hsngls['snr'] = hdf['snr']
+    .. code-block:: python
+        hdf = h5py.File('BNS1INJ/H1-HDF_TRIGGER_MERGE_BNS1INJ-1117400416-928800.hdf', 'r')
+        hsngls = SnglEvent(len(hdf['end_time']))
+        hsngls['event_id'] = numpy.arange(hsngls.size)
+        hsngls['snr'] = hdf['snr']
+        hsngls['chisq'] = hdf['chisq']
+        hsngls['chisq_dof'] = 2.*hdf['chisq_dof'].value - 2
+        hsngls['end_time_s'] = hdf['end_time'].value.astype(int)
+        hsngls['end_time_ns'] = (hdf['end_time'].value % 1 * 1e9).astype(int)
+        hsngls['template_id'] = hdf['template_id']
+        hsngls['ifo'] = 'H1'
+        hsngls['sigma'] = numpy.sqrt(hdf['sigmasq'])
+        hsngls['ranking_stat'] = hsngls.snr
+        reweight_idx = numpy.where(hsngls['chisq/chisq_dof > 1'])
+        hsngls.ranking_stat[reweight_idx] = hsngls['snr'][reweight_idx] / ((1. + hsngls['chisq/chisq_dof'][reweight_idx]**3.)/2.)**(1./6)
 
->>> hsngls['chisq'] = hdf['chisq']
+    Get the ranking stat by its alias:
 
->>> hsngls['chisq_dof'] = 2.*hdf['chisq_dof'].value - 2
+    >>> hsngls.ranking_stat
+    array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
+            7.24139452,  7.55083953])
+    >>> hsngls.ranking_stat_alias
+        'new_snr'
+    >>> hsngls.new_snr
+    array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
+            7.24139452,  7.55083953])
 
->>> hsngls['end_time'] = hdf['end_time']
+    Expand the template field (see TmpltInspiral help for how to create
+    `templates` from an hdf bank file) (note that properties such as `mchirp`,
+    are also copied from the `templates` array to the `hsngls` array):
 
->>> hsngls['template']['template_id'] = hdf['template_id']
+    >>> hsngls.fieldnames
+    ('end_time_s', 'detector', 'cont_chisq_dof', 'event_id', 'ranking_stat',
+     'bank_chisq', 'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr',
+     'bank_chisq_dof', 'end_time_ns', 'sigma', 'template_id')
+    >>> templates.fieldnames
+        ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
+    >>> 'mchirp' in dir(hsngls)
+        False
+    >>> hsngls = hsngls.expand_templates(templates)
+    >>> hsngls.fieldnames
+    ('end_time_s', 'detector', 'cont_chisq_dof', 'event_id', 'ranking_stat',
+     'bank_chisq', 'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr',
+     'bank_chisq_dof', 'end_time_ns', 'sigma', 'template_id', 'mass1', 'mass2',
+     'spin1z', 'spin2z', 'template_hash')
+    >>> hsngls.ranking_stat, hsngls.template_id, hsngls.mass1
+    (array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
+             7.24139452,  7.55083953]),
+     array([   0,    0,    0, ..., 4030, 4030, 4030]),
+     array([ 1.71731389,  1.71731389,  1.71731389, ...,  2.11106491,
+             2.11106491,  2.11106491], dtype=float32))
+    >>> 'mchirp' in dir(hsngls)
+        True
+    >>> hsngls.mchirp
+    array([ 1.25239313,  1.25239313,  1.25239313, ...,  1.25727332,
+            1.25727332,  1.25727332], dtype=float32)
 
->>> hsngls['ifo'] = 'H1'
+    Sort by the ranking stat (note that all other fields are sorted too):
 
->>> hsngls['sigma'] = numpy.sqrt(hdf['sigmasq'])
-
->>> hsngls['ranking_stat'] = hsngls.snr
-
->>> reweight_idx = numpy.where(hsngls['chisq/chisq_dof > 1'])
-
->>> hsngls.ranking_stat[reweight_idx] = hsngls['snr'][reweight_idx] / ((1. + hsngls['chisq/chisq_dof'][reweight_idx]**3.)/2.)**(1./6)
-``
-
-    * Get the ranking stat by its alias:
-``
->>> hsngls.ranking_stat
-array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
-        7.24139452,  7.55083953])
-
->>> hsngls.ranking_stat_alias
-    'new_snr'
-
->>> hsngls.new_snr
-array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
-        7.24139452,  7.55083953])
-
-
-    * Expand the template field (see TmpltInspiral help for how to create
-    ``templates`` from an hdf bank file):
-``
->>> hsngls.template.fieldnames
-    ('template_id',)
-
->>> templates.fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
-
->>> hsngls = hsngls.expand_templates(templates)
-
->>> hsngls.template.fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
-
->>> hsngls.ranking_stat, hsngls.template.template_id, hsngls.template.mass1
-(array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
-         7.24139452,  7.55083953]),
- array([   0,    0,    0, ..., 4030, 4030, 4030]),
- array([ 1.71731389,  1.71731389,  1.71731389, ...,  2.11106491,
-         2.11106491,  2.11106491], dtype=float32))
-``
-
-    * Sort by the ranking stat (note that all other fields are sorted too):
-``
->>> hsngls.sort(order='ranking_stat')
-
->>> hsngls.ranking_stat, hsngls.template.template_id, hsngls.template.mass1
-(array([   5.00000016,    5.00000954,    5.00000962, ...,  116.15787474,
-         124.83552448,  155.72376072]),
- array([3785,  590, 2314, ..., 2473, 3159,   86]),
- array([ 2.99986959,  1.85319662,  1.41802227, ...,  2.99999189,
-         1.87226772,  2.88923597], dtype=float32))
-``
+    >>> hsngls.sort(order='ranking_stat')
+    >>> hsngls.event_id, hsngls.ranking_stat, hsngls.template_id, hsngls.mass1
+    (array([253515,  39853, 155364, ..., 166129, 211314,   5742]),
+     array([   5.00000016,    5.00000954,    5.00000962, ...,  116.15787474,
+             124.83552448,  155.72376072]),
+     array([3785,  590, 2314, ..., 2473, 3159,   86]),
+     array([ 2.99986959,  1.85319662,  1.41802227, ...,  2.99999189,
+             1.87226772,  2.88923597], dtype=float32))
     """
     default_name = 'sngl_event'
     ranking_stat_alias = 'new_snr'
@@ -2084,31 +2008,33 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
             selfs_map_field='template_id', tmplts_map_field='template_id'):
         """
-        Given an array of templates, replaces the template field with a
-        sub-array of the template data. This is done by getting all rows in
-        the ``tmplt_inspiral_array`` such that:
+        Given an array of templates, adds the fields from the templates to this
+        array. This is done by getting all rows in the `tmplt_inspiral_array`
+        such that:
         ``self[selfs_map_field] == tmplt_inspiral_array[tmplts_map_field]``.
 
         Parameters
         ----------
-        tmplt_inspiral_array: (any subclass of) LSCArray
+        tmplt_inspiral_array : (any subclass of) LSCArray
             The array of templates with additional fields to add.
-        get_fields: {None | (list of) strings}
+        get_fields : {None | (list of) strings}
             The names of the fields to get from the tmplt_inspiral_array.
             If ``None``, all fields will be retrieved.
-        selfs_map_field: {'template.template_id' | string}
+        selfs_map_field : {'template.template_id' | string}
             The name of the field in self's current template sub-array to use
             to match to templates in the tmplt_inspiral_array. Default is
-            ``template.template_id``.
-        tmplts_map_field: {'template_id' | string}
+            `template_id`.
+        tmplts_map_field : {'template_id' | string}
             The name of the field in the tmplt_inspiral_array to match.
-            Default is ``template_id``.
+            Default is `template_id`.
 
         Returns
         -------
-        new array: new instances of this array
+        new_array : new instances of this array
             A copy of this array with the template sub-array containing all
-            of the fields specified by ``get_fields``.
+            of the fields specified by `get_fields`. All methods and properties
+            of the `tmpl_inspiral_array` that are not methods/properties of
+            this array are added to `new_array`.
         """
         return self.join(tmplt_inspiral_array, selfs_map_field,
             other_map_field=tmplts_map_field, get_fields=get_fields)
@@ -2116,107 +2042,110 @@ array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
 
 class CoincEvent(SnglEvent):
     """
-    Subclasses SnglEvent, but with different default stat_params. Also has a
-    'sngl_events', which is a subarray with fields named by instruments. The
-    default is to store ``event_id`` and ``end_time`` for each instrument,
-    but this can be expanded to have all of the full parameters of the single
-    events; see expand_sngls for details.
+    Has default fields for storing information about an event found in multiple
+    detectors. Like `SnglEvent`, one of these fields is `ranking_stat`, which
+    can be aliased to another string at initialization (default is `new_snr`). 
+    Also stores end times in a `_s` and `_ns` fields, but these are added
+    together using the `end_time` property. This also has a `template_id`
+    column, and it inherits the `expand_templates` method for adding paramteer
+    information (see `SnglEvent` for details).
+
+    Unlike `SnglEvent`, `CoincEvent` initialization has an additional keyword
+    `detectors`. This is a list of the names of possible detectors that could
+    form events. The provided names are added as fields to CoincEvent. By
+    default, each detector field has sub-fields `event_id`, `end_time_s`, and
+    `end_time_ns`. These can be used to store information about the single
+    events that formed the coincidence. For example, if
+    ``detectors=['H1', 'L1']``, the array will have fields `H1` and `L1`, each 
+    with their own `event_id` and `end_time_(n)s` fields. If a SnglEvent array
+    is provided, the detector fields can be expanded to include all of the
+    single event parameters, similar to `expand_templates`; see `expand_sngls`
+    for details.  Note that the `end_time` property will also work on the
+    detector end times. For example if `CoincEvent` array `foo` has detector
+    field `H1`, ``foo.H1.end_time`` will return the H1 `end_time_s` and
+    `end_time_ns` as a float.
+    
+    If one or more events in the array were not detected in all of the
+    detectors provided, the `event_id` for the detector fields they were not
+    detected is is set to `lscarrays.ID_NOT_SET`. The property `detected_in`
+    will return an array of strings listing the detectors that each event was
+    found in.
+
+    Other differences from SnglEvent are the default fields for statistics:
+    this has `ifar(_exc)` and `ifap(_exc)` fields for storing inverse false
+    alarm rates and inverse false alarm probabilities, respectively. The
+    properties `far` and `fap` return the inverse of these. Inverse fars
+    (faps) are stored because a new empty array will initialize these to 0.
+    Thus the initialized fars and faps = infinity.
+
 
     Examples
     --------
-    * Create an array from a statmap hdfcoinc file:
-``
->>> coincs = CoincEvent(len(fg['fap']), names=['fap', 'far', 'ranking_stat', 'template', 'event_id', 'sngl_events'])
+    Create a new empty CoincEvent array of length 10 and default fields (note
+    that the default detectors are `detector1` and `detector2`):
 
->>> coincs['fap'] = fg['fap']
+    >>> coincs = CoincEvent(10)
+    >>> coincs.all_fieldnames
+    ['end_time_s', 'event_id', 'ranking_stat', 'ifar_exc', 'ifap_exc',
+     'detector1.event_id', 'detector1.end_time_s', 'detector1.end_time_ns',
+     'detector2.event_id', 'detector2.end_time_s', 'detector2.end_time_ns',
+     'process_id', 'ifar', 'ifap', 'snr', 'end_time_ns', 'template_id']
 
->>> coincs['far'] = 1./fg['ifar'].value
+    Create an array from a statmap hdfcoinc file:
 
->>> coincs['ranking_stat'] = fg['stat']
+    .. code-block:: python
+        statmap = h5py.File('BNS1INJ_coinc/H1L1-HDFINJFIND_BNS1INJ_INJ_INJ-1117400416-928800.hdf', 'r')
+        fg = statmap['found']
+        coincs = CoincEvent(len(fg['fap']), detectors=[statmap.attrs['detector_1'], statmap.attrs['detector_2']], names=['ifap', 'ifar', 'ranking_stat', 'template_id', 'event_id'])
+        coincs['ifap'] = 1./fg['fap'].value
+        coincs['ifar'] = fg['ifar']
+        coincs['ranking_stat'] = fg['stat']
+        coincs['template_id'] = fg['template_id']
+        coincs['event_id'] = numpy.arange(len(coincs))
+        coincs[statmap.attrs['detector_1']]['event_id'] = fg['trigger_id1']
+        coincs[statmap.attrs['detector_1']]['end_time_s'] = fg['time1'].value.astype(int)
+        coincs[statmap.attrs['detector_1']]['end_time_ns'] = (fg['time1'].value % 1 * 1e9).astype(int)
+        coincs[statmap.attrs['detector_2']]['event_id'] = fg['trigger_id2']
+        coincs[statmap.attrs['detector_2']]['end_time_s'] = fg['time2'].value.astype(int)
+        coincs[statmap.attrs['detector_2']]['end_time_ns'] = (fg['time2'].value % 1 * 1e9).astype(int)
 
->>> coincs['template']['template_id'] = fg['template_id']
+    Add information about the single events (see SnglEvent help for how to
+    create `hsngls` and `lsngls` in this example):
 
->>> coincs['event_id'] = numpy.arange(len(coincs))
+    >>> coincs.detectors
+        ('H1', 'L1')
+    >>> coincs.H1.fieldnames
+        ('event_id', 'end_time_s', 'end_time_ns')
+    >>> coincs = coincs.expand_sngls(hsngls)
+    >>> coincs.H1.fieldnames
+    ('end_time_s', 'cont_chisq_dof', 'event_id', 'ranking_stat', 'bank_chisq',
+     'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr', 'bank_chisq_dof',
+     'end_time_ns', 'sigma', 'template_id', 'mass1', 'mass2', 'spin1z',
+     'spin2z', 'template_hash')
+>>> coincs.L1.fieldnames
+    ('event_id', 'end_time_s', 'end_time_ns')
+>>> coincs = coincs.expand_sngls(lsngls)
+>>> coincs.L1.fieldnames
+    ('end_time_s', 'cont_chisq_dof', 'event_id', 'ranking_stat', 'bank_chisq',
+     'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr', 'bank_chisq_dof',
+     'end_time_ns', 'sigma', 'template_id')
 
->>> coincs['sngl_events']['ifos'] = [statmap.attrs['detector_2'], statmap.attrs['detector_1']]
+    >>> coincs.ranking_stat, coincs['H1']['ranking_stat'], coincs.L1.ranking_stat
+    (array([ 76.14434814, 8.63374901, ..., 139.97875977, 18.55389023]),
+     array([ 44.2959137,  6.21183914, ..., 124.83552448, 14.78488204]),
+     array([ 61.93411348, 5.9962226 , ...,  63.32571184, 11.20955446]))
 
->>> coincs['sngl_events']['event_ids'] = numpy.vstack((fg['trigger_id2'], fg['trigger_id1'])).T
-``
+    Expand the template field (see TmpltInspiral help for how to create
+    `templates` from an hdf bank file):
 
-    * Add information about the single events (see SnglEvent help for how to
-      create ``hsngls`` and ``lsngls`` in this example):
-``
->>> coincs.fieldnames
-    ('fap', 'event_id', 'ranking_stat', 'template', 'sngl_events', 'far')
-
->>> coincs.sngl_events.ifos
-chararray([['H1', 'L1'],
-       ['H1', 'L1'],
-       ..., 
-       ['H1', 'L1']], 
-      dtype='|S2')
-
->>> hsngls.ifo
-chararray(['H1', 'H1', 'H1', ..., 'H1', 'H1', 'H1'], 
-      dtype='|S2')
-
->>> coincs = coincs.add_sngls_data(hsngls)
-
->>> coincs.fieldnames
-    ('fap', 'event_id', 'ranking_stat', 'template', 'sngl_events', 'far', 'H1')
-
->>> coincs['H1'].fieldnames
-('event_id',
- 'ranking_stat',
- 'chisq',
- 'chisq_dof',
- 'process_id',
- 'snr',
- 'end_time',
- 'template',
- 'ifo',
- 'sigma')
-``
->>> lsngls.ifo
-chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'], 
-      dtype='|S2')
-
->>> lsngls.ifo
-chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'], 
-      dtype='|S2')
-
->>> coincs = coincs.add_sngls_data(lsngls)
-
->>> coincs.fieldnames
-('fap',
- 'event_id',
- 'ranking_stat',
- 'template',
- 'sngl_events',
- 'far',
- 'H1',
- 'L1')
-
->>> coincs.ranking_stat, coincs['H1']['ranking_stat'], coincs.L1.ranking_stat
-(array([ 76.14434814, 8.63374901, ..., 139.97875977, 18.55389023]),
- array([ 44.2959137,  6.21183914, ..., 124.83552448, 14.78488204]),
- array([ 61.93411348, 5.9962226 , ...,  63.32571184, 11.20955446]))
-``
-
-    * Expand the template field (see TmpltInspiral help for how to create
-      ``templates`` from an hdf bank file):
-``
->>> coincs.template.fieldnames
-    ('template_id',)
-
->>> templates.fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
-
->>> coincs = coincs.expand_templates(templates)
-
->>> coincs.template.fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
-``
+    >>> coincs.fieldnames
+        ('event_id', 'ranking_stat', 'ifar', 'ifap', 'template_id', 'H1', 'L1')
+    >>> templates.fieldnames
+        ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
+    >>> coincs = coincs.expand_templates(templates)
+    >>> coincs.fieldnames
+        ('event_id', 'ranking_stat', 'ifar', 'ifap', 'template_id', 'H1', 'L1',
+         'mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash')
     """
     default_name = 'coinc_event'
     # add detectors as a persistent attribute
@@ -2241,7 +2170,8 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         sngls = {
             det: {
                 'event_id': int,
-                'end_time': float
+                'end_time_s': int,
+                'end_time_ns': int,
                 }.items()
             for det in detectors
             }
@@ -2310,7 +2240,7 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
         """
         Returns the names of the detectors that contributed to each coinc
         event. This is found by returning all of the detectors for which
-        self[detector].event_id != lscarrays.ID_NOT_SET.
+        ``self[detector].event_id != lscarrays.ID_NOT_SET``.
         """
         detectors = numpy.array(self.detectors)
         mask = numpy.vstack([
@@ -2323,48 +2253,45 @@ chararray(['L1', 'L1', 'L1', ..., 'L1', 'L1', 'L1'],
             sngls_map_field='event_id'):
         """
         Given an array of singles, adds sub-arrays of the single-detector
-        trigger data named by ifo to self. For each ifo in that is in
-        ``self['sngl_events']['ifos']``, the data is retrieved such that:
-        ``self['sngl_events'][[(ifo, 'event_id')]] == sngl_event_array[['ifo', sngls_map_field]]``.
-        If the ``sngl_event_array`` only has data of a subset of the ifos
-        in ``self.sngl_events.ifos``, fields will only be added for those
-        ifos. For example, if ``self.sngl_events.ifos == ['H1', 'L1']`` but
-        ``sngl_event_array`` only has H1 data, then only
-        ``self['H1']`` will be added.
+        trigger data named by ifo to self. For each detector in that is in
+        `self.detectors`, the data is retrieved such that:
+        ``self[detector]['event_id'] == sngl_event_array[where('detector' == detector)]['event_id']``.
+        If the `sngl_event_array` only has data of a subset of the detectors
+        in `self.detectors`, fields will only be added for those detectors.
+        For example, if ``self.detectors == ['H1', 'L1']`` but
+        `sngl_event_array` only has H1 data, then only `self['H1']` will be
+        added.
 
         Parameters
         ----------
-        sngl_event_array: (any subclass of) LSCArray
+        sngl_event_array : (any subclass of) LSCArray
             The array of singles with additional fields to add.
-        get_fields: {None | (list of) strings}
+        get_fields : {None | (list of) strings}
             The names of the fields to get from the sngl_event_array.
-            If ``None``, all fields will be retrieved.
-        sngls_map_field: {'event_id' | string}
-            The name of the field in the ``sngl_event_array`` to match.
-            Default is ``'event_id'``.
+            If `None`, all fields will be retrieved.
+        sngls_map_field : {'event_id' | string}
+            The name of the field in the `sngl_event_array` to match.
+            Default is `'event_id'`.
 
         Returns
         -------
-        newarray: new instance of this array
-            A copy of this array with the sngl_events sub-array containing all
-            of the fields specified by ``get_fields``.
+        newarray : new instance of this array
+            A copy of this array with the single detector fields added.
 
         Notes
         -----
-        * The ``sngl_event_array`` must have a ``detector`` field.
-        * The ``sngl_event_array`` must have one and only one row in it for a
-          given ``detector, event_id`` pair in self. If ``sngl_event_array`` has an
-          ifo that is in self, but does not have an ``event_id`` that self has
-          for that ifo, a KeyError is raised. For example, you will get a
-          KeyError if self has ``ifo, event_id`` pair ``'H1', 11`` and
-          ``sngl_event_array`` has ifo ``'H1'``, but not ``'H1', 11``. If
-          ``sngl_event_array`` has more than one entry for a given ``ifo,
-          event_id`` pair, a ValueError is raised.
-        * If some rows in self do not have a particular ifo, a zeroed entry
-          will be added to that row for that ifo's field. For example, if self
-          has ``sngl_events.ifos = [('H1', 'L1'), ('L1', V1')]``, the first
-          row of ``newarray['V1']`` will be zeroed and the last row of 
-          ``newarray['H1']`` will be zeroed.
+        * The `sngl_event_array` must have a `detector` field.
+        * The `sngl_event_array` must have one and only one row in it for a
+          given ``detector, event_id`` pair in self. If `sngl_event_array`
+          has a `detector` that is in self, but does not have an `event_id`
+          for that detector, a KeyError is raised.
+        * If some events in this array were not found in all of the detectors
+          listed in `detectors` --- indicated by ``event_id == ID_NOT_SET``
+          for a detector --- then a zeroed entry will be added to that detector
+          for that row. For example, if ``detectors = ['H1', 'L1', 'V1']``,
+          but row `i` has ``V1.event_id == ID_NOT_SET``, then the added fields
+          for `V1` in that row will be zeroed. Likewise, the attribute
+          `detected_in` will return `'H1,L1'` for that row.
         """
         #
         # Note: since this join has to do deal with possibly missing ifos, it
@@ -2418,112 +2345,127 @@ time_delay_from_center = numpy.vectorize(_time_delay_from_center)
 
 class SimInspiral(Waveform):
     """
-    Subclasses Waveform, adding attributes ``location_params``,
-    ``recovered_params``, and ``distribution_params``, which define fields
-    fields for a source's location, distance, and end time (both geocentric
-    and in each detector) , whether the injection recovered, any recovered
-    statistics, and the distribution used to create the injections.  Also has
-    fields ``process_id`` and ``simulation_id``.  The ``recovered`` field is
-    a subarray with field ``event_id``.  If given a CoincEvent or SnglEvent
-    array, this can be expanded to have all of the recovered parameters and
-    statistics; see expand_recovered for details.
+    Subclasses Waveform, adding default fields for sky-location and detector-
+    specific parameters for injections. Also has default field `simulation_id` 
+    for indexing.
+    
+    Similar to `CoincEvent`, `SimInspiral` takes a `detectors` keyword at
+    initialization. This adds fields named by the provided detectors for
+    storing site-specific information. By default, each detector field has
+    sub-fields `eff_dist`, and `sigma`. Detector end times are not stored;
+    instead, they are calucated on the fly using the `end_time` method. If a
+    detector name is provided to ``end_time()``, the end times at that
+    detector are returned using the geocentric end times (which are stored).
+    See `end_time` for details.
+
+    The `recovered` field is used to store information about any recovered
+    (coinc or single) events that the injections were associated with. By
+    default, this is a sub-array with one field, `'event_id'`, which is the
+    `event_id`(s) of the event(s). If given a `CoincEvent` or `SnglEvent` array
+    with the events, the `recovered` field can be expanded to include all of
+    recovered information; see `expand_recovered` for details. Only injections
+    for which `recovered.event_id != ID_NOT_SET` are exanded; i.e., the
+    recovered `event_id` field has to be set in order for an injection to be
+    considered recovered. The attribute `isrecovered` checks this, returning
+    a boolean array indicating whether each event was recovered or not.
+
+    A single injection may be mapped to multiple recovered events. The maximum
+    number that it may be mapped to is set by the `nrecovered` keyword at
+    initialization. By default this is 1. If greater than 1, each row's
+    recovered field will be a subarray with size == `nrecovered`. If an
+    injection is mapped to fewer events than `nrecovered`, the extra entries
+    will be left empty.
 
     Notes
     -----
     * When a new array is initialized with a ``recovered`` field, all of the
       injections are marked as not recovered (i.e.,
       ``arr['recovered']['isfound'] = False``).
+    * By default `(Coinc|Sngl)Event` arrays do not contain information about
+      the template they were found with, only the `template_id`. To get the
+      parameters of the recovered waveforms, run `expand_templates` on the
+      event array *first*, then run `expand_recovered` on the expanded event
+      array.
 
     Examples
     --------
-    * Create a SimInspiral array from an hdfinjfind file:
-``
->>> hdfinjfind = h5py.File('H1L1-HDFINJFIND_BNS1INJ_INJ_INJ-1117400416-928800.hdf', 'r')
+    Intialize an empty SimInspiral array:
 
->>> hdfinj = hdfinjfind['injections']
->>> sims = SimInspiral(len(hdfinj['end_time']), names=['simulation_id', 'geocent_end_time', 'distance', 'mass1', 'mass2', 'ra', 'dec', 'site_params', 'isrecovered', 'recovered'])
+    >>> sims = SimInspiral(10)
+    >>> sorted(sims.all_fieldnames)
+    ['amp_order', 'approximant', 'argument_periapsis', 'dec',
+     'detector1.eff_dist', 'detector1.sigma', 'detector2.eff_dist',
+     'detector2.sigma', 'distance', 'duration', 'eccentricity', 'f_max',
+     'f_min', 'f_ref', 'frame_axis', 'geocent_end_time_ns',
+     'geocent_end_time_s', 'inclination', 'lambda1', 'lambda2', 'mass1',
+     'mass2', 'min_vol', 'modes_choice', 'phase_order', 'phi_ref',
+     'polarization', 'process_id', 'quadparam1', 'quadparam2', 'ra',
+     'recovered.event_id', 'sample_rate', 'segment_length', 'simulation_id',
+     'spin1x', 'spin1y', 'spin1z', 'spin2x', 'spin2y', 'spin2z', 'spin_order',
+     'taper', 'tidal_order', 'volume_weight']
 
->>> sims['simulation_id'] = numpy.arange(sims.size)
+         
+    Create a SimInspiral array from an hdfinjfind file:
 
->>> sims['geocent_end_time'] = hdfinj['end_time']
+    .. code-block:: python
 
->>> sims['distance'] = hdfinj['distance']
+        hdfinjfind = h5py.File('BNS1INJ_coinc/H1L1-HDFINJFIND_BNS1INJ_INJ_INJ-1117400416-928800.hdf', 'r')
+        hdfinj = hdfinjfind['injections']
+        det1 = hdfinjfind.attrs['detector_1']
+        det2 = hdfinjfind.attrs['detector_2']
+        sims = SimInspiral(len(hdfinj['end_time']), detectors=[det1, det2], names=['simulation_id', 'geocent_end_time_s', 'geocent_end_time_ns', 'distance', 'mass1', 'mass2', 'ra', 'dec', 'recovered'])
+        sims['simulation_id'] = numpy.arange(sims.size)
+        sims['geocent_end_time_s'] = hdfinj['end_time'].value.astype(int)
+        sims['geocent_end_time_ns'] = (hdfinj['end_time'].value % 1 * 1e9).astype(int)
+        sims['distance'] = hdfinj['distance']
+        sims['mass1'] = hdfinj['mass1']
+        sims['mass2'] = hdfinj['mass2']
+        sims['ra'] = hdfinj['longitude']
+        sims['dec'] = hdfinj['latitude']
+        sims['recovered']['event_id'][hdfinjfind['found']['injection_index']] = numpy.arange(len(hdfinjfind['found']['fap']))
+        sims[det1]['eff_dist'] = hdfinj['eff_dist_%s' %(det1[0].lower())]
+        sims[det2]['eff_dist'] = hdfinj['eff_dist_%s' %(det2[0].lower())]
 
->>> sims['mass1'] = hdfinj['mass1']
+    Add recovered information (see `CoincEvent` on how to create `coincs` from
+    an hdf file of found injections, and `TmpltInspiral` on how to create
+    `templates` from a bank hdf file). Note that the property `far` is copied
+    from the `CoincEvent` array to the `SimInspiral` array:
 
->>> sims['mass2'] = hdfinj['mass2']
-
->>> sims['ra'] = hdfinj['longitude']
-
->>> sims['dec'] = hdfinj['latitude']
-
->>> sims['isrecovered'][hdfinjfind['found']['injection_index']] = True
-
->>> sims['recovered']['event_id'][numpy.where(sims['isrecovered'])] = numpy.arange(len(hdfinjfind['found']['fap']))
-
->>> sims['site_params']['ifo'] = hdfinjfind.attrs['detector_2'], hdfinjfind.attrs['detector_1']
-
->>> sims['site_params']['ifo']
-SimInspiral([['H1', 'L1'],
-       ['H1', 'L1'],
-       ['H1', 'L1'],
-       ..., 
-       ['H1', 'L1'],
-       ['H1', 'L1'],
-       ['H1', 'L1']], 
-      dtype='|S2')
-
->>> sims['site_params']['sigma'][:,0] = hdfinj['eff_dist_h']*sims.distance
-
->>> sims['site_params']['sigma'][:,1] = hdfinj['eff_dist_l']*sims.distance
-``
-
-    * Add recovered information (see TmpltInspiral help for how to create
-      ``templates`` from an hdf bank file):
-``
->>> hdffound = hdfinjfind['found']
-
->>> coincs = CoincEvent(len(hdffound['fap']), names=['event_id', 'fap', 'far', 'ranking_stat', 'template', 'sngl_events'])
-
->>> coincs['fap'] = hdffound['fap']
-
->>> coincs['far'] = 1./hdffound['ifar'].value
-
->>> coincs['ranking_stat'] = hdffound['stat']
-
->>> coincs['template']['template_id'] = hdffound['template_id']
-
->>> coincs['event_id'] = numpy.arange(coincs.size)
-
->>> coincs['sngl_events']['ifos'] = [hdfinjfind.attrs['detector_2'], hdfinjfind.attrs['detector_1']]
-
->>> coincs['sngl_events']['event_ids'] = numpy.vstack((hdffound['trigger_id2'], hdffound['trigger_id1'])).T
-
->>> coincs = coincs.expand_templates(templates)
-
->>> sims.recovered.fieldnames
-    ('event_id',)
-
->>> sims['recovered'].fieldnames
-    ('event_id',)
-
->>> sims = sims.expand_recovered(coincs)
-
->>> sims['recovered'].fieldnames
-    ('event_id', 'ranking_stat', 'far', 'fap', 'L1', 'H1', 'template')
-
->>> sims['recovered']['template'].fieldnames
-    ('mass1', 'mass2', 'spin1z', 'spin2z', 'template_hash', 'template_id')
-
->>> recsims = sims[numpy.where(sims.isrecovered)]
-
->>> recsims.geocent_end_time, recsims.recovered.H1.end_time, recsims.recovered.L1.end_time, recsims.mchirp, recsims.recovered.template.mchirp
-(array([ 1.11743314e+09, 1.11743322e+09, ..., 1.11808778e+09, 1.11808794e+09]),
- array([ 1.11743314e+09, 1.11743322e+09, ..., 1.11808778e+09, 1.11808794e+09]),
- array([ 1.11743314e+09, 1.11743322e+09, ..., 1.11808778e+09, 1.11808794e+09]),
- array([ 1.81795762,     1.74482645,     ..., 1.1793251,      1.41826222]),
- array([ 1.81705785,     1.74960184,     ..., 1.17973983,     1.41618061], dtype=float32))
-``
+    >>> coincs = coincs.expand_templates(templates)
+    >>> sorted(coincs.all_fieldnames)
+        ['H1.end_time_ns', 'H1.end_time_s', 'H1.event_id', 'L1.end_time_ns',
+         'L1.end_time_s', 'L1.event_id', 'event_id', 'ifap', 'ifar', 'mass1',
+         'mass2', 'ranking_stat', 'spin1z', 'spin2z', 'template_hash',
+         'template_id']
+    >>> sorted(sims.all_fieldnames)
+        ['H1.eff_dist', 'H1.sigma', 'L1.eff_dist', 'L1.sigma', 'dec',
+         'distance', 'geocent_end_time_ns', 'geocent_end_time_s', 'mass1',
+         'mass2', 'ra', 'recovered.event_id', 'simulation_id']
+    >>> 'far' in dir(coincs)
+        True
+    >>> 'far' in dir(sims)
+        False
+    >>> sims = sims.expand_recovered(coincs)
+    >>> sorted(sims.all_fieldnames)
+        ['H1.eff_dist', 'H1.sigma', 'L1.eff_dist', 'L1.sigma', 'dec',
+         'distance', 'geocent_end_time_ns', 'geocent_end_time_s', 'mass1',
+         'mass2', 'ra', 'recovered.H1.end_time_ns', 'recovered.H1.end_time_s',
+         'recovered.H1.event_id', 'recovered.L1.end_time_ns',
+         'recovered.L1.end_time_s', 'recovered.L1.event_id',
+         'recovered.event_id', 'recovered.ifap', 'recovered.ifar',
+         'recovered.mass1', 'recovered.mass2', 'recovered.ranking_stat',
+         'recovered.spin1z', 'recovered.spin2z', 'recovered.template_hash',
+         'recovered.template_id', 'simulation_id']
+    >>> 'far' in dir(sims)
+        True
+    >>> sims.isrecovered, sims.recovered.far
+    (array([False, False, False, ..., False, False, False], dtype=bool),
+     array([ inf,  inf,  inf, ...,  inf,  inf,  inf]))
+    >>> recsims = sims.get_recovered()
+    >>> recsims.mchirp, recsims.recovered.mchirp, recsims.recovered.far
+    (array([ 1.81795762,  1.74482645,  ...,  1.1793251 ,  1.41826222]),
+     array([ 1.81705785,  1.74960184,  ...,  1.17973995,  1.41618061], dtype=float32),
+     array([ 5.31908815e-05, 7.11640778e+00,  ...,  5.31908815e-05,  5.31908815e-05]))
     """
     default_name = 'sim_inspiral'
     # add detectors as a persistent attribute
@@ -2551,7 +2493,6 @@ SimInspiral([['H1', 'L1'],
             ('declination', 'dec'): float,
             'polarization': float,
             # recovered params
-            'isrecovered': bool,
             'recovered': ({
                 'event_id': int,
                 }.items(), nrecovered),
@@ -2612,6 +2553,13 @@ SimInspiral([['H1', 'L1'],
             return time_delay_from_center(geocent_end_time, detector, self.ra,
                 self.dec)
 
+    @property
+    def isrecovered(self):
+        """Returns boolean array indicating rows for which the recovered
+        `event_id`s are not equal to `ID_NOT_SET`.
+        """
+        return self['recovered']['event_id'] != ID_NOT_SET
+
     def expand_recovered(self, event_array, get_fields=None,
             selfs_map_field='recovered.event_id',
             events_map_field='event_id'):
@@ -2619,31 +2567,31 @@ SimInspiral([['H1', 'L1'],
         Given an array of (coinc) events, replaces the recovered field with a
         sub-array of the recovered data. This is done by getting
         all rows in the ``event_array`` such that:
-        ``self[numpy.where(self['isrecovered'])][selfs_map_field] == event_array[events_map_field]``.
+        ``self[where(self.isrecovered)][selfs_map_field] == event_array[events_map_field]``.
 
         Parameters
         ----------
-        event_array: (any subclass of) LSCArray
+        event_array : {SimEvent | CoincEvent}
             The array of events with additional fields to add.
-        get_fields: {None | (list of) strings}
+        get_fields : {None | (list of) strings}
             The names of the fields to get from the ``event_array``.
             If ``None``, all fields will be retrieved.
-        selfs_map_field: {'recovered.event_id' | string}
+        selfs_map_field : {'recovered.event_id' | string}
             The name of the field in self to use to match to events in
             ``event_array``. Default is ``recovered.event_id``.
-        events_map_field: {'event_id' | string}
+        events_map_field : {'event_id' | string}
             The name of the field in the ``event_array`` to match.
             Default is ``event_id``.
 
         Returns
         -------
-        new array: new instances of this array
+        new array : new instances of this array
             A copy of this array with the ``recovered`` sub-array containing
             all of the fields specified by ``get_fields``.
         
         Notes
         -----
-        * Only elements for which ``self['isrecovered'] == True`` will be
+        * Only elements for which ``self.isrecovered == True`` will be
           expanded. All other elements will have a zeroed row in ``recovered``
           field of the output array.
 
@@ -2657,7 +2605,7 @@ SimInspiral([['H1', 'L1'],
         * The coincs themselves contain subarrays of the single-detector
           triggers. To get access to the single-detector recovered information,
           add the single-detector information to the coinc event array first
-          (``see CoincEvent.add_sngls_data``), then expand the coincs here.
+          (see ``CoincEvent.exapand_sngls``), then expand the coincs here.
 
         * If the injections are mapped to single events rather than coinc
           events, you can map to the single events by passing a SnglEvent array
@@ -2665,7 +2613,7 @@ SimInspiral([['H1', 'L1'],
         """
         return self.join(event_array, selfs_map_field, 'recovered',
             other_map_field=events_map_field, get_fields=get_fields,
-            map_indices=numpy.where(self['isrecovered']))
+            map_indices=numpy.where(self.isrecovered))
 
     @property
     def optimal_snr(self):
@@ -2701,7 +2649,7 @@ SimInspiral([['H1', 'L1'],
         """
         Returns the indices in self that were recovered.
         """
-        return numpy.where(self['isrecovered'])[0]
+        return numpy.where(self.isrecovered)[0]
 
     def get_recovered(self):
         """
