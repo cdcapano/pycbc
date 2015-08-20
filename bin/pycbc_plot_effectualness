@@ -33,7 +33,7 @@ parser.add_option('-o', '--output-dir', default='.', help = 'directory to save p
 parser.add_option('-u', '--user-tag', help = 'set a user tag for output file names')
 parser.add_option('', '--plot-type', default = 'png', help = 'type of plot to create; default is png')
 parser.add_option('', '--dpi', type='int', default=300, help='DPI to use for plot. Default is 300.')
-parser.add_option('', '--cmap', default='Reds', help='Color map to use for points. Options are %s. Default is Reds.' %(', '.join(plot.pyplot.cm._cmapnames)))
+parser.add_option('', '--cmap', default='Reds', help='Color map to use for points. Options are %s. Default is Reds.' %(', '.join(plot.pyplot.colormaps())))
 parser.add_option('', '--bkg-color', default='k', help='Set the background color for the axis. Default is "k" (black).')
 parser.add_option('', '--save-data', action='store_true', default=False, help='Save the plotting data to a pickle file. The file will have the same name as the output plot, but with a .pickle extension.')
 

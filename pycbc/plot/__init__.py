@@ -16,8 +16,3 @@ known_pipelines = {
     'hdfcoinc': hdfcoinc,
     'gstlal': gstlal
 }
-
-from pycbc.plot.plot_effectualness import *
-from pycbc.plot.plot_snrchi import *
-from pycbc.plot.plot_followup import *
-
