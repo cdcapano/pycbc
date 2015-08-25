@@ -61,6 +61,30 @@ def get_log10_ticks(ticks):
     return numpy.log10(new_ticks), ticklabels
 
 
+def add_gtlt_tocb(cb, zvals, zmin, zmax):
+    """Given a colorbar, adds > (<) sign to the largest (smallest) tick if
+    the maximum (minimum) value of the colors is > (<) that tick.
+    """
+    ticklabels = [tck.get_text() for tck in cb.ax.get_yticklabels()]
+    if zvals.min() < zmin:
+        tickstr = ticklabels[0]
+        if tickstr.startswith('$'):
+            tickstr = tickstr[1:]
+            add_dollar = '$'
+        else:
+            add_dollar = ''
+        ticklabels[0] = u'%s< %s' %(add_dollar, tickstr)
+    if zvals.max() > zmax:
+        tickstr = ticklabels[-1]
+        if tickstr.startswith('$'):
+            tickstr = tickstr[1:]
+            add_dollar = '$'
+        else:
+            add_dollar = ''
+        ticklabels[-1] = u'%s> %s' %(add_dollar, tickstr)
+    if zvals.min() < zmin or zvals.max() > zmax:
+        cb.ax.set_yticklabels(ticklabels)
+
 def _plot_tiles(ax, zvals, plus_errs, minus_errs, phyper_cubes,
         xarg, xlabel, yarg, ylabel,
         colormap='hot', vmax=None, vmin=None,
@@ -505,7 +529,7 @@ def plot_twovolume_vs_stat(phyper_cube, test_min_stat, test_max_stat,
     such that the test and reference thresholds line up.
     """
     # we'll use a mappable figure even though this has no clickable elements
-    fig = plot_utils.figure()
+    fig = plot_utils.figure(figsize=(5,4))
     fig.subplots_adjust(bottom=0.15)
     ax = fig.add_subplot(111)
 
@@ -630,8 +654,9 @@ def plot_volume_vs_stat_from_layer(layer, min_stat, max_stat, stat_label,
         # save the figure
         plotname = fnametmplt %(layer.images_dir, user_tag, layer.level, ii) 
         fig.savefig('%s%s/%s' %(layer.root_dir, layer.web_dir, plotname),
-            dpi=dpi)
-        cube.volumes_vs_stat_plot = fig
+            dpi=dpi, figsize=(5,4), bbox_inches='tight')
+        cube.volumes_vs_stat_plot = fig.saved_filename
+        del fig
     if verbose:
         print >> sys.stdout, ""
 
@@ -688,8 +713,9 @@ def plot_twovolume_vs_stat_from_layer(layer, test_min_stat, test_max_stat,
         # save the figure
         plotname = fnametmplt %(layer.images_dir, user_tag, layer.level, ii) 
         fig.savefig('%s%s/%s' %(layer.root_dir, layer.web_dir, plotname),
-            dpi=dpi)
-        cube.volumes_vs_stat_plot = fig
+            dpi=dpi, figsize=(5,4), bbox_inches='tight')
+        cube.volumes_vs_stat_plot = fig.saved_filename
+        del fig
     if verbose:
         print >> sys.stdout, ""
 
@@ -979,7 +1005,7 @@ def plot_gains(phyper_cubes, xarg, xlabel, yarg, ylabel, test_threshold,
     # if there is nothing to plot, just create an empty plot and return
     if len(phyper_cubes) == 0:
         plot_utils.empty_plot(ax)
-        return mfig
+        return mfig, None
 
     # gains is a 2D array; the first column are the gains, the
     # second the error
@@ -1017,16 +1043,21 @@ def plot_gains(phyper_cubes, xarg, xlabel, yarg, ylabel, test_threshold,
     if add_title:
         if ref_livetime is not None:
             Glbl = r'$\mathcal{G}_{VT}$'
+            title = '%s (%s / %s)' %(Glbl, test_label, ref_label)
         else:
-            Glbl = r'$\mathcal{G}$'
-        title = '%s / %s' %(test_label, ref_label)
+            vtmplt = r'\mathcal{V}_{\textrm{%s}}'
+            Glbl = r'$\frac{%s}{%s}$' %(vtmplt %(test_label),
+                vtmplt %(ref_label))
+            title = r'$%s / %s$' %(vtmplt %(test_label), vtmplt %(ref_label))
         if add_colorbar:
-            cb.ax.set_ylabel(Glbl, rotation=0, labelpad=-2)
+            cb.ax.set_ylabel(Glbl, rotation=0, fontsize=18, labelpad=5)
         else:
-            title = '%s (%s)' %(Glbl, title)
-        ax.set_title(title)
+            ax.set_title(title)
 
-    return mfig
+    if cb is not None:
+        add_gtlt_tocb(cb, Gs, mingain, maxgain)
+
+    return mfig, cb
 
 
 def plot_subgains(phyper_cubes, xarg, xlabel, yarg, ylabel,
@@ -1088,25 +1119,29 @@ def plot_subgains(phyper_cubes, xarg, xlabel, yarg, ylabel,
     # the colorbar formatter to be a bounded formatter;
     # we need to do this here because the
     # call to plot_gains won't know about the sub-tiles' gains
-    if mingain > Gs.min() or maxgain < Gs.max():
-        cbformat = plot_utils.create_bounded_colorbar_formatter(
-            mingain, maxgain,
-            formatter=plot_utils.ColorBarLog10Formatter if logz else None)
-    else:
-        cbformat = None
+    #if mingain > Gs.min() or maxgain < Gs.max():
+    #    cbformat = plot_utils.create_bounded_colorbar_formatter(
+    #        mingain, maxgain,
+    #        formatter=plot_utils.ColorBarLog10Formatter if logz else None)
+    #else:
+    #    cbformat = None
 
     # create the master plot with clickable elements
     mfig = plot_gains(phyper_cubes, xarg, xlabel, yarg, ylabel, test_threshold,
         ref_threshold, min_ninj=min_ninj,
         test_livetime=test_livetime, ref_livetime=ref_livetime,
         test_label=test_label, ref_label=ref_label,
-        add_title=True, cbformat=cbformat, colormap=colormap,
+        add_title=True, colormap=colormap,
         maxgain=maxgain, mingain=mingain,
         add_colorbar=True, annotate=False, logx=logx, logy=logy, logz=logz,
         xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, add_clickables=True,
         dpi=dpi)
+    mfig, cb = mfig
       
     master_ax = mfig.axes[0]
+
+    # add limits
+    add_gtlt_tocb(cb, Gs, mingain, maxgain)
     
     # get the x and y limits we need in order to have enough room for the
     # sub-tiles labels, along with the index of the sub tile to label
@@ -1347,7 +1382,7 @@ def plot_gains_from_layer(layer, test_threshold, ref_threshold,
         if verbose:
             print >> sys.stdout, "%i / %i\r" %(ii+1, len(layer.parents)),
             sys.stdout.flush()
-        mfig = plot_gains(
+        mfig, _ = plot_gains(
             parent.children, layer.x_param, layer.x_param.label,
             layer.y_param, layer.y_param.label, test_threshold, ref_threshold,
             test_livetime=test_livetime, ref_livetime=ref_livetime,

@@ -872,8 +872,8 @@ def _create_html_page(phyper_cube, out_dir, html_name, livetime=None,
     # put the V vs stat plot
     if phyper_cube.volumes_vs_stat_plot is not None:
         print >> f, "<hr />"
-        mfig = phyper_cube.volumes_vs_stat_plot
-        figname = os.path.relpath(os.path.abspath(mfig.saved_filename),
+        figname = os.path.relpath(os.path.abspath(
+                    phyper_cube.volumes_vs_stat_plot),
                 os.path.dirname(os.path.abspath(html_page)))
         print >> f, '<img src="%s" width="%i" />' %(figname,
             mainplots_widths)
@@ -1028,8 +1028,8 @@ def _create_gain_html_page(phyper_cube, out_dir, html_name,
     print >> f, "<hr />"
     # put the V vs stat plot
     if phyper_cube.volumes_vs_stat_plot is not None:
-        mfig = phyper_cube.volumes_vs_stat_plot
-        figname = os.path.relpath(os.path.abspath(mfig.saved_filename),
+        figname = os.path.relpath(os.path.abspath(
+                    phyper_cube.volumes_vs_stat_plot),
                 os.path.dirname(os.path.abspath(html_page)))
         print >> f, '<img src="%s" width="%i" />' %(figname,
             mainplots_widths)
