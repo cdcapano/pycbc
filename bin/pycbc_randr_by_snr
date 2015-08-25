@@ -7,7 +7,6 @@ __description__ = 'Resets the distance distribution in a sim_inspiral table base
 import sqlite3
 import numpy
 import os, sys
-import random
 import time
 from scipy import stats, special
 from optparse import OptionParser
@@ -203,7 +202,7 @@ if opts.no_sigmas and distribution == "gamma" and \
 if opts.fiducial_distance is not None:
     dist0 = opts.fiducial_distance
 
-random.seed(opts.seed)
+numpy.random.seed(opts.seed)
 
 # initialize the workspace
 workSpace = overlap_utils.WorkSpace()
@@ -243,6 +242,7 @@ for fnum, infile in enumerate(filenames):
     injections = waveform_utils.InjectionDict()
     injections.get_injections(connection, calc_f_final=True,
         estimate_dur=True, verbose=opts.verbose)
+    injections.set_sort_key(['simulation_id'])
 
     for ii, inj in enumerate(injections.as_list):
         if opts.verbose:
