@@ -446,6 +446,8 @@ setup (
                'pycbc.workflow',
                'pycbc.results',
                'pycbc.io',
+               'pycbc.io.ligolw',
+               'pycbc.io.hdfcoinc',
                ],
      package_data = {'pycbc.workflow': find_package_data('pycbc/workflow'), 
 	             'pycbc.results': find_package_data('pycbc/results'),
