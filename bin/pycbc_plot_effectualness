@@ -82,6 +82,7 @@ for thiscut in opts.apply_cut:
 if apply_cut:
     print "applying cuts"
     results = plot.slice_results(results, apply_cut)
+print "Number of injections: %i" %(len(results))
 if opts.plot_templates:
     print "getting templates"
     ii = 0

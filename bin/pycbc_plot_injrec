@@ -3,13 +3,14 @@
 import os
 import sys
 import sqlite3
-import random
 
 from pycbc.overlaps import overlap_utils
 import numpy
 from optparse import OptionParser
+
 from pycbc import plot
-from pycbc.plot import plot_utils
+from pycbc.plot import data_utils
+from pycbc.plot import overlaps
 
 parser = OptionParser()
 parser.add_option('-c', '--cache-file', help = 'cache file containing results databases')
@@ -92,16 +93,16 @@ for thiscut in opts.apply_cut:
     apply_cut[arg] = map(float, vals.split(','))
 
 print "getting results"
-filenames = plot_utils.parse_results_cache(opts.cache_file)
-results, _ = plot_utils.get_injection_results(filenames,
+filenames = plot.parse_results_cache(opts.cache_file)
+results, _ = plot.overlaps.get_injection_results(filenames,
     weight_function=opts.weight_function, verbose=True)
 if apply_cut:
     print "applying cuts"
-    results = plot_utils.slice_results(results, apply_cut)
+    results = plot.slice_results(results, apply_cut)
 
-inj_params = numpy.array([plot_utils.get_arg(res, param_name) \
+inj_params = numpy.array([data_utils.get_arg(res, param_name) \
     for res in results])
-rec_params = numpy.array([plot_utils.get_arg(res, 'tmplt_'+param_name) \
+rec_params = numpy.array([data_utils.get_arg(res, 'template.'+param_name) \
     for res in results])
 
 if opts.plot_effectualness:
@@ -119,7 +120,7 @@ else:
     missed_indices = None
 
 print "plotting"
-fig = plot.plot_recovered_injected(inj_params, rec_params, param_label,
+fig = overlaps.plot_followup.plot_recovered_injected(inj_params, rec_params, param_label,
     param_windows=pw_list, pwin_missed_indices=missed_indices,
     xmin=opts.x_min, xmax=opts.x_max, ymin=opts.y_min, ymax=opts.y_max,
     plot_zoom=opts.plot_zoom, zoom_xlims=opts.zoom_xlims,
