@@ -426,7 +426,7 @@ setup (
                'bin/pycbc_submit_dax',
                'bin/pycbc_submit_dax_stampede',
                'bin/hdfcoinc/pycbc_page_coinc_snrchi',
-               'bin/hdfcoinc/pycbc_distribute_background_bins',
+               'bin/hdfcoinc/pycbc_split_coincs',
                'bin/hdfcoinc/pycbc_combine_statmap',
                'bin/hdfcoinc/pycbc_stat_dtphase',
                'bin/hdfcoinc/pycbc_plot_singles_vs_params',
