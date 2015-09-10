@@ -1943,6 +1943,12 @@ class Waveform(_LSCArrayWithDefaults):
     def spin2mag(self):
         return numpy.sqrt((self.spin2**2).sum(axis=1))
 
+    @property
+    def effective_spin(self):
+        # FIXME: assuming aligned spins
+        return (self.spin1z * self.mass1 + self.spin2z * self.mass2) / \
+            self.mtotal
+
     # the method fields
     def tau0(self, f0=None):
         """
