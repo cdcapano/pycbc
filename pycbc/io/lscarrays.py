@@ -34,6 +34,8 @@ import inspect
 import numpy
 import numpy.lib.recfunctions as recfunctions
 
+from pycbc import pnutils
+
 import lal
 import lalsimulation as lalsim
 from glue.ligolw import types as ligolw_types
@@ -453,10 +455,10 @@ def copy_attributes(this_array, other_array):
             setattr(new_array, attrname, attr)
     # now add each thing accordingly
     if properties != {}:
-        new_array = new_array.add_properties(properties.keys(),
-            properties.values())
+        new_array = new_array.add_methods(properties.keys(),
+            properties.values(), as_properties=True)
     if methods != {}:
-        new_array.add_methods(methods.keys(), methods.values())
+        new_array = new_array.add_methods(methods.keys(), methods.values())
     return new_array
 
 def join_arrays(this_array, other_array, map_field, expand_field_name=None,
@@ -640,6 +642,96 @@ def get_fields_from_arg(arg):
     ``arg = '3*narf/foo.bar'``, this will return ``set(['narf', 'foo.bar'])``.
     """
     return set(_fieldparser.findall(arg))
+
+# this parser looks for fields inside a class method function. This is done by
+# looking for variables that start with self.{x} or self["{x}"]; e.g.,
+# self.a.b*3 + self.c, self['a.b']*3 + self.c, self.a.b*3 + self["c"], all
+# return set('a.b', 'c').
+_instfieldparser = re.compile(
+    r'''self(?:\.|(?:\[['"]))(?P<identifier>[\w_][.\w\d_]*)''')
+def get_instance_fields_from_arg(arg):
+    """Given a python string definining a method function on an instance of an
+    LSCArray, returns the field names used in it. This differs from
+    get_fields_from_arg in that it looks for variables that start with 'self'.
+    """
+    return set(_instfieldparser.findall(arg))
+
+def get_needed_fieldnames(arr, names):
+    """Given an LSCArray-like array and a list of names, determines what fields
+    are needed from the array so that using the names does not result in an
+    error.
+
+    Parameters
+    ----------
+    arr : instance of an LSCArray or similar
+        The array from which to determine what fields to get.
+    names : (list of) strings
+        A list of the names that are desired. The names may be either a field,
+        an attribute, a property, or a method of cls. If a property or a
+        method, that property/method will be analyzed to pull out what fields
+        are used in it.
+
+    Returns
+    -------
+    set
+        The set of the fields needed to evaluate the names. This may still
+        result in an error if one or more of the given names was not found in
+        A dictionary keyed by the names, with the values the (list of) fields
+        needed. If no field is found in ``arr`` for a name, the value will be
+        None for that name.
+    """
+    fieldnames = set([])
+    # we'll need the class that the array is an instance of to evaluate some 
+    # things
+    cls = arr.__class__
+    if isinstance(names, str) or isinstance(names, unicode):
+        names = [names]
+    for name in names:
+        if name in arr.fieldnames or name in arr.all_fieldnames:
+            # is a field, just set the dict value to the key
+            fieldnames.update([name])
+        elif name in arr.aliases:
+            fieldnames.update([arr.aliases[name]])
+        elif name in arr.virtual_fields or name in arr.method_fields:
+            # need to evaluate the source code to figure out what fields we
+            # need
+            if name in arr.virtual_fields:
+                # is a property, get the source code from fget
+                sourcecode = inspect.getsource(getattr(cls, name).fget)
+            else:
+                sourcecode = inspect.getsource(getattr(arr, name))
+            # evaluate the source code for the fields
+            possible_fields = get_instance_fields_from_arg(sourcecode)
+            # some of the variables returned by possible fields may themselves
+            # be methods/properties that depend on other fields. For instance,
+            # mchirp relies on eta and mtotal, which each use mass1 and mass2;
+            # we therefore need to anayze each of the possible fields
+            fieldnames.update(get_needed_fieldnames(arr, possible_fields))
+        # Note that if name is not in dir(arr), the name is just skipped
+    return fieldnames
+
+
+def parse_function_args(func):
+    """Given a function, parses the function's arguments, returning a string.
+    """
+    args = inspect.getargspec(func)
+    # kwargs are the last N arguments in args.args, where N=len(args.defaults)
+    if args.defaults is not None:
+        N = len(args.defaults)
+        kwargs = args.args[-N:]
+        kwargs = ', '.join(['%s=%s' %(arg, val) \
+            for arg,val in zip(kwargs,args.defaults)])
+    else:
+        N = 0
+        kwargs = ''
+    reqargs = args.args[:len(args.args)-N]
+    # remove 'self' if it is present
+    if 'self' in reqargs:
+        reqargs.pop(reqargs.index('self'))
+    reqargs = ', '.join(reqargs)
+    if reqargs != '' and kwargs != '':
+        reqargs += ', '
+    return reqargs + kwargs
 
 #
 # =============================================================================
@@ -942,7 +1034,8 @@ class LSCArray(numpy.recarray):
     ``lscarrays.set_lstring_as_obj`` (see the docstring for that function for
     more details).
     """
-    __persistent_attributes__ = ['name', 'source_files', 'id_maps']
+    __persistent_attributes__ = ['name', 'source_files', 'id_maps',
+        'virtual_fields', 'method_fields']
 
     def __new__(cls, shape, name=None, zero=True, **kwargs):
         """Initializes a new empty array.
@@ -952,6 +1045,8 @@ class LSCArray(numpy.recarray):
         obj.name = name
         obj.source_files = None
         obj.id_maps = None
+        obj.virtual_fields = None
+        obj.method_fields = None
         obj.__persistent_attributes__ = cls.__persistent_attributes__
         # zero out the array if desired
         if zero:
@@ -1056,20 +1151,25 @@ class LSCArray(numpy.recarray):
         if persistent and attrname not in self.__persistent_attributes__:
             self.__persistent_attributes__.append(attrname)
 
-    def add_methods(self, names, methods):
-        """Adds the given method(s) as instance method(s) of self. The
-        method(s) must take `self` as a first argument.
-        """
-        if isinstance(names, str) or isinstance(names, unicode):
-            names = [names]
-            methods = [methods]
-        for name,method in zip(names, methods):
-            setattr(self, name, types.MethodType(method, self))
-        
-    def add_properties(self, names, methods):
-        """Returns a view of self with the given methods added as properties.
-
+    def add_methods(self, names, methods, as_properties=False):
+        """Returns a view of self with the given methods added as attributes.
         From: <http://stackoverflow.com/a/2954373/1366472>.
+
+        Parameters
+        ----------
+        names : (list of) strings
+            What to name the methods.
+        methods : (list of) functions
+            The methods to add.
+        as_properties : bool
+            If True, will add the method as a property (i.e., the method is
+            wrapped by property()). Default is False, in which case the method
+            is added a method function.
+
+        Returns
+        -------
+        updated self
+            A view of this array in which the methods have been added.
         """
         cls = type(self)
         if not hasattr(cls, '__perinstance'):
@@ -1079,8 +1179,26 @@ class LSCArray(numpy.recarray):
             names = [names]
             methods = [methods]
         for name,method in zip(names, methods):
-            setattr(cls, name, property(method))
-        return self.view(type=cls)
+            if as_properties:
+                method = property(method)
+            else:
+                method = method.im_func
+            setattr(cls, name, method)
+        outarr = self.view(type=cls)
+        # update the virtual/method fields
+        if as_properties:
+            if outarr.virtual_fields is None:
+                outarr.virtual_fields = names
+            else:
+                outarr.virtual_fields.extend(names)
+        else:
+            newmethods = {name: parse_function_args(method)
+                for name,method in zip(names, methods)}
+            if outarr.method_fields is None:
+                outarr.method_fields = newmethods
+            else:
+                outarr.method_fields.update(newmethods)
+        return outarr
 
     @classmethod
     def from_arrays(cls, arrays, name=None, **kwargs):
@@ -1631,6 +1749,8 @@ class _LSCArrayWithDefaults(LSCArray):
     classes, so they can add their own defaults.
     """
     default_name = None
+    defaul_virtual_fields = []
+    default_method_fields = {}
 
     @classmethod
     def default_fields(cls, **kwargs):
@@ -1656,8 +1776,14 @@ class _LSCArrayWithDefaults(LSCArray):
             kwargs['dtype'] = fields_from_names(fields, names).items()
         if 'dtype' not in kwargs:
             kwargs['dtype'] = fields.items()
-        return super(_LSCArrayWithDefaults, cls).__new__(cls, shape,
-            name=None, **kwargs)
+        if name is None:
+            name = cls.default_name
+        arr = super(_LSCArrayWithDefaults, cls).__new__(cls, shape,
+            name=name, **kwargs)
+        # set the virtual/method fields
+        arr.virtual_fields = cls.default_virtual_fields
+        arr.method_fields = cls.default_method_fields
+        return arr
 
     def add_default_fields(self, names, **kwargs):
         """
@@ -1748,7 +1874,7 @@ class Waveform(_LSCArrayWithDefaults):
     def default_fields(cls):
         return cls._static_fields 
 
-    # some other derived parameters
+    # the virtual fields
     @property
     def mtotal(self):
         return self.mass1 + self.mass2
@@ -1769,6 +1895,55 @@ class Waveform(_LSCArrayWithDefaults):
     def mchirp(self):
         return self.eta**(3./5)*self.mtotal
 
+    @property
+    def beta(self):
+        """Returns beta from pnutils evaluated on this array.
+        """
+        beta, sigma, gamma, chiS = pnutils.get_beta_sigma_from_aligned_spins(
+            self.eta, self.spin1z, self.spin2z)
+        return beta
+        
+    @property
+    def pnsigma(self):
+        """Returns sigma from pnutils evaluated on this array.
+        """
+        beta, sigma, gamma, chiS = pnutils.get_beta_sigma_from_aligned_spins(
+            self.eta, self.spin1z, self.spin2z)
+        return sigma
+
+    @property
+    def pngamma(self):
+        """Returns sigma from pnutils evaluated on this array.
+        """
+        beta, sigma, gamma, chiS = pnutils.get_beta_sigma_from_aligned_spins(
+            self.eta, self.spin1z, self.spin2z)
+        return gamma
+
+    @property
+    def chiS(self):
+        """Returns sigma from pnutils evaluated on this array.
+        """
+        beta, sigma, gamma, chiS = pnutils.get_beta_sigma_from_aligned_spins(
+            self.eta, self.spin1z, self.spin2z)
+        return chiS
+
+    @property
+    def spin1(self):
+        return numpy.array([self.spin1x, self.spin1y, self.spin1z]).T
+
+    @property
+    def spin2(self):
+        return numpy.array([self.spin2x, self.spin2y, self.spin2z]).T
+
+    @property
+    def spin1mag(self):
+        return numpy.sqrt((self.spin1**2).sum(axis=1))
+
+    @property
+    def spin2mag(self):
+        return numpy.sqrt((self.spin2**2).sum(axis=1))
+
+    # the method fields
     def tau0(self, f0=None):
         """
         Returns tau0. If f0 is not specified, uses self.f_min.
@@ -1787,21 +1962,23 @@ class Waveform(_LSCArrayWithDefaults):
             f0 = self.f_min
         return (2*numpy.pi* f0 * self.mtotal_s)**(1./3)
 
-    @property
-    def s1(self):
-        return numpy.array([self.spin1x, self.spin1y, self.spin1z]).T
+    def get_freq(self, freqfunc):
+        """Returns pnutils.get_freq with the given frequency function evaluated
+        on this array.
+        """
+        return pnutils.get_freq(freqfunc, self.mass1, self.mass2, self.spin1z,
+            self.spin2z)
 
-    @property
-    def s2(self):
-        return numpy.array([self.spin2x, self.spin2y, self.spin2z]).T
+    default_virtual_fields = ['mtotal', 'mtotal_s', 'q', 'eta', 'mchirp',
+        's1', 's2', 's1mag', 's2mag', 'beta', 'pnsigma', 'pngamma', 'chiS']
 
-    @property
-    def s1mag(self):
-        return numpy.sqrt((self.s1**2).sum(axis=1))
+    default_method_fields = {
+        'tau0': parse_function_args(tau0),
+        'v0': parse_function_args(v0),
+        'get_freq': parse_function_args(get_freq),
+        }
+    
 
-    @property
-    def s2mag(self):
-        return numpy.sqrt((self.s2**2).sum(axis=1))
 
 
 class TmpltInspiral(Waveform):
@@ -1878,7 +2055,7 @@ class SnglEvent(_LSCArrayWithDefaults):
     Has default fields for storing information about an event found in a single
     detector. One of these fields is `ranking_stat`. This can be aliased to
     any other string at initialization by setting the keyword argument
-    `ranking_stat_alias`; the default is `new_snr`.
+    `ranking_stat_alias`; the default is `newsnr`.
 
     By default, the array is initialized with a `template_id` field. If given
     a `TmpltInspiral` array (which has a `template_id` field), the waveform
@@ -1899,7 +2076,7 @@ class SnglEvent(_LSCArrayWithDefaults):
      'bank_chisq', 'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr',
      'bank_chisq_dof', 'end_time_ns', 'sigma', 'template_id']
     >>> sngls.aliases
-        {'ifo': 'detector', 'new_snr': 'ranking_stat'}
+        {'ifo': 'detector', 'newsnr': 'ranking_stat'}
 
     Create a SngEvent array from an hdfcoinc merged file:
 
@@ -1925,8 +2102,8 @@ class SnglEvent(_LSCArrayWithDefaults):
     array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
             7.24139452,  7.55083953])
     >>> hsngls.ranking_stat_alias
-        'new_snr'
-    >>> hsngls.new_snr
+        'newsnr'
+    >>> hsngls.newsnr
     array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
             7.24139452,  7.55083953])
 
@@ -1972,7 +2149,7 @@ class SnglEvent(_LSCArrayWithDefaults):
              1.87226772,  2.88923597], dtype=float32))
     """
     default_name = 'sngl_event'
-    ranking_stat_alias = 'new_snr'
+    ranking_stat_alias = 'newsnr'
 
     # we define the following as static parameters because they are inherited
     # by CoincEvent
@@ -1987,9 +2164,9 @@ class SnglEvent(_LSCArrayWithDefaults):
         }
 
     @classmethod
-    def default_fields(cls, ranking_stat_alias='new_snr'):
+    def default_fields(cls, ranking_stat_alias='newsnr'):
         """
-        The ranking stat alias can be set; default is ``'new_snr'``.
+        The ranking stat alias can be set; default is ``'newsnr'``.
         """
         fields = {
             ('ifo', 'detector'): 'S2',
@@ -2002,10 +2179,12 @@ class SnglEvent(_LSCArrayWithDefaults):
             'bank_chisq_dof': float,
             'cont_chisq': float,
             'cont_chisq_dof': float,
+            'coa_phase': float,
+            'template_duration': float,
             }
         return dict(cls._static_fields.items() + fields.items())
 
-    def __new__(cls, shape, name=None, ranking_stat_alias='new_snr', **kwargs):
+    def __new__(cls, shape, name=None, ranking_stat_alias='newsnr', **kwargs):
         """
         Adds ranking_stat_alias to initialization.
         """
@@ -2013,9 +2192,12 @@ class SnglEvent(_LSCArrayWithDefaults):
         return super(SnglEvent, cls).__new__(cls, shape, name=name,
             field_args=field_args, **kwargs)
 
+    # the virtual fields
     @property
     def end_time(self):
         return self.end_time_s + 1e-9*self.end_time_ns
+
+    default_virtual_fields = ['end_time']
 
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
             selfs_map_field='template_id', tmplts_map_field='template_id'):
@@ -2056,7 +2238,7 @@ class CoincEvent(SnglEvent):
     """
     Has default fields for storing information about an event found in multiple
     detectors. Like `SnglEvent`, one of these fields is `ranking_stat`, which
-    can be aliased to another string at initialization (default is `new_snr`). 
+    can be aliased to another string at initialization (default is `newsnr`). 
     Also stores end times in a `_s` and `_ns` fields, but these are added
     together using the `end_time` property. This also has a `template_id`
     column, and it inherits the `expand_templates` method for adding paramteer
@@ -2165,7 +2347,7 @@ class CoincEvent(SnglEvent):
         SnglEvent.__persistent_attributes__
 
     @classmethod
-    def default_fields(cls, ranking_stat_alias='new_snr',
+    def default_fields(cls, ranking_stat_alias='newsnr',
             detectors=['detector1', 'detector2']):
         """
         Both the ranking stat alias and the maximum number of single-detector
@@ -2192,7 +2374,7 @@ class CoincEvent(SnglEvent):
             sngls.items())
 
     def __new__(cls, shape, name=None, detectors=['detector1', 'detector2'],
-            ranking_stat_alias='new_snr', **kwargs):
+            ranking_stat_alias='newsnr', **kwargs):
         """
         Adds nsngls and ranking_stat_alias to initialization.
         """
@@ -2215,6 +2397,7 @@ class CoincEvent(SnglEvent):
         obj.addattr('detectors', tuple(sorted(detectors)))
         return obj
 
+    # add to the SnglEvent's default virtual fields 
     @property
     def far(self):
         return 1./self.ifar
@@ -2261,6 +2444,10 @@ class CoincEvent(SnglEvent):
         return numpy.array([','.join(detectors[numpy.where(mask[ii,:])]) \
             for ii in range(self.size)])
 
+    default_virtual_fields = SnglEvent.default_virtual_fields + \
+        ['far', 'far_exc', 'fap', 'fap_exc', 'detected_in']
+
+    # other methods
     def expand_sngls(self, sngl_event_array, get_fields=None,
             sngls_map_field='event_id'):
         """
@@ -2548,10 +2735,48 @@ class SimInspiral(Waveform):
         obj.addattr('detectors', tuple(sorted(detectors)))
         return obj
 
+    # add to Waveform's virtual fields
     @property
     def geocent_end_time(self):
         return self.geocent_end_time_s + 1e-9*self.geocent_end_time_ns
 
+    @property
+    def isrecovered(self):
+        """Returns boolean array indicating rows for which the recovered
+        `event_id`s are not equal to `ID_NOT_SET`.
+        """
+        return self['recovered']['event_id'] != ID_NOT_SET
+
+    @property
+    def optimal_snr(self):
+        """
+        Gives the maximum SNR that the injections can have.
+        """
+        return numpy.sqrt(numpy.array([self[det]['sigma']**2
+            for det in self.detectors]).sum())/self['distance']
+
+    @property
+    def detected_in(self):
+        """
+        Returns the names of the detectors that the injections was detected in.
+        This is done by returning all of the detectors in self's detectors for
+        which ``self['recovered'][detector].event_id != lscarrays.ID_NOT_SET``.
+
+        Note: ``expand_recovered`` must have been run first on the list of
+        events.
+        """
+        detectors = numpy.array([det for det in self.detectors \
+            if det in self['recovered'].fieldnames])
+        if detectors.size == 0:
+            raise ValueError("No detectors found in this array's recovered " +
+                "field. Did you run expand_recovered?")
+        mask = numpy.vstack([
+            self['recovered'][det]['event_id'] != ID_NOT_SET \
+            for det in detectors]).T
+        return numpy.array([','.join(detectors[numpy.where(mask[ii,:])]) \
+            for ii in range(self.size)])
+
+    # additional methods
     def end_time(self, detector=None):
         """
         Returns the end time in the given detector. If detector is None,
@@ -2565,13 +2790,15 @@ class SimInspiral(Waveform):
             return time_delay_from_center(geocent_end_time, detector, self.ra,
                 self.dec)
 
-    @property
-    def isrecovered(self):
-        """Returns boolean array indicating rows for which the recovered
-        `event_id`s are not equal to `ID_NOT_SET`.
-        """
-        return self['recovered']['event_id'] != ID_NOT_SET
+    default_virtual_fields = Waveform.default_virtual_fields + \
+        ['geocent_end_time', 'isrecovered', 'optimal_snr', 'detected_in'] 
 
+    default_method_fields = Waveform.default_method_fields
+    default_method_fields.update({
+        'end_time': parse_function_args(end_time)
+        })
+
+    # other methods
     def expand_recovered(self, event_array, get_fields=None,
             selfs_map_field='recovered.event_id',
             events_map_field='event_id'):
@@ -2626,35 +2853,6 @@ class SimInspiral(Waveform):
         return self.join(event_array, selfs_map_field, 'recovered',
             other_map_field=events_map_field, get_fields=get_fields,
             map_indices=numpy.where(self.isrecovered))
-
-    @property
-    def optimal_snr(self):
-        """
-        Gives the maximum SNR that the injections can have.
-        """
-        return numpy.sqrt(numpy.array([self[det]['sigma']**2
-            for det in self.detectors]).sum())/self['distance']
-
-    @property
-    def detected_in(self):
-        """
-        Returns the names of the detectors that the injections was detected in.
-        This is done by returning all of the detectors in self's detectors for
-        which ``self['recovered'][detector].event_id != lscarrays.ID_NOT_SET``.
-
-        Note: ``expand_recovered`` must have been run first on the list of
-        events.
-        """
-        detectors = numpy.array([det for det in self.detectors \
-            if det in self['recovered'].fieldnames])
-        if detectors.size == 0:
-            raise ValueError("No detectors found in this array's recovered " +
-                "field. Did you run expand_recovered?")
-        mask = numpy.vstack([
-            self['recovered'][det]['event_id'] != ID_NOT_SET \
-            for det in detectors]).T
-        return numpy.array([','.join(detectors[numpy.where(mask[ii,:])]) \
-            for ii in range(self.size)])
 
     @property
     def recovered_idx(self):
