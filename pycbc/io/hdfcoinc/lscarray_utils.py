@@ -31,6 +31,7 @@ import os, sys
 import h5py
 import re
 import numpy
+import logging
 from pycbc import events
 from pycbc.io import lscarrays
 
@@ -41,6 +42,45 @@ from pycbc.io import lscarrays
 #
 # =============================================================================
 #
+def load_hdf(hdffile):
+    """If a file path is provied, opens the file for reading.
+
+    Parameters
+    ----------
+    hdffile : string | unicode | other
+        If a string or unicode, assumed to be a file path to an hdf file. In
+        that case, the file is opened for reading. If anything else, just
+        passes.
+    
+    Returns
+    -------
+    hdffile : open h5py.File | other
+        If the input was a string or unicode, an open hdf file. Otherwise, just
+        returns whatever the input was.
+    ispath : bool
+        Whether or not the input was a string or unicode.
+    """
+    ispath = isinstance(hdffile, str) or isinstance(hdffile, unicode)
+    if ispath:
+        hdffile = h5py.File(hdffile, 'r')
+    return hdffile, ispath
+
+def get_fields_to_load(arr, names):
+    """Given an LSCArray or similar and a list of names, determines what fields
+    need to be loaded. Names may be a list of fields, virtual fields, or method
+    fields. If virtual fields or method fields, will determine what fields are
+    needed for them.
+    """
+    logging.info('determining what fields are needed')
+    needed_fields = set()
+    for name in names:
+        if name in arr.all_fieldnames:
+            needed_fields.update([name])
+        else:
+            needed_fields.update(lscarrays.get_needed_fieldnames(arr,
+                    lscarrays.get_fields_from_arg(name)))
+    logging.info('loading fields %s' %(', '.join(names)))
+    return list(needed_fields)
 
 def _identity(data):
     """Just passes the given data.
@@ -121,7 +161,8 @@ def hdf_as_empty_dict(hdffile):
     """
     data = DictWithAttrs()
     for key in hdffile.keys():
-        if isinstance(hdffile[key], h5py.Group):
+        if isinstance(hdffile[key], h5py.Group) or \
+                isinstance(hdffile[key], dict):
             data[key] = hdf_as_empty_dict(hdffile[key])
         else:
             arr = numpy.zeros(1, dtype=hdffile[key].dtype)
@@ -158,11 +199,15 @@ def tmplt_inspiral_from_bankhdf(bankhdf, names=None):
 
     Parameters
     ---------
-    bankhdf : h5py.File or similar
-        An open hdf file containing the bank to load, or a dictionary of
-        similar structure.
+    bankhdf : file path, open h5py.File or similar
+        A file path to a BANKHDF file, an open BANKHDF file, or a dictionary of
+        similar structure, containing the template bank that was used to
+        generate the events. If a file path, the file will be opened and
+        closed.
     names : {None | (list of) strings}
-        Only get the fields with the specified names.
+        Only get fields with the specified names. May be fields, virtual fields,
+        or method fields. If any virtual fields or method fields are listed,
+        the fields needed for them will be loaded.
 
     Returns
     -------
@@ -170,14 +215,20 @@ def tmplt_inspiral_from_bankhdf(bankhdf, names=None):
         An instance of an lscarrays.TmpltInspiral array, with the desired data
         loaded from the bankhdf file.
     """
+    bankhdf, bankispath = load_hdf(bankhdf)
     if names is None:
         names = bankhdf.keys()
-    elif isinstance(names, str) or isinstance(names, unicode):
-        names = [names]
+    else:
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+        # determine what fields to load; we'll need a dummy blank array to parse
+        dummy_arr = dummy_tmplt_inspiral_from_bankhdf(bankhdf)
+        names = get_fields_to_load(dummy_arr, names)
     # ensure template_id is included
     if 'template_id' not in names:
         names.append('template_id')
     arrays = []
+    logging.info('loading templates')
     for name in names:
         # if the bank file has no template_id, add it by hand
         if name == 'template_id' and name not in bankhdf.keys():
@@ -187,6 +238,8 @@ def tmplt_inspiral_from_bankhdf(bankhdf, names=None):
     templates = lscarrays.TmpltInspiral.from_arrays(arrays, names=names)
     # add the source filename
     templates.add_source_file(bankhdf.filename, 'template_id')
+    if bankispath:
+        bankhdf.close()
     return templates
 
 
@@ -200,8 +253,9 @@ def dummy_tmplt_inspiral_from_bankhdf(bankhdf):
 
     Parameters
     ---------
-    bankhdf : h5py.File
-        An open BANKHDF file.
+    bankhdf : file path | h5py.File
+        A file path to a BANKHDF file or an open BANKHDF file. If a file path,
+        the file will be opened and closed.
 
     Returns
     -------
@@ -209,8 +263,19 @@ def dummy_tmplt_inspiral_from_bankhdf(bankhdf):
         An instance of an lscarrays.TmpltInspiral array, with all of the
         possible fields that can be loaded.
     """
-    bankhdf = construct_inmemory_hdfstruct(bankhdf)
-    return tmplt_inspiral_from_bankhdf(bankhdf)
+    logging.info('creating dummy tmplt_inspiral array')
+    # temporarily silence logging
+    logger = logging.getLogger()
+    loglevel = logger.level
+    logger.level = logging.WARN
+    bankhdf, bankispath = load_hdf(bankhdf)
+    _bankhdf = construct_inmemory_hdfstruct(bankhdf)
+    if bankispath:
+        bankhdf.close()
+    dummy_arr = tmplt_inspiral_from_bankhdf(_bankhdf)
+    # restore logging
+    logger.level = loglevel
+    return dummy_arr
 
 
 #
@@ -274,14 +339,17 @@ def triggermerge_data_by_sev_name(name, mergedata):
 
 
 def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
-        ranking_stat='newsnr', bankhdf=None, names=None):
+        ranking_stat='newsnr', bankhdf=None, veto_file=None, segment_name=None,
+        names=None):
     """
     Given a TRIGGER_MERGE file, converts into a SnglEvent array.
 
     Parameters
     ----------
-    triggermergehdf : h5py.File or similar
-        An open TRIGGER_MERGE file, or a dictionary of similar structure.
+    triggermergehdf : file path, open h5py.File or similar
+        Either the file path to a TRIGGER_MERGE file, an open TRIGGER_MERGE
+        file, or a dictionary of similar structure. If a file path, the file
+        will be opened and closed. If an open file, the file will not be closed.
     detectors : {None | (list of) strings}
         The names of the detectors to load. If None, all of the detectors found
         in the TRIGGER_MERGE file will be loaded.
@@ -289,19 +357,29 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         The ranking stat to compute for the ranking-stat column. Only used if
         names is None or 'ranking_stat' is in the list of names. See
         ```known_ranking_stats``` for possible options; default is 'newsnr'.
-    bankhdf : {None | h5py.File or similar}
-        An open hdf file, or a dictionary of similar structure, containing the 
-        template bank that was used to generate the events. If provided, the
-        template information stored in the file will be added to the SnglEvent
-        array (via the ```expand_templates``` method). 
+    bankhdf : {None | file path, open h5py.File or similar}
+        A file path to a BANKHDF file, an open BANKHDF file, or a dictionary of
+        similar structure, containing the template bank that was used to
+        generate the events. If a file path, the file will be opened and
+        closed. If provided, the template information stored in the file will
+        be added to the SnglEvent array (via the ```expand_templates```
+        method). 
     names : {None | (list of) strings}
-        Only get fields with the specified names.
+        Only get fields with the specified names. May be fields, virtual fields,
+        or method fields. If any virtual fields or method fields are listed,
+        the fields needed for them will be loaded.
 
     Returns
     -------
     lscarrays.SnglEvent
         A SnglEvent array with the trigger merge data.
     """
+    triggermergehdf, ispath = load_hdf(triggermergehdf)
+    if bankhdf is not None:
+        bankhdf, bankispath = load_hdf(bankhdf)
+    # load vetoes
+    if veto_file is not None and segment_name is None:
+        raise ValueError('veto_file requires segment_name')
     # parse the detectors
     if isinstance(detectors, str) or isinstance(detectors, unicode):
         detectors = [detectors]
@@ -319,10 +397,14 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         names = [names]
     if names is None:
         names = [name for name,hdfname in sev_triggermerge_fieldmap.items() \
-            if hdfname[1] in triggermergehdf[detectors[0]]] + 'ranking_stat'
+            if hdfname[1] in triggermergehdf[detectors[0]]] + ['ranking_stat']
         if bankhdf is not None:
             banknames = bankhdf.keys()
     else:
+        # determine what fields to load; we'll need a dummy blank array to parse
+        dummy_arr = dummy_sngl_events_from_triggermerge(triggermergehdf,
+            bankhdf=bankhdf)
+        names = get_fields_to_load(dummy_arr, names)
         # parse what names correspond to what data file
         if bankhdf is not None:
             banknames = [name for name in names if name in bankhdf.keys()]
@@ -338,25 +420,24 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         names.append('event_id')
     if 'detector' not in names:
         names.append('detector')
+    # ensure end_time is in names if a veto file is specified
+    if veto_file is not None and 'end_time' not in names:
+        names.append('end_time')
     # convert end_time to end_time_s, end_time_ns
     if 'end_time' in names:
         names.pop(names.index('end_time'))
     names.append('end_time_s')
     names.append('end_time_ns')
     # load the data
+    logging.info('loading events')
     sngls = None
     for detector in detectors:
         mergedata = triggermergehdf[detector]
-        these_sngls = lscarrays.SnglEvent(len(mergedata[names[0]]),
-            ranking_stat_alias=ranking_stat, names=names) 
+        these_sngls = lscarrays.SnglEvent(len(mergedata[mergedata.keys()[0]]),
+            ranking_stat_alias=ranking_stat, names=names)
         for name in names:
             if name == 'detector' or name == 'ifo':
                 these_sngls[name] = detector
-            # end time needs to be treated separately
-            #elif name == 'end_time':
-            #    secs, nanosecs = triggermerge_data_by_sev_name(name, mergedata)
-            #    these_sngls['end_time_s'] = secs
-            #    these_sngls['end_time_ns'] = nanosecs
             elif name == 'end_time_s':
                 secs, _ = triggermerge_data_by_sev_name('end_time', mergedata)
                 these_sngls[name] = secs
@@ -369,11 +450,12 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         # compute the ranking stat
         if 'ranking_stat' in names:
             try:
-                needed_args, statfunc = known_ranking_stats[ranking_stat]
+                needed_names, statfunc = known_ranking_stats[ranking_stat]
             except KeyError:
                 raise ValueError("unrecognized ranking-stat %s" % ranking_stat)
             # populate the needed args
-            for arg in needed_args:
+            needed_args = {}
+            for arg in needed_names:
                 if arg in names:
                     # can get from the array
                     needed_args[arg] = these_sngls[arg]
@@ -382,7 +464,16 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
                     needed_args[arg] = triggermerge_data_by_sev_name(name,
                         mergedata)
             # populate the array
-            these_sngls[name] = statfunc(**neededargs)
+            these_sngls[name] = statfunc(**needed_args)
+        logging.info('loaded %i %s events' %(these_sngls.size, detector))
+        # apply vetos if specified
+        if veto_file is not None:
+            logging.info('applying vetoes')
+            mask, _ = events.veto.indices_outside_segments(
+                these_sngls['end_time'],
+                [veto_file], ifo=detector, segment_name=segment_name)
+            these_sngls = these_sngls[mask]
+            logging.info('%i events survive vetoes' %(these_sngls.size))
         if sngls is None:
             sngls = these_sngls
         else:
@@ -393,8 +484,15 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
     # add the template information if desired
     if bankhdf is not None and banknames != []:
         templates = tmplt_inspiral_from_bankhdf(bankhdf, names=banknames)
-        sngls = sngls.expand_templates(templates)
+        logging.info('expanding templates')
+        sngls = sngls.expand_templates(templates,
+            assume_this_array_sorted=True, assume_templates_sorted=True)
         sngls.add_source_file(bankhdf.filename, 'template_id')
+    # close files if paths were provided
+    if ispath:
+        triggermergehdf.close()
+    if bankhdf is not None and bankispath:
+        bankhdf.close()
     return sngls
 
 
@@ -419,10 +517,28 @@ def dummy_sngl_events_from_triggermerge(triggermergehdf, bankhdf=None):
         An instance of an lscarrays.SnglEvent array with all of the possible
         fields that can be loaded.
     """
+    logging.info('creating dummy sngl_events array')
+    # temporarily silence logging
+    logger = logging.getLogger()
+    loglevel = logger.level
+    logger.level = logging.WARN
+    # load structures
+    triggermergehdf, ispath = load_hdf(triggermergehdf)
+    _triggermergehdf = construct_inmemory_hdfstruct(triggermergehdf)
+    if ispath:
+        triggermergehdf.close()
     if bankhdf is not None:
-        bankhdf = construct_inmemory_hdfstruct(bankhdf)
-    triggermergehdf = construct_inmemory_hdfstruct(triggermergehdf)
-    return sngl_events_from_triggermerge(triggermergehdf, bankhdf=bankhdf)
+        bankhdf, bankispath = load_hdf(bankhdf)
+        _bankhdf = construct_inmemory_hdfstruct(bankhdf)
+        if bankispath:
+            bankhdf.close()
+    else:
+        _bankhdf = None
+    dummy_arr = sngl_events_from_triggermerge(_triggermergehdf,
+        bankhdf=_bankhdf)
+    # restore logging
+    logger.level = loglevel
+    return dummy_arr
 
 #
 #
@@ -476,10 +592,14 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         Which type of data to get. For full data STATMAP files this can be set
         to either "foreground", "background", or "background_exc". For
         injection STATMAP files, only "foreground" is available.
-    bankhdf : {None | h5py.File or similar}
-        If an open BANK hdf file is provided, the template information will be
-        added to the array. Default is None, in which case no template
-        information will be added.
+    bankhdf : {None | file path, open h5py.File or similar}
+        A file path to a BANKHDF file, an open BANKHDF file, or a dictionary of
+        similar structure, containing the template bank that was used to
+        generate the events. If a file path, the file will be opened and
+        closed. If provided, the template information stored in the file will
+        be added to the CoincEvent array (via the ```expand_templates```
+        method). Default is None, in which case no template information will
+        be added.
     detectors : {None | (list of) strings}
         What detectors to get single detector information for. All of the
         specified detectors must be in the ``statmaphdf``'s ```attrs```. If
@@ -500,6 +620,14 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         in the keys of ```cev_statmap_fieldmap``` and (if it is provided) all
         of the fields from the bankhdf file.
     """
+    # load data
+    statmaphdf, ispath = load_hdf(statmaphdf)
+    if bankhdf is not None:
+        bankhdf, bankispath = load_hdf(bankhdf)
+    if triggermergehdfs is not None:
+        trigs_are_paths = [False]*len(triggermergehdfs)
+        for ii,thishdf in enumerate(triggermergehdfs):
+            triggermergehdfs[ii], trigs_are_paths[ii] = load_hdf(thishdf)
     data = statmaphdf[datatype]
     # parse the detectors
     all_detectors = {detname: det \
@@ -515,57 +643,60 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         detectors = {det: all_detectors[det] for det in detectors}
     else:
         detectors = all_detectors
-    # if triggermerge hdfs are provided, figure out which file goes with which
+    # if triggermerge filess are provided, figure out which file goes with which
     # detector
     if triggermergehdfs is not None:
         sngls_filemap = {det: thisfile \
             for det in detectors \
             for thisfile in triggermergehdfs if det in thisfile.keys()}
     # parse the names
-    if isinstance(names, str) or isinstance(names, unicode):
-        names = [names]
     if names is None:
-        names = [name for name,hdfname in cev_statmap_fieldmap.items() \
-            if hdfname[1] in data]
+        names = set([name for name,hdfname in cev_statmap_fieldmap.items() \
+            if hdfname[1] in data])
         if bankhdf is not None:
             banknames = bankhdf.keys()
         if triggermergehdfs is not None:
             snglsnames = {det: sev_triggermerge_fieldmap.keys() \
                 for det in detectors}
     else:
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+        # determine what fields to load; we'll need a dummy blank array to parse
+        dummy_arr = dummy_coinc_events_from_statmap(statmaphdf, datatype,
+            bankhdf=bankhdf, triggermergehdfs=triggermergehdfs)
+        names = set(get_fields_to_load(dummy_arr, names))
         # check for names that start with detector names;
         # detectors that are not specified will not be retrieved
         detectors = {det: detectors[det] for det in detectors \
             if any([name.startswith('%s.' %(det)) for name in names])}
         # parse what names correspond to what data file
         if bankhdf is not None:
-            banknames = [name for name in names if name in bankhdf.keys()]
+            dummy_arr = dummy_tmplt_inspiral_from_bankhdf(bankhdf)
+            banknames = set(dummy_arr.all_names) & names
             # remove the bank names from names
-            names = [name for name in names if name not in banknames]
+            names -= banknames
             # ensure that template_id is in both the banknames and the names
             # if we will be retrieving anything from the bank
-            if banknames != []:
-                if 'template_id' not in names:
-                    names.append('template_id')
-                if 'template_id' not in banknames:
-                    banknames.append('template_id')
+            if banknames:
+                names.update(['template_id'])
+                banknames.update(['template_id'])
+                banknames = list(banknames)
         if triggermergehdfs is not None:
-            snglsnames = {det: name[3:] \
-                for det in detectors \
-                for name in names if name.startswith('%s.' %(det))}
-            # remove
-            names = [name for name in names \
-                if not any([name.startswith('%s.' %(det))
-                            for det in detectors])]
-            # ensure that the detectors' event_id column is included
+            snglsnames = {
+                det: set([name[3:] for name in names \
+                            if name.startswith('%s.' %(det))])\
+                for det in detectors
+                }
+            # remove and ensure that the detectors' event_id column is included
             for det in snglsnames:
-                if 'event_id' not in snglsnames[det]:
-                    snglsnames[det].append('event_id')
-                if '%s.event_id' %(det) not in names:
-                    names.append('%s.event_id' %(det))
+                names -= set(['%s.%s' %(det, name) for name in snglsnames[det]])
+                snglsnames[det].update(['event_id'])
+                snglsnames[det] = list(snglsnames[det])
+                names.update(['%s.event_id' % det])
     # ensure event_id is created
-    if 'event_id' not in names:
-        names.append('event_id')
+    names.update(['event_id'])
+    # LSCArrays expects a list of names
+    names = list(names)
     coincs = lscarrays.CoincEvent(len(data[data.keys()[0]]), name=datatype,
         detectors=detectors.keys(), names=names)
     # copy the data over
@@ -584,7 +715,8 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
     # add template info
     if bankhdf is not None and banknames != []:
         templates = tmplt_inspiral_from_bankhdf(bankhdf, names=banknames)
-        coincs = coincs.expand_templates(templates)
+        coincs = coincs.expand_templates(templates,
+            assume_this_array_sorted=False, assume_templates_sorted=True)
         coincs.add_source_file(bankhdf.filename, 'template_id')
     # add singles info
     if triggermergehdfs is not None and snglsnames != {}:
@@ -627,11 +759,34 @@ def dummy_coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         An instance of an lscarrays.CoincEvent array with all of the possible
         fields that can be loaded.
     """
-    if bankhdf is not None:
-        bankhdf = construct_inmemory_hdfstruct(bankhdf)
+    logging.info('creating dummy coinc_events array')
+    # temporarily silence logging
+    logger = logging.getLogger()
+    loglevel = logger.level
+    logger.level = logging.WARN
+    # load structures
+    statmaphdf, ispath = load_hdf(statmaphdf)
+    _statmaphdf = construct_inmemory_hdfstruct(statmaphdf)
+    if ispath:
+        statmaphdf.close()
     if triggermergehdfs is not None:
-        triggermergehdfs = [construct_inmemory_hdfstruct(thishdf) \
-            for thishdf in triggermergehdfs]
-    statmaphdf = construct_inmemory_hdfstruct(statmaphdf)
-    return coinc_events_from_statmap(statmaphdf, datatype, bankhdf=bankhdf,
-        triggermergehdfs=triggermergehdfs)
+        _triggermergehdfs = []
+        for thishdf in triggermergehdfs:
+            thishdf, ispath = load_hdf(thishdf)
+            _triggermergehdfs.append(construct_inmemory_hdfstruct(thishdf))
+            if ispath:
+                thishdf.close()
+    else:
+        _triggermergehdfs = None
+    if bankhdf is not None:
+        bankhdf, bankispath = load_hdf(bankhdf)
+        _bankhdf = construct_inmemory_hdfstruct(bankhdf)
+        if bankispath:
+            bankhdf.close()
+    else:
+        _bankhdf = None
+    dummy_arr = coinc_events_from_statmap(_statmaphdf, datatype,
+        bankhdf=_bankhdf, triggermergehdfs=_triggermergehdfs)
+    # restore logging
+    logger.level = loglevel
+    return dummy_arr
