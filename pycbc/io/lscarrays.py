@@ -35,6 +35,7 @@ import numpy
 import numpy.lib.recfunctions as recfunctions
 
 from pycbc import pnutils
+from pycbc import events
 
 import lal
 import lalsimulation as lalsim
@@ -235,13 +236,17 @@ def merge_arrays(merge_list, names=None, flatten=True, outtype=None):
     # ii is a counter to keep track of which fields from the new array
     # go with which arrays in merge list
     ii = 0
-    for arr in merge_list:
+    for jj,arr in enumerate(merge_list):
+        if not flatten:
+            _new_arr = new_arr['f%i' % jj]
+        else:
+            _new_arr = new_arr
         if arr.dtype.names is None:
-            new_arr[new_dt.names[ii]] = arr
+            _new_arr[new_dt.names[ii]] = arr
             ii += 1
         else:
             for field in arr.dtype.names:
-                new_arr[field] = arr[field]
+                _new_arr[field] = arr[field]
                 ii += 1
     # set the names if desired
     if names is not None:
@@ -463,7 +468,8 @@ def copy_attributes(this_array, other_array):
 
 def join_arrays(this_array, other_array, map_field, expand_field_name=None,
         other_map_field=None, get_fields=None, map_indices=None,
-        copy_methods=True):
+        copy_methods=True, assume_many_to_one=False,
+        assume_this_array_sorted=False, assume_other_array_sorted=False):
     """Joins `other_array` to `this_array` using the provided map fields.
     The information from `other_array` is added to `this_array` as a
     subarray. For a given element in `this_array`, all elements in
@@ -503,6 +509,19 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     copy_methods : bool
         Copy instance methods and properties of `other_array` that are not
         in `this_array` to `this_array`. Default is True.
+    assume_many_to_one : bool
+        Assume that only one element in ```other_array``` is mapped to
+        each element in ```this_array```.  If this is the case, the join can be
+        done much more quickly, especially if this_array is large. If False,
+        will still check if can do many-to-one mapping, though this checking
+        incurs some cost. Default is False. 
+    assume_this_array_sorted : bool
+        Assume that ```this_array``` is sorted by ```map_field```. This speeds
+        up [one|many]-to-one mappings. Default is False.
+    assume_other_array_sorted : bool
+        Assume that ```other_array``` is sorted by ```other_map_field```. If so,
+        avoids potentially having to sort ```other_array``` for many-to-one
+        mappings. Default is False.
 
     Returns
     -------
@@ -532,40 +551,92 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     # found in other array
     # Note: for some strange reason, running dtype.descr will yield void fields
     # if with_fields is not a copy, so we'll strip those out
-    other_dtdescr = get_dtype_descr(other_array.dtype)
-    default = default_empty(1, dtype=other_dtdescr).view(
-        type=type(other_array))
-    if map_indices is not None:
-        # only map rows whose indices are listed in map inidices
-        mask = numpy.zeros(this_array.size, dtype=bool)
-        mask[map_indices] = True
-        expanded_info = [
-            other_array.lookup(
-                other_map_field, this_array[map_field][ii], default
-            ) if applymap else default \
-            for ii,applymap in enumerate(mask)]
-    else:
-        expanded_info = [other_array.lookup(other_map_field, mapval, default) \
-            for mapval in this_array[map_field]]
-    # need to know the maximum size of the subarray
-    maxlen = numpy.array([x.size for x in expanded_info]).max()
-    # convert to LSCArray
-    if expand_field_name is not None:
-        expanded_info = LSCArray.from_records(expanded_info,
-            dtype=[(expand_field_name, other_dtdescr, maxlen)]).flatten()
-    else:
-        expanded_info = LSCArray.from_records(expanded_info,
-            dtype=[(name, dt, maxlen) for (name,dt) in other_dtdescr])
-        # if the map fields are the same name, remove from the expanded info
-        # to avoid name collisions
-        if map_field == other_map_field:
-            expanded_info = expanded_info.without_fields(map_field)
+    expanded_info = _expand_array(this_array, other_array, map_field,
+        other_map_field, map_indices=map_indices,
+        expand_field_name=expand_field_name,  assume_this_array_sorted=True,
+        assume_other_array_sorted=True, assume_many_to_one=True)
+    # if the map fields are the same name, remove from the expanded info
+    # to avoid name collisions
+    if expand_field_name is None and map_field == other_map_field:
+        expanded_info = expanded_info.without_fields(map_field)
     # add to this_array
     new_array = new_array.add_fields(expanded_info)
     # copy over any new methods
     if copy_methods:
         new_array = copy_attributes(new_array, other_array)
     return new_array
+
+
+def _expand_array(this_array, other_array, map_field, other_map_field,
+        map_indices=None, expand_field_name=None,
+        assume_this_array_sorted=False, assume_other_array_sorted=False,
+        assume_many_to_one=False):
+    """Expands other_array to be the same size as this_array, based on the
+    given map criteria. See join_arrays doc string for more details."""
+
+    other_dtdescr = get_dtype_descr(other_array.dtype)
+    default = default_empty(1, dtype=other_dtdescr).view(
+        type=type(other_array))
+    if map_indices is not None:
+        # we'll just pull out the elements to map; later on we'll add the empty
+        # elements back in
+        orig_size = this_array.size
+        this_array = this_array[map_indices]
+
+    # many-to-one mappings are much faster than [one|many]-to-many; even if told
+    # not to assume many-to-one, it may still be possible to do a many-to-one
+    # if this array's map field is not a subarray larger than 1 and the other
+    # array's map field is unique
+    if not assume_many_to_one and (this_array[map_field].ndim == 1 or \
+            this_array[map_field].shape[1] == 1):
+        assume_many_to_one = numpy.unique(other_array).size == other_array.size
+
+    if assume_many_to_one:
+        # if the other array's map field is unique, then we can quickly expand
+        # the array by sorting both arrays by the map fields. Using searchsorted
+        # tells us the number of times that the map_field value is repeated in
+        # this array; we can then use numpy.repeat to expand other_array
+        if not assume_other_array_sorted:
+            other_array.sort(order=other_map_field)
+        if not assume_this_array_sorted:
+            sorter = this_array[map_field].argsort()
+        else:
+            sorter = None
+        indices = numpy.empty(other_array.size+1, dtype=int)
+        indices[0] = 0
+        indices[1:] = numpy.searchsorted(this_array[map_field],
+            other_array[other_map_field], side='right', sorter=sorter)
+        counts = numpy.diff(indices)
+        expanded_info = numpy.repeat(other_array, counts)
+        # put all the fields under a single field if expand_field_name is
+        # specified
+        if expand_field_name is not None:
+            expanded_info = merge_arrays([expanded_info],
+                names=[expand_field_name], flatten=False,
+                outtype=type(expanded_info))
+
+    else:
+        # FIXME: this is really slow; there must be a more efficient solution
+        expanded_info = [other_array.lookup(other_map_field, mapval, default) \
+            for mapval in this_array[map_field]]
+        # need to know the maximum size of the subarray
+        maxlen = numpy.array([x.size for x in expanded_info]).max()
+        # convert to LSCArray
+        if expand_field_name is not None:
+            expanded_info = LSCArray.from_records(expanded_info,
+                dtype=[(expand_field_name, other_dtdescr, maxlen)]).flatten()
+        else:
+            expanded_info = LSCArray.from_records(expanded_info,
+                dtype=[(name, dt, maxlen) for (name,dt) in other_dtdescr])
+
+    if map_indices is not None:
+        # add the empty elements in
+        tmparr = numpy.repeat(default, orig_size)
+        tmparr[map_indices] = expanded_info
+        expanded_info = tmparr
+
+    return expanded_info
+    
 
 def file_checksum(filename, hasher=hashlib.sha256, buffersize=65536):
     """Provides a checksum of the given file. Modified from:
@@ -1323,6 +1394,15 @@ class LSCArray(numpy.recarray):
         return get_all_field_names(self.dtype)
 
     @property
+    def all_names(self):
+        """Returns ```all_fieldnames```, along with the names of all virtual
+        and method fields.
+        """
+        vf = self.virtual_fields if self.virtual_fields is not None else []
+        mf = self.method_fields.keys() if self.method_fields is not None else []
+        return self.all_fieldnames + vf + mf
+
+    @property
     def aliases(self):
         """Returns a dictionary of the aliases, or "titles", of the field names
         in self. An alias can be specified by passing a tuple in the name
@@ -1563,7 +1643,9 @@ class LSCArray(numpy.recarray):
 
 
     def join(self, other, map_field, expand_field_name=None,
-            other_map_field=None, get_fields=None, map_indices=None):
+            other_map_field=None, get_fields=None, map_indices=None,
+            assume_many_to_one=False, assume_this_array_sorted=False,
+            assume_other_array_sorted=False):
         """
         Join another array to this array such that:
         ``self[map_field]`` == ``other[other_map_field]``. The fields from
@@ -1588,13 +1670,28 @@ class LSCArray(numpy.recarray):
             The name of the field in ``other`` to use for mapping. If None
             provided, ``map_field`` will be used.
         get_fields : {None | (list of) strings}
-            Optionally specify what fields to retrieve from ``other_array``.
-            If None provided, will get all the fields in ``other_array``.
+            Optionally specify what fields to retrieve from ``other``.
+            If None provided, will get all the fields in ``other``.
         map_indices : {None | array of ints}
             If provided, will only map rows in this array that have indices
             in the given array of indices. Any rows that are skipped will
             have a zeroed element in the expand field of the returned array.
             If None (the default), all rows in this array are mapped.
+        assume_many_to_one : bool
+            Assume that only one element in ```other_array``` is mapped to each
+            element in this array.  If this is the case, the join can be
+            done much more quickly, especially if this array is large. If
+            False, will still check if can do many-to-one mapping, though this
+            checking incurs some cost. Default is False. 
+        assume_this_array_sorted : bool
+            Assume that this array is sorted by ```map_field```. This
+            speeds up [one|many]-to-one mappings. If False, a sorted copy of
+            this array's ```map_field``` will be created, which incurs a
+            compuational cost, and increases memory overhead. Default is False.
+        assume_other_array_sorted : bool
+            Assume that ```other``` is sorted by ```other_map_field```.
+            If so, avoids potentially having to sort ```other```. Default
+            is False.
 
         Returns
         -------
@@ -1605,7 +1702,9 @@ class LSCArray(numpy.recarray):
         return join_arrays(self, other, map_field,
             expand_field_name=expand_field_name,
             other_map_field=other_map_field, get_fields=get_fields,
-            map_indices=map_indices)
+            map_indices=map_indices, assume_many_to_one=assume_many_to_one,
+            assume_this_array_sorted=assume_this_array_sorted,
+            assume_other_array_sorted=assume_other_array_sorted)
 
     def append(self, other, remap_ids=None):
         """
@@ -1976,7 +2075,8 @@ class Waveform(_LSCArrayWithDefaults):
             self.spin2z)
 
     default_virtual_fields = ['mtotal', 'mtotal_s', 'q', 'eta', 'mchirp',
-        's1', 's2', 's1mag', 's2mag', 'beta', 'pnsigma', 'pngamma', 'chiS']
+        's1', 's2', 's1mag', 's2mag', 'beta', 'pnsigma', 'pngamma', 'chiS',
+        'effective_spin']
 
     default_method_fields = {
         'tau0': parse_function_args(tau0),
@@ -2177,7 +2277,7 @@ class SnglEvent(_LSCArrayWithDefaults):
         fields = {
             ('ifo', 'detector'): 'S2',
             'sigma': float,
-            (ranking_stat_alias, 'ranking_stat'): float,
+            ('effsnr', 'ranking_stat'): float,
             'snr': float,
             'chisq': float,
             'chisq_dof': float,
@@ -2203,10 +2303,19 @@ class SnglEvent(_LSCArrayWithDefaults):
     def end_time(self):
         return self.end_time_s + 1e-9*self.end_time_ns
 
-    default_virtual_fields = ['end_time']
+    @property
+    def reduced_chisq(self):
+        return self.chisq / self.chisq_dof
+
+    @property
+    def newsnr(self):
+        events.newsnr(self.snr, self.reduced_chisq)
+        
+    default_virtual_fields = ['end_time', 'reduced_chisq', 'newsnr']
 
     def expand_templates(self, tmplt_inspiral_array, get_fields=None,
-            selfs_map_field='template_id', tmplts_map_field='template_id'):
+            selfs_map_field='template_id', tmplts_map_field='template_id',
+            assume_this_array_sorted=False, assume_templates_sorted=False):
         """
         Given an array of templates, adds the fields from the templates to this
         array. This is done by getting all rows in the `tmplt_inspiral_array`
@@ -2227,6 +2336,15 @@ class SnglEvent(_LSCArrayWithDefaults):
         tmplts_map_field : {'template_id' | string}
             The name of the field in the tmplt_inspiral_array to match.
             Default is `template_id`.
+        assume_this_array_sorted : bool
+            Assume that this array is sorted by ```selfs_map_field```. This
+            speeds up the mappings. If False, a sorted copy of
+            this array's ```selfs_map_field``` will be created, which incurs a
+            compuational cost, and increases memory overhead. Default is False.
+        assume_templates_sorted : bool
+            Assume that the templates are sorted by ```tmplts_map_field```.
+            If so, avoids potentially having to sort them. Default
+            is False.
 
         Returns
         -------
@@ -2237,7 +2355,10 @@ class SnglEvent(_LSCArrayWithDefaults):
             this array are added to `new_array`.
         """
         return self.join(tmplt_inspiral_array, selfs_map_field,
-            other_map_field=tmplts_map_field, get_fields=get_fields)
+            other_map_field=tmplts_map_field, get_fields=get_fields,
+            assume_many_to_one=True,
+            assume_this_array_sorted=assume_this_array_sorted,
+            assume_other_array_sorted=assume_templates_sorted)
 
 
 class CoincEvent(SnglEvent):
@@ -2455,7 +2576,8 @@ class CoincEvent(SnglEvent):
 
     # other methods
     def expand_sngls(self, sngl_event_array, get_fields=None,
-            sngls_map_field='event_id'):
+            sngls_map_field='event_id', assume_this_array_sorted=False,
+            assume_sngls_sorted=False):
         """
         Given an array of singles, adds sub-arrays of the single-detector
         trigger data named by ifo to self. For each detector in that is in
@@ -2477,6 +2599,15 @@ class CoincEvent(SnglEvent):
         sngls_map_field : {'event_id' | string}
             The name of the field in the `sngl_event_array` to match.
             Default is `'event_id'`.
+        assume_this_array_sorted : bool
+            Assume that this array is sorted by ```event_id```. This
+            speeds up the mappings. If False, a sorted copy of
+            this array's ```event_id```s will be created internally.
+            Default is False.
+        assume_sngls_sorted : bool
+            Assume that the sngls are sorted by ```sngls_map_field```.
+            If so, avoids potentially having to sort them. Default
+            is False.
 
         Returns
         -------
@@ -2538,7 +2669,10 @@ class CoincEvent(SnglEvent):
             new_self = new_self.join(other_array,
                 '%s.event_id' % det, det,
                 sngls_map_field, get_fields=get_fields,
-                map_indices=map_indices)
+                map_indices=map_indices,
+                assume_many_to_one=True,
+                assume_this_array_sorted=assume_this_array_sorted,
+                assume_other_array_sorted=assume_sngls_sorted)
         return new_self
 
 
@@ -2807,7 +2941,8 @@ class SimInspiral(Waveform):
     # other methods
     def expand_recovered(self, event_array, get_fields=None,
             selfs_map_field='recovered.event_id',
-            events_map_field='event_id'):
+            events_map_field='event_id', assume_many_to_one=False,
+            assume_this_array_sorted=False, assume_events_sorted=False):
         """
         Given an array of (coinc) events, replaces the recovered field with a
         sub-array of the recovered data. This is done by getting
@@ -2827,6 +2962,19 @@ class SimInspiral(Waveform):
         events_map_field : {'event_id' | string}
             The name of the field in the ``event_array`` to match.
             Default is ``event_id``.
+        assume_many_to_one : bool
+            Assume that all of the injections in this array are only mapped to
+            a single event in the ```event_array```. This speeds up the
+            expansion. Default is False. 
+        assume_this_array_sorted : bool
+            Assume that this array is sorted by ```selfs_map_field```. This
+            can speed up the mappings. If False, a sorted copy of
+            this array's ```selfs_map_field``` will be created internally.
+            Default is False.
+        assume_events_sorted : bool
+            Assume that the recovered events are sorted by
+            ```events_map_field```. If so, avoids potentially having to sort
+            them. Default is False.
 
         Returns
         -------
@@ -2858,7 +3006,10 @@ class SimInspiral(Waveform):
         """
         return self.join(event_array, selfs_map_field, 'recovered',
             other_map_field=events_map_field, get_fields=get_fields,
-            map_indices=numpy.where(self.isrecovered))
+            map_indices=numpy.where(self.isrecovered),
+            assume_many_to_one=assume_many_to_one,
+            assume_this_array_sorted=assume_this_array_sorted,
+            assume_other_array_sorted=assume_events_sorted)
 
     @property
     def recovered_idx(self):
