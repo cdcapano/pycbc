@@ -123,30 +123,6 @@ def _end_time_from_float(data):
         data = data.value
     return lscarrays.end_time_from_float(data)
 
-#
-# Ranking stats wrappers: for populating the SnglEvent array, below
-#
-def _effsnr(snr, chisq, chisq_dof, fac=250.):
-    """Wrapper around events.py's effsnr that takes chisq and chisq_dof
-    separately. Note: chisq_dof is assumed to be actual degrees of freedom,
-    not the number of bins.
-    """
-    return events.effsnr(snr, chisq/chisq_dof, fac=fac)
-
-def _newsnr(snr, chisq, chisq_dof, q=6., n=2.):
-    """Wrapper around events.py's newsnr that takes chisq and chisq_dof
-    separately. Note: chisq_dof is assumed to be actual degrees of freedom,
-    not the number of bins.
-    """
-    return events.newsnr(snr, chisq/chisq_dof, q=q, n=n)
-
-# the known ranking stats, their requred arguments, and the function that
-# computes them
-known_ranking_stats = {
-    'effsnr': (('snr', 'chisq', 'chisq_dof'), _effsnr),
-    'newsnr': (('snr', 'chisq', 'chisq_dof'), _newsnr)
-}
-
 
 class DictWithAttrs(dict):
     """A dictionary that allows additional attributes to be set.
@@ -339,7 +315,7 @@ def triggermerge_data_by_sev_name(name, mergedata):
 
 
 def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
-        ranking_stat='newsnr', bankhdf=None, veto_file=None, segment_name=None,
+        bankhdf=None, veto_file=None, segment_name=None,
         names=None):
     """
     Given a TRIGGER_MERGE file, converts into a SnglEvent array.
@@ -353,10 +329,6 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
     detectors : {None | (list of) strings}
         The names of the detectors to load. If None, all of the detectors found
         in the TRIGGER_MERGE file will be loaded.
-    ranking_stat : {'newsnr' | string}
-        The ranking stat to compute for the ranking-stat column. Only used if
-        names is None or 'ranking_stat' is in the list of names. See
-        ```known_ranking_stats``` for possible options; default is 'newsnr'.
     bankhdf : {None | file path, open h5py.File or similar}
         A file path to a BANKHDF file, an open BANKHDF file, or a dictionary of
         similar structure, containing the template bank that was used to
@@ -397,7 +369,7 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         names = [names]
     if names is None:
         names = [name for name,hdfname in sev_triggermerge_fieldmap.items() \
-            if hdfname[1] in triggermergehdf[detectors[0]]] + ['ranking_stat']
+            if hdfname[1] in triggermergehdf[detectors[0]]]
         if bankhdf is not None:
             banknames = bankhdf.keys()
     else:
@@ -434,7 +406,7 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
     for detector in detectors:
         mergedata = triggermergehdf[detector]
         these_sngls = lscarrays.SnglEvent(len(mergedata[mergedata.keys()[0]]),
-            ranking_stat_alias=ranking_stat, names=names)
+            names=names)
         for name in names:
             if name == 'detector' or name == 'ifo':
                 these_sngls[name] = detector
@@ -444,27 +416,9 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
             elif name == 'end_time_ns':
                 _, ns = triggermerge_data_by_sev_name('end_time', mergedata)
                 these_sngls[name] = ns
-            elif name != 'ranking_stat': # we'll calculate this later
+            else:
                 these_sngls[name] = triggermerge_data_by_sev_name(name,
                     mergedata)
-        # compute the ranking stat
-        if 'ranking_stat' in names:
-            try:
-                needed_names, statfunc = known_ranking_stats[ranking_stat]
-            except KeyError:
-                raise ValueError("unrecognized ranking-stat %s" % ranking_stat)
-            # populate the needed args
-            needed_args = {}
-            for arg in needed_names:
-                if arg in names:
-                    # can get from the array
-                    needed_args[arg] = these_sngls[arg]
-                else:
-                    # have to get from the file
-                    needed_args[arg] = triggermerge_data_by_sev_name(name,
-                        mergedata)
-            # populate the array
-            these_sngls[name] = statfunc(**needed_args)
         logging.info('loaded %i %s events' %(these_sngls.size, detector))
         # apply vetos if specified
         if veto_file is not None:
@@ -643,8 +597,8 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         detectors = {det: all_detectors[det] for det in detectors}
     else:
         detectors = all_detectors
-    # if triggermerge filess are provided, figure out which file goes with which
-    # detector
+    # if triggermerge filess are provided, figure out which file goes with
+    # which detector
     if triggermergehdfs is not None:
         sngls_filemap = {det: thisfile \
             for det in detectors \
@@ -661,7 +615,8 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
     else:
         if isinstance(names, str) or isinstance(names, unicode):
             names = [names]
-        # determine what fields to load; we'll need a dummy blank array to parse
+        # determine what fields to load; we'll need a dummy blank array 
+        # to parse
         dummy_arr = dummy_coinc_events_from_statmap(statmaphdf, datatype,
             bankhdf=bankhdf, triggermergehdfs=triggermergehdfs)
         names = set(get_fields_to_load(dummy_arr, names))
@@ -689,7 +644,8 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
                 }
             # remove and ensure that the detectors' event_id column is included
             for det in snglsnames:
-                names -= set(['%s.%s' %(det, name) for name in snglsnames[det]])
+                names -= set(['%s.%s' %(det, name) \
+                    for name in snglsnames[det]])
                 snglsnames[det].update(['event_id'])
                 snglsnames[det] = list(snglsnames[det])
                 names.update(['%s.event_id' % det])

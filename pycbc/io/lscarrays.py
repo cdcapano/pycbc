@@ -511,21 +511,21 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
         Copy instance methods and properties of `other_array` that are not
         in `this_array` to `this_array`. Default is True.
     assume_many_to_one : bool
-        Assume that only one element in ```other_array``` is mapped to
-        each element in ```this_array```.  If this is the case, the join can be
+        Assume that only one element in ``other_array`` is mapped to
+        each element in ``this_array``.  If this is the case, the join can be
         done much more quickly, especially if this_array is large. If False,
         will still check if can do many-to-one mapping, though this checking
         incurs some cost. Default is False. 
     assume_this_array_sorted : bool
-        Assume that ```this_array``` is sorted by ```map_field```. This speeds
+        Assume that ``this_array`` is sorted by ``map_field``. This speeds
         up [one|many]-to-one mappings. Default is False.
     assume_other_array_sorted : bool
-        Assume that ```other_array``` is sorted by ```other_map_field```. If so,
-        avoids potentially having to sort ```other_array``` for many-to-one
+        Assume that ``other_array`` is sorted by ``other_map_field``. If so,
+        avoids potentially having to sort ``other_array`` for many-to-one
         mappings. Default is False.
     assume_is_subset : bool
-        Assume that ```this_array[map_field]``` is a subset of
-        ```other_array[other_map_field]```, which can speed up the calculation.
+        Assume that ``this_array[map_field]`` is a subset of
+        ``other_array[other_map_field]``, which can speed up the calculation.
 
     Returns
     -------
@@ -769,9 +769,6 @@ def get_needed_fieldnames(arr, names):
     set
         The set of the fields needed to evaluate the names. This may still
         result in an error if one or more of the given names was not found in
-        A dictionary keyed by the names, with the values the (list of) fields
-        needed. If no field is found in ``arr`` for a name, the value will be
-        None for that name.
     """
     fieldnames = set([])
     # we'll need the class that the array is an instance of to evaluate some 
@@ -783,8 +780,6 @@ def get_needed_fieldnames(arr, names):
         if name in arr.fieldnames or name in arr.all_fieldnames:
             # is a field, just set the dict value to the key
             fieldnames.update([name])
-        elif name in arr.aliases:
-            fieldnames.update([arr.aliases[name]])
         elif name in arr.virtual_fields or name in arr.method_fields:
             # need to evaluate the source code to figure out what fields we
             # need
@@ -1127,8 +1122,8 @@ class LSCArray(numpy.recarray):
     ``lscarrays.set_lstring_as_obj`` (see the docstring for that function for
     more details).
     """
-    __persistent_attributes__ = ['name', 'source_files', 'id_maps',
-        'virtual_fields', 'method_fields']
+    __persistent_attributes__ = ['name', 'virtual_fields', 'method_fields',
+        'source_files', 'id_maps']
 
     def __new__(cls, shape, name=None, zero=True, **kwargs):
         """Initializes a new empty array.
@@ -1136,17 +1131,16 @@ class LSCArray(numpy.recarray):
         obj = super(LSCArray, cls).__new__(cls, shape, **kwargs).view(
             type=cls)
         obj.name = name
-        obj.source_files = None
-        obj.id_maps = None
-        obj.virtual_fields = None
-        obj.method_fields = None
+        obj.source_files = {}
+        obj.id_maps = {}
+        obj.virtual_fields = []
+        obj.method_fields = {}
         obj.__persistent_attributes__ = cls.__persistent_attributes__
         # zero out the array if desired
         if zero:
             default = default_empty(1, dtype=obj.dtype)
             obj[:] = default
         return obj
-
 
     def __array_finalize__(self, obj):
         """Default values are set here.
@@ -1214,17 +1208,12 @@ class LSCArray(numpy.recarray):
         except ValueError:
             # arg isn't a simple argument of row, so we'll have to eval it
             # get the set of fields & attributes we will need
-            #itemvars = get_fields_from_arg(item)
             itemvars = get_vars_from_arg(item)
             # pull out the fields: note, by getting the parent fields, we
             # also get the sub fields name
             item_dict = dict([ [fn,
                 super(LSCArray, self).__getitem__(fn)] \
                 for fn in set(self.fieldnames).intersection(itemvars)])
-            # add any aliases
-            item_dict.update({alias: item_dict[name] \
-                for alias,name in self.aliases.items()
-                    if name in item_dict})
             # pull out any attributes needed
             itemvars = get_fields_from_arg(item)
             item_dict.update({attr: getattr(self, attr) for attr in \
@@ -1417,26 +1406,12 @@ class LSCArray(numpy.recarray):
 
     @property
     def all_names(self):
-        """Returns ```all_fieldnames```, along with the names of all virtual
+        """Returns ``all_fieldnames``, along with the names of all virtual
         and method fields.
         """
         vf = self.virtual_fields if self.virtual_fields is not None else []
         mf = self.method_fields.keys() if self.method_fields is not None else []
         return self.all_fieldnames + vf + mf
-
-    @property
-    def aliases(self):
-        """Returns a dictionary of the aliases, or "titles", of the field names
-        in self. An alias can be specified by passing a tuple in the name
-        part of the dtype. For example, if an array is created with
-        ``dtype=[(('foo', 'bar'), float)]``, the array will have a field
-        called `bar` that has alias `foo` that can be accessed using
-        either `arr['foo']` or `arr['bar']`. Note that the first string
-        in the dtype is the alias, the second the name. This function returns
-        a dictionary in which the aliases are the keys and the names are the
-        values. Only fields that have aliases are returned.
-        """
-        return dict(c[0] for c in self.dtype.descr if isinstance(c[0], tuple))
 
     def add_source_file(self, filename, id_field=None, id_ranges=None,
             include_checksum=False, force=False):
@@ -1700,23 +1675,23 @@ class LSCArray(numpy.recarray):
             zeroed element in the new fields of the returned array. If None (the
             default), all rows in this array are mapped.
         assume_many_to_one : bool
-            Assume that only one element in ```other_array``` is mapped to each
+            Assume that only one element in ``other_array`` is mapped to each
             element in this array.  If this is the case, the join can be
             done much more quickly, especially if this array is large. If
             False, will still check if can do many-to-one mapping, though this
             checking incurs some cost. Default is False. 
         assume_this_array_sorted : bool
-            Assume that this array is sorted by ```map_field```. This
+            Assume that this array is sorted by ``map_field``. This
             speeds up [one|many]-to-one mappings. If False, a sorted copy of
-            this array's ```map_field``` will be created, which incurs a
+            this array's ``map_field`` will be created, which incurs a
             compuational cost, and increases memory overhead. Default is False.
         assume_other_array_sorted : bool
-            Assume that ```other``` is sorted by ```other_map_field```.
-            If so, avoids potentially having to sort ```other```. Default
+            Assume that ``other`` is sorted by ``other_map_field``.
+            If so, avoids potentially having to sort ``other``. Default
             is False.
         assume_is_subset : bool
-            Assume that this array's ```selfs_map_field``` is a subset of
-            ```other[other_map_field]```, which can speed up the calculation.
+            Assume that this array's ``selfs_map_field`` is a subset of
+            ``other[other_map_field]``, which can speed up the calculation.
 
         Returns
         -------
@@ -1825,39 +1800,21 @@ class LSCArray(numpy.recarray):
         return newarr
 
 
-def aliases_from_fields(fields):
-    """
-    Given a dictionary of fields, will return a dictionary mapping the aliases
-    to the names.
-    """
-    return dict(c for c in fields if isinstance(c, tuple))
-
-
 def fields_from_names(fields, names=None):
     """
     Given a dictionary of fields and a list of names, will return a dictionary
-    consisting of the fields specified by names. Names can be either the names
-    of fields, or their aliases.
+    consisting of the fields specified by names.
     """
     if names is None:
         return fields
     if isinstance(names, str) or isinstance(names, unicode):
         names = [names]
-    aliases_to_names = aliases_from_fields(fields)
-    names_to_aliases = dict(zip(aliases_to_names.values(),
-        aliases_to_names.keys()))
     outfields = {}
     for name in names:
         try:
             outfields[name] = fields[name]
         except KeyError:
-            if name in aliases_to_names:
-                key = (name, aliases_to_names[name])
-            elif name in names_to_aliases:
-                key = (names_to_aliases[name], name)
-            else:
-                raise KeyError('default fields has no field %s' % name)
-            outfields[key] = fields[key]
+            raise KeyError('given fields has no field %s' % name)
     return outfields
 
 class _LSCArrayWithDefaults(LSCArray):
@@ -1866,31 +1823,36 @@ class _LSCArrayWithDefaults(LSCArray):
     attribute ``default_name``. If no name is provided when initialized, the
     ``default_name`` will be used. Likewise, if no dtype is provided when
     initalized, the default fields will be used. If names are provided, they
-    must be names or aliases that are in default fields, else a KeyError is
-    raised. Non-default fields can be created by specifying dtype directly. 
+    must be names that are in default fields, else a KeyError is
+    raised. Non-default fields can be created by specifying dtype directly.
 
     The default ``default_name`` is None and ``default_fields`` returns an
     empty dictionary. This class is mostly meant to be subclassed by other
     classes, so they can add their own defaults.
     """
     default_name = None
+    _static_fields = {}
     defaul_virtual_fields = []
     default_method_fields = {}
 
     @classmethod
     def default_fields(cls, **kwargs):
         """
-        The default fields. This function should be overridden by subclasses
-        to return a dictionary of the desired default fields. Allows for
-        key word arguments to be passed to it, for classes that need to be
-        able to alter properties of some of the default fields.
+        The default fields. By default, this returns whatever the class's
+        ``_static_fields`` is set to. This function should be overridden by
+        subclasses to add dynamic fields; i.e., fields that require some input
+        parameters at initialization. Keyword arguments can be passed to this
+        to set such dynamic fields.
         """
-        return {}
+        return cls._static_fields
 
     def __new__(cls, shape, name=None, field_args={}, **kwargs):
         """
         Makes use of cls.default_fields and cls.default_name.
         """
+        # get defaults if needed
+        if name is None:
+            name = cls.default_name
         if 'names' in kwargs and 'dtype' in kwargs:
             raise ValueError("Please provide names or dtype, not both")
         fields = cls.default_fields(**field_args)
@@ -1901,8 +1863,6 @@ class _LSCArrayWithDefaults(LSCArray):
             kwargs['dtype'] = fields_from_names(fields, names).items()
         if 'dtype' not in kwargs:
             kwargs['dtype'] = fields.items()
-        if name is None:
-            name = cls.default_name
         arr = super(_LSCArrayWithDefaults, cls).__new__(cls, shape,
             name=name, **kwargs)
         # set the virtual/method fields
@@ -1961,14 +1921,14 @@ class Waveform(_LSCArrayWithDefaults):
     # subclasses of this class
     _static_fields = {
         # intrinsic parameters
-        ('m1', 'mass1'): float,
-        ('m2', 'mass2'): float,
-        ('s1x', 'spin1x'): float,
-        ('s1y', 'spin1y'): float,
-        ('s1z', 'spin1z'): float,
-        ('s2x', 'spin2x'): float,
-        ('s2y', 'spin2y'): float,
-        ('s2z', 'spin2z'): float,
+        'mass1': float,
+        'mass2': float,
+        'spin1x': float,
+        'spin1y': float,
+        'spin1z': float,
+        'spin2x': float,
+        'spin2y': float,
+        'spin2z': float,
         'lambda1': float,
         'lambda2': float,
         'quadparam1': float,
@@ -1977,7 +1937,7 @@ class Waveform(_LSCArrayWithDefaults):
         'argument_periapsis': float,
         # extrinsic parameters
         'phi_ref': float,
-        ('inc', 'inclination'): float,
+        'inclination': float,
         # waveform parameters
         'sample_rate': int,
         'segment_length': int,
@@ -1989,15 +1949,11 @@ class Waveform(_LSCArrayWithDefaults):
         'phase_order': int,
         'spin_order': int,
         'tidal_order': int,
-        ('apprx', 'approximant'): 'lstring',
+        'approximant': 'lstring',
         'taper': 'lstring',
         'frame_axis': 'lstring',
         'modes_choice': 'lstring',
         }
-
-    @classmethod
-    def default_fields(cls):
-        return cls._static_fields 
 
     # the virtual fields
     @property
@@ -2150,7 +2106,7 @@ class TmpltInspiral(Waveform):
     @classmethod
     def default_fields(cls, nifos=1):
         """
-        Admits argument nifos, which is used to set the size of the ifo
+        Has argument nifos, which is used to set the size of the ifo
         sub-array.
         """
         fields = {
@@ -2182,12 +2138,97 @@ def end_time_from_float(end_time):
     return end_time_s, end_time_ns
 
 
-class SnglEvent(_LSCArrayWithDefaults):
+class _Event(_LSCArrayWithDefaults):
+    """
+    Has default fields for storing information about an event. This is the base
+    class for SnglEvent and CoincEvent.
+
+    By default, the array is initialized with a `template_id` field. If given
+    a `TmpltInspiral` array (which has a `template_id` field), the waveform
+    parameters of the events will be added to the array. See `expand_templates`
+    for details.
+
+    End times are stored in the `end_time_s` field (for seconds) and the
+    `end_time_ns` field (for nanoseconds). The `end_time` property converts
+    these into a floats.
+    """
+    # we define the following as static parameters so they can be inherited by
+    # SnglEvent and CoincEvent
+    _static_fields = {
+        # ids
+        'process_id': int,
+        'event_id': int,
+        'template_id': int,
+        # end times
+        'end_time_s': "int_4s",
+        'end_time_ns': "int_4s",
+        }
+
+    # the virtual fields
+    @property
+    def end_time(self):
+        return self.end_time_s + 1e-9*self.end_time_ns
+        
+    default_virtual_fields = ['end_time']
+
+    def expand_templates(self, tmplt_inspiral_array, get_fields=None,
+            selfs_map_field='template_id', tmplts_map_field='template_id',
+            assume_this_array_sorted=False, assume_templates_sorted=False,
+            assume_is_subset=True):
+        """
+        Given an array of templates, adds the fields from the templates to this
+        array. This is done by getting all rows in the `tmplt_inspiral_array`
+        such that:
+        ``self[selfs_map_field] == tmplt_inspiral_array[tmplts_map_field]``.
+
+        Parameters
+        ----------
+        tmplt_inspiral_array : (any subclass of) LSCArray
+            The array of templates with additional fields to add.
+        get_fields : {None | (list of) strings}
+            The names of the fields to get from the tmplt_inspiral_array.
+            If ``None``, all fields will be retrieved.
+        selfs_map_field : {'template.template_id' | string}
+            The name of the field in self's current template sub-array to use
+            to match to templates in the tmplt_inspiral_array. Default is
+            `template_id`.
+        tmplts_map_field : {'template_id' | string}
+            The name of the field in the tmplt_inspiral_array to match.
+            Default is `template_id`.
+        assume_this_array_sorted : bool
+            Assume that this array is sorted by ``selfs_map_field``. This
+            speeds up the mappings. If False, a sorted copy of
+            this array's ``selfs_map_field`` will be created, which incurs a
+            compuational cost, and increases memory overhead. Default is False.
+        assume_templates_sorted : bool
+            Assume that the templates are sorted by ``tmplts_map_field``.
+            If so, avoids potentially having to sort them. Default
+            is False.
+        assume_is_subset : bool
+            Assume that all of the templates in this array are in the
+            ``tmplt_inspiral_array``. This speeds up the calculation. Default
+            is **True**.
+
+        Returns
+        -------
+        new_array : new instances of this array
+            A copy of this array with the template sub-array containing all
+            of the fields specified by `get_fields`. All methods and properties
+            of the `tmpl_inspiral_array` that are not methods/properties of
+            this array are added to `new_array`.
+        """
+        return self.join(tmplt_inspiral_array, selfs_map_field,
+            other_map_field=tmplts_map_field, get_fields=get_fields,
+            assume_many_to_one=True,
+            assume_this_array_sorted=assume_this_array_sorted,
+            assume_other_array_sorted=assume_templates_sorted,
+            assume_is_subset=assume_is_subset)
+
+
+class SnglEvent(_Event):
     """
     Has default fields for storing information about an event found in a single
-    detector. One of these fields is `ranking_stat`. This can be aliased to
-    any other string at initialization by setting the keyword argument
-    `ranking_stat_alias`; the default is `newsnr`.
+    detector.
 
     By default, the array is initialized with a `template_id` field. If given
     a `TmpltInspiral` array (which has a `template_id` field), the waveform
@@ -2207,8 +2248,6 @@ class SnglEvent(_LSCArrayWithDefaults):
     ['end_time_s', 'detector', 'cont_chisq_dof', 'event_id', 'ranking_stat',
      'bank_chisq', 'chisq', 'chisq_dof', 'cont_chisq', 'process_id', 'snr',
      'bank_chisq_dof', 'end_time_ns', 'sigma', 'template_id']
-    >>> sngls.aliases
-        {'ifo': 'detector', 'newsnr': 'ranking_stat'}
 
     Create a SngEvent array from an hdfcoinc merged file:
 
@@ -2227,17 +2266,6 @@ class SnglEvent(_LSCArrayWithDefaults):
         hsngls['ranking_stat'] = hsngls.snr
         reweight_idx = numpy.where(hsngls['chisq/chisq_dof > 1'])
         hsngls.ranking_stat[reweight_idx] = hsngls['snr'][reweight_idx] / ((1. + hsngls['chisq/chisq_dof'][reweight_idx]**3.)/2.)**(1./6)
-
-    Get the ranking stat by its alias:
-
-    >>> hsngls.ranking_stat
-    array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
-            7.24139452,  7.55083953])
-    >>> hsngls.ranking_stat_alias
-        'newsnr'
-    >>> hsngls.newsnr
-    array([ 9.59688939,  5.25923089,  5.67155045, ...,  5.08446111,
-            7.24139452,  7.55083953])
 
     Expand the template field (see TmpltInspiral help for how to create
     `templates` from an hdf bank file) (note that properties such as `mchirp`,
@@ -2281,29 +2309,13 @@ class SnglEvent(_LSCArrayWithDefaults):
              1.87226772,  2.88923597], dtype=float32))
     """
     default_name = 'sngl_event'
-    ranking_stat_alias = 'newsnr'
 
-    # we define the following as static parameters because they are inherited
-    # by CoincEvent
-    _static_fields = {
-        # ids
-        'process_id': int,
-        'event_id': int,
-        'template_id': int,
-        # end times
-        'end_time_s': "int_4s",
-        'end_time_ns': "int_4s",
-        }
-
+    # Note: the static fields are inherited from _Event
     @classmethod
-    def default_fields(cls, ranking_stat_alias='newsnr'):
-        """
-        The ranking stat alias can be set; default is ``'newsnr'``.
-        """
+    def default_fields(cls):
         fields = {
-            ('ifo', 'detector'): 'S2',
+            'detector': 'S2',
             'sigma': float,
-            ('effsnr', 'ranking_stat'): float,
             'snr': float,
             'chisq': float,
             'chisq_dof': float,
@@ -2316,118 +2328,65 @@ class SnglEvent(_LSCArrayWithDefaults):
             }
         return dict(cls._static_fields.items() + fields.items())
 
-    def __new__(cls, shape, name=None, ranking_stat_alias='newsnr', **kwargs):
-        """
-        Adds ranking_stat_alias to initialization.
-        """
-        field_args = {'ranking_stat_alias': ranking_stat_alias}
-        return super(SnglEvent, cls).__new__(cls, shape, name=name,
-            field_args=field_args, **kwargs)
-
     # the virtual fields
-    @property
-    def end_time(self):
-        return self.end_time_s + 1e-9*self.end_time_ns
-
     @property
     def reduced_chisq(self):
         return self.chisq / self.chisq_dof
 
     @property
     def newsnr(self):
+        """Returns events.newsnr evaluated on the array. Note: this will use
+        the default values for newsnr."""
         events.newsnr(self.snr, self.reduced_chisq)
+
+    @property
+    def effsnr(self):
+        """Returns events.effsnr evaluated on the array. Note: this will use
+        the default values for newsnr."""
+        events.effsnr(self.snr, self.reduced_chisq)
         
-    default_virtual_fields = ['end_time', 'reduced_chisq', 'newsnr']
-
-    def expand_templates(self, tmplt_inspiral_array, get_fields=None,
-            selfs_map_field='template_id', tmplts_map_field='template_id',
-            assume_this_array_sorted=False, assume_templates_sorted=False,
-            assume_is_subset=True):
-        """
-        Given an array of templates, adds the fields from the templates to this
-        array. This is done by getting all rows in the `tmplt_inspiral_array`
-        such that:
-        ``self[selfs_map_field] == tmplt_inspiral_array[tmplts_map_field]``.
-
-        Parameters
-        ----------
-        tmplt_inspiral_array : (any subclass of) LSCArray
-            The array of templates with additional fields to add.
-        get_fields : {None | (list of) strings}
-            The names of the fields to get from the tmplt_inspiral_array.
-            If ``None``, all fields will be retrieved.
-        selfs_map_field : {'template.template_id' | string}
-            The name of the field in self's current template sub-array to use
-            to match to templates in the tmplt_inspiral_array. Default is
-            `template_id`.
-        tmplts_map_field : {'template_id' | string}
-            The name of the field in the tmplt_inspiral_array to match.
-            Default is `template_id`.
-        assume_this_array_sorted : bool
-            Assume that this array is sorted by ```selfs_map_field```. This
-            speeds up the mappings. If False, a sorted copy of
-            this array's ```selfs_map_field``` will be created, which incurs a
-            compuational cost, and increases memory overhead. Default is False.
-        assume_templates_sorted : bool
-            Assume that the templates are sorted by ```tmplts_map_field```.
-            If so, avoids potentially having to sort them. Default
-            is False.
-        assume_is_subset : bool
-            Assume that all of the templates in this array are in the
-            ```tmplt_inspiral_array```. This speeds up the calculation. Default
-            is **True**.
-
-        Returns
-        -------
-        new_array : new instances of this array
-            A copy of this array with the template sub-array containing all
-            of the fields specified by `get_fields`. All methods and properties
-            of the `tmpl_inspiral_array` that are not methods/properties of
-            this array are added to `new_array`.
-        """
-        return self.join(tmplt_inspiral_array, selfs_map_field,
-            other_map_field=tmplts_map_field, get_fields=get_fields,
-            assume_many_to_one=True,
-            assume_this_array_sorted=assume_this_array_sorted,
-            assume_other_array_sorted=assume_templates_sorted,
-            assume_is_subset=assume_is_subset)
+    default_virtual_fields = _Event.default_virtual_fields + \
+        ['reduced_chisq', 'newsnr', 'effsnr']
 
 
-class CoincEvent(SnglEvent):
+class CoincEvent(_Event):
     """
-    Has default fields for storing information about an event found in multiple
-    detectors. Like `SnglEvent`, one of these fields is `ranking_stat`, which
-    can be aliased to another string at initialization (default is `newsnr`). 
-    Also stores end times in a `_s` and `_ns` fields, but these are added
-    together using the `end_time` property. This also has a `template_id`
-    column, and it inherits the `expand_templates` method for adding paramteer
-    information (see `SnglEvent` for details).
+    Has default fields for storing information about an event found in
+    multiple detectors.  Also stores end times in a ``_s`` and ``_ns`` fields,
+    but these are added together using the ``end_time`` property. Like
+    ``SnglEvent``, has a ``template_id`` column and ``expand_templates``
+    method for adding parameter information.
 
-    Unlike `SnglEvent`, `CoincEvent` initialization has an additional keyword
-    `detectors`. This is a list of the names of possible detectors that could
-    form events. The provided names are added as fields to CoincEvent. By
-    default, each detector field has sub-fields `event_id`, `end_time_s`, and
-    `end_time_ns`. These can be used to store information about the single
-    events that formed the coincidence. For example, if
-    ``detectors=['H1', 'L1']``, the array will have fields `H1` and `L1`, each 
-    with their own `event_id` and `end_time_(n)s` fields. If a SnglEvent array
-    is provided, the detector fields can be expanded to include all of the
-    single event parameters, similar to `expand_templates`; see `expand_sngls`
-    for details.  Note that the `end_time` property will also work on the
-    detector end times. For example if `CoincEvent` array `foo` has detector
-    field `H1`, ``foo.H1.end_time`` will return the H1 `end_time_s` and
-    `end_time_ns` as a float.
+    Unlike ``SnglEvent``, ``CoincEvent`` initialization has an additional
+    keyword ``detectors``. This is a list of the names of possible detectors
+    that could form events. The provided names are added as fields to
+    CoincEvent. By default, each detector field has sub-fields ``event_id``,
+    ``end_time_s``, and ``end_time_ns``. These can be used to store
+    information about the single events that formed the coincidence. For
+    example, if ``detectors=['H1', 'L1']``, the array will have fields ``H1``
+    and ``L1``, each with their own ``event_id` and ``end_time_(n)s`` fields.
+    If a ``SnglEvent`` array is provided, the detector fields can be expanded
+    to include all of the single event parameters, similar to
+    ``expand_templates``; see ``expand_sngls`` for details.  Note that the
+    ``end_time`` property will also work on the detector end times. For
+    example if ``CoincEvent`` array ``foo`` has detector field ``H1``,
+    ``foo.H1.end_time`` will return the H1 ``end_time_s`` and ``end_time_ns``
+    as a float.
+
+    Also unlike ``SnglEvent``, ``CoincEvent`` has no ``newsnr`` or ``effsnr``
+    virtual fields. Instead, a ``ranking_stat`` field is provided to store
+    the actual value of the combined new snr.
     
     If one or more events in the array were not detected in all of the
-    detectors provided, the `event_id` for the detector fields they were not
-    detected is is set to `lscarrays.ID_NOT_SET`. The property `detected_in`
-    will return an array of strings listing the detectors that each event was
-    found in.
+    detectors provided, the ``event_id`` for the detector fields they were not
+    detected is is set to ``lscarrays.ID_NOT_SET``. The property
+    ``detected_in`` will return an array of strings listing the detectors that
+    each event was found in.
 
     Other differences from SnglEvent are the default fields for statistics:
-    this has `ifar(_exc)` and `ifap(_exc)` fields for storing inverse false
+    this has ``ifar(_exc)`` and ``ifap(_exc)`` fields for storing inverse false
     alarm rates and inverse false alarm probabilities, respectively. The
-    properties `far` and `fap` return the inverse of these. Inverse fars
+    properties ``far`` and ``fap`` return the inverse of these. Inverse fars
     (faps) are stored because a new empty array will initialize these to 0.
     Thus the initialized fars and faps = infinity.
 
@@ -2506,18 +2465,16 @@ class CoincEvent(SnglEvent):
         SnglEvent.__persistent_attributes__
 
     @classmethod
-    def default_fields(cls, ranking_stat_alias='newsnr',
-            detectors=['detector1', 'detector2']):
+    def default_fields(cls, detectors=['detector1', 'detector2']):
         """
-        Both the ranking stat alias and the maximum number of single-detector
-        fields can be set.
+        The maximum number of single-detector fields can be set.
         """
         fields = {
             'ifar': float,
             'ifar_exc': float,
             'ifap': float,
             'ifap_exc': float,
-            (ranking_stat_alias, 'ranking_stat'): float,
+            'ranking_stat': float,
             'snr': float,
             }
         sngls = {
@@ -2533,12 +2490,11 @@ class CoincEvent(SnglEvent):
             sngls.items())
 
     def __new__(cls, shape, name=None, detectors=['detector1', 'detector2'],
-            ranking_stat_alias='newsnr', **kwargs):
+            **kwargs):
         """
-        Adds nsngls and ranking_stat_alias to initialization.
+        Adds the detectors to the initialization.
         """
-        field_args = {'ranking_stat_alias': ranking_stat_alias,
-            'detectors': detectors}
+        field_args = {'detectors': detectors}
         # add the detectors to the requested names if not already
         if 'names' in kwargs:
             names = kwargs.pop('names')
@@ -2632,12 +2588,12 @@ class CoincEvent(SnglEvent):
             The name of the field in the `sngl_event_array` to match.
             Default is `'event_id'`.
         assume_this_array_sorted : bool
-            Assume that this array is sorted by ```event_id```. This
+            Assume that this array is sorted by ``event_id``. This
             speeds up the mappings. If False, a sorted copy of
-            this array's ```event_id```s will be created internally.
+            this array's ``event_id``s will be created internally.
             Default is False.
         assume_sngls_sorted : bool
-            Assume that the sngls are sorted by ```sngls_map_field```.
+            Assume that the sngls are sorted by ``sngls_map_field``.
             If so, avoids potentially having to sort them. Default
             is False.
         assume_is_subset : bool
@@ -2863,8 +2819,8 @@ class SimInspiral(Waveform):
             'geocent_end_time_s': 'int_4s',
             'geocent_end_time_ns': 'int_4s',
             'distance': float,
-            ('right_ascension', 'ra'): float,
-            ('declination', 'dec'): float,
+            'ra': float,
+            'dec': float,
             'polarization': float,
             # recovered params
             'recovered': ({
@@ -3000,16 +2956,16 @@ class SimInspiral(Waveform):
             Default is ``event_id``.
         assume_many_to_one : bool
             Assume that all of the injections in this array are only mapped to
-            a single event in the ```event_array```. This speeds up the
+            a single event in the ``event_array``. This speeds up the
             expansion. Default is False. 
         assume_this_array_sorted : bool
-            Assume that this array is sorted by ```selfs_map_field```. This
+            Assume that this array is sorted by ``selfs_map_field``. This
             can speed up the mappings. If False, a sorted copy of
-            this array's ```selfs_map_field``` will be created internally.
+            this array's ``selfs_map_field`` will be created internally.
             Default is False.
         assume_events_sorted : bool
             Assume that the recovered events are sorted by
-            ```events_map_field```. If so, avoids potentially having to sort
+            ``events_map_field``. If so, avoids potentially having to sort
             them. Default is False.
         assume_is_subset : bool
             Assume that all of the recovered events in this array are in the
