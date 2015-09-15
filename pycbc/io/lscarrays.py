@@ -2337,13 +2337,13 @@ class SnglEvent(_Event):
     def newsnr(self):
         """Returns events.newsnr evaluated on the array. Note: this will use
         the default values for newsnr."""
-        events.newsnr(self.snr, self.reduced_chisq)
+        return events.newsnr(self.snr, self.reduced_chisq)
 
     @property
     def effsnr(self):
         """Returns events.effsnr evaluated on the array. Note: this will use
         the default values for newsnr."""
-        events.effsnr(self.snr, self.reduced_chisq)
+        return events.effsnr(self.snr, self.reduced_chisq)
         
     default_virtual_fields = _Event.default_virtual_fields + \
         ['reduced_chisq', 'newsnr', 'effsnr']
