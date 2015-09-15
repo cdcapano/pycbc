@@ -71,7 +71,6 @@ def get_fields_to_load(arr, names):
     fields. If virtual fields or method fields, will determine what fields are
     needed for them.
     """
-    logging.info('determining what fields are needed')
     needed_fields = set()
     for name in names:
         if name in arr.all_fieldnames:
@@ -79,7 +78,6 @@ def get_fields_to_load(arr, names):
         else:
             needed_fields.update(lscarrays.get_needed_fieldnames(arr,
                     lscarrays.get_fields_from_arg(name)))
-    logging.info('loading fields %s' %(', '.join(names)))
     return list(needed_fields)
 
 def _identity(data):
@@ -239,7 +237,6 @@ def dummy_tmplt_inspiral_from_bankhdf(bankhdf):
         An instance of an lscarrays.TmpltInspiral array, with all of the
         possible fields that can be loaded.
     """
-    logging.info('creating dummy tmplt_inspiral array')
     # temporarily silence logging
     logger = logging.getLogger()
     loglevel = logger.level
@@ -368,6 +365,7 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         dummy_arr = dummy_sngl_events_from_triggermerge(triggermergehdf,
             bankhdf=bankhdf)
         names = set(get_fields_to_load(dummy_arr, names))
+        logging.info('loading fields %s' %(', '.join(names)))
         # parse what names correspond to what data file
         if bankhdf is not None:
             dummy_arr = dummy_tmplt_inspiral_from_bankhdf(bankhdf)
@@ -462,7 +460,6 @@ def dummy_sngl_events_from_triggermerge(triggermergehdf, bankhdf=None):
         An instance of an lscarrays.SnglEvent array with all of the possible
         fields that can be loaded.
     """
-    logging.info('creating dummy sngl_events array')
     # temporarily silence logging
     logger = logging.getLogger()
     loglevel = logger.level
@@ -611,6 +608,7 @@ def coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         dummy_arr = dummy_coinc_events_from_statmap(statmaphdf, datatype,
             bankhdf=bankhdf, triggermergehdfs=triggermergehdfs)
         names = set(get_fields_to_load(dummy_arr, names))
+        logging.info('loading fields %s' %(', '.join(names)))
         # check for names that start with detector names;
         # detectors that are not specified will not be retrieved
         detectors = {det: detectors[det] for det in detectors \
@@ -706,7 +704,6 @@ def dummy_coinc_events_from_statmap(statmaphdf, datatype, bankhdf=None,
         An instance of an lscarrays.CoincEvent array with all of the possible
         fields that can be loaded.
     """
-    logging.info('creating dummy coinc_events array')
     # temporarily silence logging
     logger = logging.getLogger()
     loglevel = logger.level
