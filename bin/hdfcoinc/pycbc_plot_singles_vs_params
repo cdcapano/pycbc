@@ -33,11 +33,14 @@ import pycbc.pnutils
 import pycbc.events
 import pycbc.results
 import pycbc.io
+from pycbc.io.hdfcoinc import lscarray_utils
 import sys
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--single-trig-file', type=str, required=True,
                     help='Path to file containing single-detector triggers in HDF5 format')
+parser.add_argument('--coinc-file', metavar='FILE:DATATYPE',
+                    help='Specify an HDF5 file containing coincident triggers. This will cause only singles to be plotted that survive coincidence. You must also specify the datatype to use; foreground, background, or background_exc.')
 parser.add_argument('--bank-file', type=str, required=True,
                     help='Path to file containing template bank in HDF5 format')
 parser.add_argument('--veto-file', type=str,
@@ -69,12 +72,29 @@ opts = parser.parse_args()
 
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
-filter_func = None # placeholder for a general filter function for the triggers
-trigs = pycbc.io.SingleDetTriggers(opts.single_trig_file, opts.bank_file,
-                  opts.veto_file, opts.segment_name, filter_func, opts.detector)
+trigs = lscarray_utils.sngl_events_from_triggermerge(opts.single_trig_file,
+        detectors=opts.detector, bankhdf=opts.bank_file,
+        veto_file=opts.veto_file,
+        segment_name=opts.segment_name,
+        names=[opts.x_var, opts.y_var, opts.z_var])
 
-x = getattr(trigs, opts.x_var)
-y = getattr(trigs, opts.y_var)
+if opts.coinc_file is not None:
+    logging.info('loading coincs')
+    coinc_info = opts.coinc_file.split(':')
+    if len(coinc_info) != 2:
+        raise ValueError('if specifying a coinc-file, must also specify the ' +
+            'datatype to load; see help')
+    coinc_file, datatype = opts.coinc_file.split(':')
+    coincs = lscarray_utils.coinc_events_from_statmap(
+        coinc_file, datatype, detectors=[opts.detector])
+    # get the idx to keep
+    keepids = np.unique(coincs['%s.event_id' %(opts.detector)])
+    mask = np.where(np.in1d(trigs['event_id'], keepids))
+    logging.info('keeping %i of %i triggers' %(mask[0].size, trigs.size))
+    trigs = trigs[mask]
+
+x = trigs[opts.x_var]
+y = trigs[opts.y_var]
 
 hexbin_style = {
     'gridsize': opts.grid_size,
