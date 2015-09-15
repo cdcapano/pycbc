@@ -283,21 +283,6 @@ sev_triggermerge_fieldmap = {
 triggermerge_sev_fieldmap = dict([[val[1], key] \
     for key,val in sev_triggermerge_fieldmap.items()])
 
-def statmap_data_by_cev_name(name, statmapdata):
-    """
-    Given the name of a field in a CoincEvent array, retrieves the associated
-    value from a data group in a statmap file.
-    """
-    try:
-        func, statmapname = cev_statmap_fieldmap[name]
-        return func(statmapdata[statmapname])
-    except KeyError:
-        if name == 'event_id':
-            return numpy.arange(len(statmapdata[statmapdata.keys()[0]]))
-        else:
-            # unknown name, just try to retrieve it from the statmap data
-            return statmapdata[name]
-
 def triggermerge_data_by_sev_name(name, mergedata):
     """
     Given the name of a field in a SnglEvent array, retrieves the associated
@@ -308,7 +293,7 @@ def triggermerge_data_by_sev_name(name, mergedata):
         return func(mergedata[triggermapname])
     except KeyError:
         if name == 'event_id':
-            return numpy.arange(len(mergedata['snr']))
+            return numpy.arange(mergedata[mergedata.keys()[0]].size)
         else:
             # unknown name, just try to retrieve it from the triggermerge data
             return mergedata[name]
@@ -325,7 +310,8 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
     triggermergehdf : file path, open h5py.File or similar
         Either the file path to a TRIGGER_MERGE file, an open TRIGGER_MERGE
         file, or a dictionary of similar structure. If a file path, the file
-        will be opened and closed. If an open file, the file will not be closed.
+        will be opened and closed. If an open file, the file will not be
+        closed.
     detectors : {None | (list of) strings}
         The names of the detectors to load. If None, all of the detectors found
         in the TRIGGER_MERGE file will be loaded.
@@ -337,9 +323,12 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
         be added to the SnglEvent array (via the ```expand_templates```
         method). 
     names : {None | (list of) strings}
-        Only get fields with the specified names. May be fields, virtual fields,
-        or method fields. If any virtual fields or method fields are listed,
-        the fields needed for them will be loaded.
+        Only get fields with the specified names. May be fields, virtual
+        fields, method fields, or any python string containing any of those
+        (assuming ignore_unknown_names is True; see below). If any virtual
+        fields or method fields are listed, the fields needed for them will be
+        loaded. If a python string is provided, the string will be parsed for
+        the known fields.
 
     Returns
     -------
@@ -365,41 +354,43 @@ def sngl_events_from_triggermerge(triggermergehdf, detectors=None,
             raise ValueError("detector(s) %s not found " %(
                 ','.join(missing_detectors)) + 'in the trigger merge file')
     # parse the names
-    if isinstance(names, str) or isinstance(names, unicode):
-        names = [names]
     if names is None:
-        names = [name for name,hdfname in sev_triggermerge_fieldmap.items() \
-            if hdfname[1] in triggermergehdf[detectors[0]]]
+        names = set([name \
+            for name,hdfname in sev_triggermerge_fieldmap.items() \
+            if hdfname[1] in triggermergehdf[detectors[0]]])
         if bankhdf is not None:
             banknames = bankhdf.keys()
     else:
-        # determine what fields to load; we'll need a dummy blank array to parse
+        if isinstance(names, str) or isinstance(names, unicode):
+            names = [names]
+        # determine what fields to load; we'll need a dummy blank array 
+        # to parse
         dummy_arr = dummy_sngl_events_from_triggermerge(triggermergehdf,
             bankhdf=bankhdf)
-        names = get_fields_to_load(dummy_arr, names)
+        names = set(get_fields_to_load(dummy_arr, names))
         # parse what names correspond to what data file
         if bankhdf is not None:
-            banknames = [name for name in names if name in bankhdf.keys()]
+            dummy_arr = dummy_tmplt_inspiral_from_bankhdf(bankhdf)
+            banknames = set(dummy_arr.all_names) & names
             # remove the bank names from names
-            names = [name for name in names if name not in banknames]
+            names -= banknames
             # ensure that template_id is in both the banknames and the names
-            if 'template_id' not in names:
-                names.append('template_id')
-            if 'template_id' not in banknames:
-                banknames.append('template_id')
-    # ensure event_id and detectors is created
-    if 'event_id' not in names:
-        names.append('event_id')
-    if 'detector' not in names:
-        names.append('detector')
+            # if we will be retrieving anything from the bank
+            if banknames:
+                names.update(['template_id'])
+                banknames.update(['template_id'])
+                banknames = list(banknames)
+    # ensure event_id and detectors are created
+    names.update(['event_id', 'detector'])
     # ensure end_time is in names if a veto file is specified
     if veto_file is not None and 'end_time' not in names:
-        names.append('end_time')
-    # convert end_time to end_time_s, end_time_ns
+        names.update(['end_time_s', 'end_time_ns'])
+    # if end_time is in names, make it end_time_s, end_time_ns
     if 'end_time' in names:
-        names.pop(names.index('end_time'))
-    names.append('end_time_s')
-    names.append('end_time_ns')
+        names.remove('end_time')
+        names.update(['end_time_s', 'end_time_ns'])
+    # LSCArrays expects a list of names
+    names = list(names)
     # load the data
     logging.info('loading events')
     sngls = None

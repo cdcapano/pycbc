@@ -48,6 +48,47 @@ def parse_coinc_files_arg(args):
     # check that the number of trigger merge files
     return coinc_files
 
+def print_possible_fields(coinc_files, datatypes, bankhdf):
+    """Given a dictionary of coinc fields and possible triggermerge files
+    (the output of parse_coinc_files_arg), prints the possible fields.
+
+    Parameters
+    ----------
+    coinc_files : dict
+        Keys are the names of STATMAP hdf files, keys are lists of
+        TRIGGERMERGE files (or None); basically, the output of
+        parse_coinc_files_arg.
+    datatypes : (list of) string
+        One or more datatypes to retrieve from the coinc files. The possible
+        fields will be taken from the common values across all of the
+        datatypes.
+    bankhdf : {None | string | open h5py.File}
+        Path to BANKHDF file, open BANKHDF file, or similar.
+
+    Returns
+    -------
+    string
+        A string giving the available fields and methods; this can be printed
+        to the terminal.
+    """
+    possible_fields = set()
+    possible_methods = set()
+    for coinc_file, triggermerge_files in coinc_files.items():
+        for datatype in datatypes:
+            dummy_cev = lscarray_utils.dummy_coinc_events_from_statmap(
+                coinchdf, datatype, bankhdf=bankhdf,
+                triggermergehdfs=triggermerge_files)
+            possible_fields.update(dummy_cev.all_fieldnames + \
+                dummy_cev.virtual_fields)
+            possible_methods.update(dummy_cev.method_fields.keys())
+
+    outstr = "Available fields:\n\t%s" %(
+        '\n\t'.join(sorted(possible_fields)))
+    outstr += "\nAvailable method fields and their needed arguments:\n\t%s"%(
+        '\n\t'.join(sorted(['%s: %s' %(name, dummy_cev.method_fields[name])
+            for name in possible_methods])))
+    return outstr
+
 def get_all_dataset_paths(hdffile, skipfields=[], prefix=''):
     """Recursively searches an hdf file or a group in an hdf file for all
     dataset paths, returning the names.
@@ -146,9 +187,6 @@ parser.add_argument('-H', '--print-possible-fields', action='store_true', defaul
                     help="Print out all possible fields the may be used for binning given the coinc-file(s), bank-file, and (if provided) trigger-merge file(s) then exit.")
 args = parser.parse_args()
 
-# turn on verbose if printing possible fields
-if args.print_possible_fields:
-    args.verbose = True
 
 pycbc.init_logging(args.verbose)
 
@@ -160,7 +198,6 @@ if not args.print_possible_fields:
         raise ValueError('bins is required')
     if len(args.output_files) != len(args.bins):
         raise ValueError('Number of bins and output files does not match') 
-
 if (args.bank_file is None or args.coincfiles is None):
     raise ValueError("must provide atleast one coinc-file and one bank-file")
 
@@ -168,52 +205,9 @@ datatypes = args.datatypes.split(',')
 
 coinc_files = parse_coinc_files_arg(args)
 
-bankhdf = h5py.File(args.bank_file, 'r')
-
-# Construct a dummy CoincEvent array with all possible fields that we can
-# load from the data files. If multiple coinc files are provided, the possible
-# fields are the intersection of the fields from all of the files.
-# Note: we'll just use the last dummy CoincEvent array that was loaded
-possible_fields = None
-for coinc_file, triggermerge_files in coinc_files.items():
-    coinchdf = h5py.File(coinc_file, 'r')
-    if triggermerge_files is not None:
-        triggermerge_files = [h5py.File(thisfile, 'r') \
-            for thisfile in triggermerge_files]
-    # We'll just use the first datatype listed in datatypes to create the dummy
-    dummy_cev = lscarray_utils.dummy_coinc_events_from_statmap(coinchdf,
-        datatypes[0], bankhdf=bankhdf, triggermergehdfs=triggermerge_files)
-    coinchdf.close()
-    if triggermerge_files is not None:
-        [thisfile.close() for thisfile in triggermerge_files]
-    if possible_fields is None:
-        possible_fields = set(dummy_cev.all_fieldnames + \
-            dummy_cev.virtual_fields)
-        possible_methods = set(dummy_cev.method_fields.keys())
-    else:
-        possible_fields &= set(dummy_cev.all_fieldnames + \
-            dummy_cev.virtual_fields)
-        possible_methods &= set(dummy_cev.method_fields.keys())
-
-# if just printing the possible fields, print and exit
 if args.print_possible_fields:
-    print "Available fields:\n\t%s" %(
-        '\n\t'.join(sorted(possible_fields)))
-    print "Available method fields and their needed arguments:\n\t%s"%(
-        '\n\t'.join(sorted(['%s: %s' %(name, dummy_cev.method_fields[name])
-            for name in possible_methods])))
-    bankhdf.close()
+    print print_possible_fields(coinc_files, datatypes, bankhdf=args.bank_file)
     exit(0)
-
-# figure out what fields we'll need to load for the binning, to minimize I/O
-# and memory overhead
-needed_fields = set()
-for thisbin in args.bins:
-    needed_fields.update(
-        lscarrays.get_needed_fieldnames(dummy_cev,
-            lscarrays.get_fields_from_arg(thisbin)))
-needed_fields = list(needed_fields)
-logging.info('loading fields %s' %(', '.join(sorted(needed_fields))))
 
 # open the output files
 outfiles = [h5py.File(outname, 'w') for outname in args.output_files]
@@ -223,15 +217,12 @@ logging.info('binning coincs')
 for ii,(coinc_file, triggermerge_files) in enumerate(coinc_files.items()):
     logging.info('coinc file %i / %i' %(ii+1, len(coinc_files.keys())))
     coinchdf = h5py.File(coinc_file, 'r')
-    if triggermerge_files is not None:
-        triggermerge_files = [h5py.File(thisfile, 'r') \
-            for thisfile in triggermerge_files]
     # cycle over the datatypes to apply the bins to each type
     for datatype in datatypes:
         # construct the coinc event array with the needed fields
         coinc_events = lscarray_utils.coinc_events_from_statmap(coinchdf,
-            datatype, bankhdf=bankhdf, triggermergehdfs=triggermerge_files,
-            names=needed_fields)
+            datatype, bankhdf=args.bank_file,
+            triggermergehdfs=triggermerge_files, names=args.bins)
         # cycle over the bins, getting the indices that apply
         for jj,(thisbin, outfile) in enumerate(zip(args.bins, outfiles)):
             logging.info('datatype %s: bin %i / %i' %(
@@ -257,9 +248,7 @@ for ii,(coinc_file, triggermerge_files) in enumerate(coinc_files.items()):
             overwrite_attrs=False)
     # close and move on to the next
     coinchdf.close()
-    [thisfile.close() for thisfile in triggermerge_files]
 
 # close and exit
-bankhdf.close()
 for outfile in outfiles:
     outfile.close()
