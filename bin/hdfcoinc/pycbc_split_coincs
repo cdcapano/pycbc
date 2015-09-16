@@ -73,19 +73,66 @@ def print_possible_fields(coinc_files, datatypes, bankhdf):
     """
     possible_fields = set()
     possible_methods = set()
+    sngls_virtual_fields = {}
+    sngls_method_fields = {}
+    all_method_fields = {}
+    if bankhdf is not None:
+        dummy_bank = lscarray_utils.dummy_tmplt_inspiral_from_bankhdf(bankhdf)
     for coinc_file, triggermerge_files in coinc_files.items():
+        # we'll need the sngl event arrays to determine what virtual fields
+        # apply to the singles
+        for tm in triggermerge_files:
+            dummy_sev = lscarray_utils.dummy_sngl_events_from_triggermerge(tm)
+            det = dummy_sev.detector[0]
+            newfields = set(['%s.%s' %(det, vf) \
+                for vf in dummy_sev.virtual_fields])
+            try:
+                sngls_virtual_fields[det] &= newfields
+            except KeyError:
+                sngls_virtual_fields[det] = newfields
+            newfields = {'%s.%s' %(det, fn): mf
+                for fn,mf in dummy_sev.method_fields.items()}
+            all_method_fields.update(newfields)
+            newfields = set(newfields.keys())
+            try:
+                sngls_method_fields[det] &= newfields
+            except KeyError:
+                sngls_method_fields[det] = newfields
         for datatype in datatypes:
             dummy_cev = lscarray_utils.dummy_coinc_events_from_statmap(
-                coinchdf, datatype, bankhdf=bankhdf,
+                coinc_file, datatype, bankhdf=bankhdf,
                 triggermergehdfs=triggermerge_files)
-            possible_fields.update(dummy_cev.all_fieldnames + \
-                dummy_cev.virtual_fields)
-            possible_methods.update(dummy_cev.method_fields.keys())
-
+            # have to be careful with virtual/method fields; they may only
+            # apply to the sngl-detector subarrays
+            newfields = set(dummy_cev.all_fieldnames) | (
+                set(dummy_cev.virtual_fields) & \
+                set(dummy_cev.default_virtual_fields))
+            if bankhdf is not None:
+                newfields |= set(dummy_cev.virtual_fields) & \
+                    set(dummy_bank.virtual_fields)
+            if not possible_fields:
+                possible_fields = newfields
+            else:
+                possible_fields &= newfields
+            newfields = set(dummy_cev.method_fields.keys()) & \
+                set(dummy_cev.default_method_fields.keys())
+            if bankhdf is not None:
+                newfields |= set(dummy_cev.method_fields.keys()) & \
+                    set(dummy_bank.method_fields.keys())
+            if not possible_methods:
+                possible_methods = newfields
+            else:
+                possible_methods &= newfields
+            all_method_fields.update({fn: dummy_cev.method_fields[fn] \
+                for fn in newfields})
+    for fs in sngls_virtual_fields.values():
+        possible_fields.update(fs)
+    for fs in sngls_method_fields.values():
+        possible_methods.update(fs)
     outstr = "Available fields:\n\t%s" %(
         '\n\t'.join(sorted(possible_fields)))
     outstr += "\nAvailable method fields and their needed arguments:\n\t%s"%(
-        '\n\t'.join(sorted(['%s: %s' %(name, dummy_cev.method_fields[name])
+        '\n\t'.join(sorted(['%s: %s' %(name, all_method_fields[name])
             for name in possible_methods])))
     return outstr
 
