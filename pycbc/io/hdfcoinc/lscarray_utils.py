@@ -149,7 +149,7 @@ def construct_inmemory_hdfstruct(hdffile):
     length 1 and 0. Also adds the hdffile's attrs as an attribute of the dict.
     """
     data = hdf_as_empty_dict(hdffile)
-    data.attrs = hdffile.attrs
+    data.attrs = dict(hdffile.attrs.items())
     data.filename = hdffile.filename
     return data
 

@@ -557,8 +557,10 @@ def join_arrays(this_array, other_array, map_field, expand_field_name=None,
     # if with_fields is not a copy, so we'll strip those out
     expanded_info = _expand_array(this_array, other_array, map_field,
         other_map_field, mask=mask, expand_field_name=expand_field_name,
-        assume_this_array_sorted=True, assume_other_array_sorted=True,
-        assume_many_to_one=True, assume_is_subset=assume_is_subset)
+        assume_this_array_sorted=assume_this_array_sorted,
+        assume_other_array_sorted=assume_other_array_sorted,
+        assume_many_to_one=assume_many_to_one,
+        assume_is_subset=assume_is_subset)
     # if the map fields are the same name, remove from the expanded info
     # to avoid name collisions
     if expand_field_name is None and map_field == other_map_field:
@@ -622,6 +624,7 @@ def _expand_array(this_array, other_array, map_field, other_map_field,
             other_array.sort(order=other_map_field)
         if not assume_this_array_sorted:
             sorter = this_array.argsort()
+            inv_sorter = numpy.arange(this_array.size)[sorter].argsort()
         else:
             sorter = None
         indices = numpy.empty(other_array.size+1, dtype=int)
@@ -630,6 +633,9 @@ def _expand_array(this_array, other_array, map_field, other_map_field,
             other_array[other_map_field], side='right', sorter=sorter)
         counts = numpy.diff(indices)
         expanded_info = numpy.repeat(other_array, counts)
+        # if the array wasn't sorted, put expanded info back into unsorter order
+        if not assume_this_array_sorted:
+            expanded_info = expanded_info[inv_sorter]
         # put all the fields under a single field if expand_field_name is
         # specified
         if expand_field_name is not None:
@@ -1832,7 +1838,7 @@ class _LSCArrayWithDefaults(LSCArray):
     """
     default_name = None
     _static_fields = {}
-    defaul_virtual_fields = []
+    default_virtual_fields = []
     default_method_fields = {}
 
     @classmethod
@@ -1869,6 +1875,32 @@ class _LSCArrayWithDefaults(LSCArray):
         arr.virtual_fields = cls.default_virtual_fields
         arr.method_fields = cls.default_method_fields
         return arr
+
+    @classmethod
+    def from_arrays(cls, arrays, name=None, **kwargs):
+        """Wraps LSCArrays.from_arrays to add default name, and virtual/method
+        fields.
+        """
+        obj = super(_LSCArrayWithDefaults, cls).from_arrays(arrays,
+            name=name, **kwargs)
+        if obj.name is None:
+            obj.name = cls.default_name
+        obj.virtual_fields = cls.default_virtual_fields
+        obj.method_fields = cls.default_method_fields
+        return obj
+
+    @classmethod
+    def from_records(cls, records, name=None, **kwargs):
+        """Wraps LSCArrays.from_records to add default name, and virtual/method
+        fields.
+        """
+        obj = super(_LSCArrayWithDefaults, cls).from_records(arrays,
+            name=name, **kwargs)
+        if obj.name is None:
+            obj.name = cls.default_name
+        obj.virtual_fields = cls.default_virtual_fields
+        obj.method_fields = cls.default_method_fields
+        return obj
 
     def add_default_fields(self, names, **kwargs):
         """
@@ -2067,8 +2099,6 @@ class Waveform(_LSCArrayWithDefaults):
         }
     
 
-
-
 class TmpltInspiral(Waveform):
     """
     Subclasses Waveform, with default name `tmplt_inspiral`. Adds fields
@@ -2076,9 +2106,6 @@ class TmpltInspiral(Waveform):
     ifo(s) the template is filtered in. The `ifo` field may have more than one
     ifo listed. The maxium length of this field is specified at creating using
     the `nifos` key word.
-   
-    **Default fields:**
-    %s
 
     Examples
     --------
