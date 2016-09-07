@@ -215,6 +215,15 @@ class _BoundedDist(object):
         return _bounded_from_config(cls, cp, section, variable_args,
             bounds_required=bounds_required)
 
+class _CyclicBoundedDist(_BoundedDist):
+    """In herits from bounded, but uses the principal value of the given
+    parameters to check if they are in the desired bounds.
+    """
+    def __contains__(self, params):
+        # map the given parameters to their principal values
+        params = dict([[p, val %(2*numpy.pi)] for p,val in params.items()])
+        return super(_BoundedDist, self).__contains__(params)
+
 
 class Uniform(_BoundedDist):
     """
@@ -413,6 +422,11 @@ class UniformAngle(Uniform):
             params[p] = (bnds[0]*numpy.pi, bnds[1]*numpy.pi)
         super(UniformAngle, self).__init__(**params)
 
+    def __contains__(self, params):
+        # map the given parameters to their principal values
+        params = dict([[p, val %(2*numpy.pi)] for p,val in params.items()])
+        return super(UniformAngle, self).__contains__(params)
+
     @classmethod
     def from_config(cls, cp, section, variable_args):
         """Returns a distribution based on a configuration file. The parameters
@@ -440,7 +454,7 @@ class UniformAngle(Uniform):
             bounds_required=False)
 
 
-class SinAngle(_BoundedDist):
+class SinAngle(_CyclicBoundedDist):
     """
     A sine distribution between the given bounds, which must be within
     [0,pi). If no bounds are provided, will default to [0, pi). The
@@ -612,7 +626,7 @@ class CosAngle(SinAngle):
     _defaultbnds = (-0.5, 0.5)
 
 
-class UniformSolidAngle(_BoundedDist):
+class UniformSolidAngle(_CyclicBoundedDist):
     """
     A distribution that is uniform in the solid angle of a sphere. The names
     of the two angluar parameters can be specified on initalization.
