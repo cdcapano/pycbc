@@ -220,6 +220,24 @@ class _BaseLikelihoodEvaluator(object):
         return self._data
 
     @property
+    def detector_names(self):
+        """Returns the detector names used by the waveform generator.
+        """
+        return self.waveform_generator.detector_names
+
+    @property
+    def variable_args(self):
+        """Returns the variable args used by the waveform generator.
+        """
+        return self.waveform_generator.variable_args
+
+    @property
+    def static_args(self):
+        """Returns the static args used by the waveform generator.
+        """
+        return self.waveform_generator.static_args
+
+    @property
     def lognl(self):
         """Returns the log of the noise likelihood."""
         return self._lognl
@@ -598,6 +616,108 @@ class GaussianLikelihood(_BaseLikelihoodEvaluator):
         else:
             pr = lr = None
         return self._formatreturn(logplr + self._lognl, prior=pr, loglr=lr)
+
+
+class MultiEventLikelihood(_BaseLikelihoodEvaluator):
+    """Computes log likelihood values from multiple events.
+
+    Parameters
+    ----------
+    all_variable_args : list
+        List of names of all of the variable arguments. Arguments that are
+        used for specific events should have the event name at the beginning
+        of the argument name, e.g., `eventname_foo`. The order of values passed
+        to this class when evaluating the likelihood are assumed to be the same
+        as the order specified in `all_variable_args`.
+    event_likelihood_evaluators : dict
+        A dictionary of event names -> likelihood evaluators.
+    common_priors : PriorEvaluator
+        Priors for the common parameters (those without event name prefixes).
+        If None, `noprior` will be used.
+    return_meta : {True, bool}
+        If True, `logposterior` and `logplr` will return the value of the
+        prior and the loglikelihood ratio, along with the posterior/plr.
+    """
+    name = "multi_event"
+
+    def __init__(self, all_variable_args, event_likelihood_evaluators,
+                 common_priors=None, return_meta=True):
+        self._event_names = event_likelihood_evaluators.keys()
+        self._variable_args = all_variable_args
+        self._likelihood_evaluators = event_likelihood_evaluators
+        # store prior
+        if prior is None:
+            self._prior = _noprior 
+        else:
+            # check that the variable args of the prior evaluator is the same
+            # as the waveform generator
+            if prior.variable_args != self._waveform_generator.variable_args:
+                raise ValueError("variable args of prior and waveform "
+                    "generator do not match")
+            self._prior = prior
+        # initialize the log nl to 0
+        self._lognl = None
+        self.return_meta = return_meta
+       
+
+    @property
+    def event_names(self):
+        """Returns the event names.
+        """
+        return self._event_names
+
+    @property
+    def likelihood_evaluators(self):
+        """Returns the likelihood evaluators used by the events.
+        """
+        return self._likelihood_evaluators
+
+    @property
+    def waveform_generator(self):
+        """Returns the waveform generators are used for each event."""
+        return {ename: l._waveform_generator
+                for ename,l in self._likelihood_evaluators.items()}
+
+    @property
+    def data(self):
+        """Returns the data that are used for each event."""
+        return {ename: l._data
+                for ename,l in self._likelihood_evaluators.items()}
+
+    @property
+    def detector_names(self):
+        """Returns the set of detector names used by all of the events.
+        """
+        return list(set(l._waveform_generator.detector_names
+                        for l in self._likelihood_evaluators.values()))
+
+    @property
+    def variable_args(self):
+        """Returns the variable args used for all of the events.
+        """
+        return self._variable_args
+
+    @property
+    def static_args(self):
+        """Returns the static args used for all of the events.
+        """
+        return self._static_args
+
+    def prior(self, params):
+        """This function should return the prior of the given params.
+        """
+        return self._prior(params)
+
+    def loglikelihood(self, params):
+        """Returns the natural log of the likelihood function.
+        """
+        raise NotImplementedError("Likelihood function not set.")
+
+    def loglr(self, params):
+        """Returns the natural log of the likelihood ratio.
+        """
+        raise NotImplementedError("Likelihood ratio function not set.")
+
 
 likelihood_evaluators = {GaussianLikelihood.name: GaussianLikelihood}
 
