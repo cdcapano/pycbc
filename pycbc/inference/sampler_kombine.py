@@ -74,7 +74,7 @@ class KombineSampler(BaseMCMCSampler):
             raise ImportError("kombine is not installed.")
 
         # construct sampler for use in KombineSampler
-        ndim = len(likelihood_evaluator.waveform_generator.variable_args)
+        ndim = len(likelihood_evaluator.variable_args)
         sampler = kombine.Sampler(nwalkers, ndim, likelihood_evaluator,
                                   transd=transd, processes=processes)
         # initialize
