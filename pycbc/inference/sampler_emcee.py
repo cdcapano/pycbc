@@ -76,7 +76,7 @@ class EmceeEnsembleSampler(BaseMCMCSampler):
                 processes=processes)
 
         # construct the sampler
-        ndim = len(likelihood_evaluator.waveform_generator.variable_args)
+        ndim = len(likelihood_evaluator.variable_args)
         sampler = emcee.EnsembleSampler(nwalkers, ndim, likelihood_evaluator,
                                         pool=pool)
         # initialize
@@ -297,10 +297,10 @@ class EmceePTSampler(BaseMCMCSampler):
             pool = emcee.interruptible_pool.InterruptiblePool(
                 processes=processes)
 
-        ndim = len(likelihood_evaluator.waveform_generator.variable_args)
+        ndim = len(likelihood_evaluator.variable_args)
         sampler = emcee.PTSampler(ntemps, nwalkers, ndim,
                                   likelihood_evaluator,
-                                  likelihood_evaluator._prior,
+                                  likelihood_evaluator._prior_distribution,
                                   pool=pool)
         # initialize
         super(EmceePTSampler, self).__init__(
@@ -358,7 +358,7 @@ class EmceePTSampler(BaseMCMCSampler):
         logp = self._sampler.lnprobability - logl
         # compute the likelihood ratio
         loglr = logl - self.likelihood_evaluator.lognl
-        return FieldArray.from_kwargs(loglr=loglr, prior=logp)
+        return FieldArray.from_kwargs(loglr=loglr, logprior=logp)
 
     @property
     def lnpost(self):
@@ -559,7 +559,8 @@ class EmceePTSampler(BaseMCMCSampler):
         # map sample values to the values that were actually passed to the
         # waveform generator and prior evaluator
         samples = numpy.array(
-            self.likelihood_evaluator._prior.apply_boundary_conditions(
+            self.likelihood_evaluator._prior_distribution.
+            apply_boundary_conditions(
             samples.transpose(3,0,1,2))).transpose(1,2,3,0)
 
         group = fp.samples_group + '/{name}/temp{tk}/walker{wi}'
@@ -590,7 +591,7 @@ class EmceePTSampler(BaseMCMCSampler):
     def write_likelihood_stats(self, fp, max_iterations=None):
         """Writes the given likelihood array to the given file. Results are
         written to: `fp[fp.stats_group/{field}/temp{k}/walker{i}]`, where
-        `{field}` is the name of stat (`loglr`, `prior`), `{k}` is a
+        `{field}` is the name of stat (`loglr`, `logprior`), `{k}` is a
         temperature index (smaller = colder) and `{i}` is the index of a
         walker.
 
