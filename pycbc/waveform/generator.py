@@ -464,13 +464,18 @@ class FDomainDetFrameGenerator(object):
      'L1': <pycbc.types.frequencyseries.FrequencySeries at 0x116637a50>}
     """
 
-    location_args = set(['tc', 'ra', 'dec', 'polarization'])
+    location_args = set(['tc', 'ra', 'dec', 'polarization', 'tc_offset'])
+    optional_args = {'tc_offset': 0.}
 
     def __init__(self, rFrameGeneratorClass, epoch, detectors=None,
             variable_args=(), **frozen_params):
         # initialize frozen & current parameters:
         self.current_params = frozen_params.copy()
         self._static_args = frozen_params.copy()
+        # add any optional defaults
+        for arg,val in self.optional_args.items():
+            if arg not in variable_args and arg not frozen_params:
+                self._static_args[arg] = val
         # we'll separate out frozen location parameters from the frozen
         # parameters that are sent to the rframe generator
         self.frozen_location_args = {}
@@ -491,8 +496,11 @@ class FDomainDetFrameGenerator(object):
             # FIXME: use the following when we switch to 2.7
             #self.detectors = {det: Detector(det) for det in detectors}
             self.detectors = dict([(det, Detector(det)) for det in detectors])
-            missing_args = [arg for arg in self.location_args if not
-                (arg in self.current_params or arg in self.variable_args)]
+            missing_args = [arg
+                            for arg in self.location_args -
+                                       set(self.optional_args.keys())
+                            if not (arg in self.current_params or
+                                    arg in self.variable_args)]
             if any(missing_args):
                 raise ValueError("detectors provided, but missing location "
                     "parameters %s. " %(', '.join(missing_args)) +
@@ -501,6 +509,11 @@ class FDomainDetFrameGenerator(object):
         else:
             self.detectors = {'RF': None}
         self.detector_names = sorted(self.detectors.keys())
+        # add the optional args if they were not requested
+        for arg,val in self.optional_args:
+            if arg not in self.current_params:
+                self.current_params[arg] = val
+            
 
     def set_epoch(self, epoch):
         """Sets the epoch; epoch should be a float or a LIGOTimeGPS."""
@@ -545,6 +558,9 @@ class FDomainDetFrameGenerator(object):
                     det.time_delay_from_earth_center(self.current_params['ra'],
                                                      self.current_params['dec'],
                                                      self.current_params['tc'])
+                # apply any additional desired offset
+                tc += self.current_params['tc_offset']
+                # do the time shift
                 h[detname] = apply_fd_time_shift(thish, tc, kmin=kmin, copy=False)
         else:
             # no detector response, just use the + polarization
