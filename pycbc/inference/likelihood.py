@@ -620,7 +620,7 @@ class GaussianLikelihood(_BaseLikelihoodEvaluator):
         return self._formatreturn(logplr + self._lognl, logprior=pr, loglr=lr)
 
 
-class MultiEventLikelihood(_BaseLikelihoodEvaluator):
+class HierarchicalLikelihood(_BaseLikelihoodEvaluator):
     """Computes log likelihood values from multiple events.
 
     Parameters
@@ -631,36 +631,71 @@ class MultiEventLikelihood(_BaseLikelihoodEvaluator):
         of the argument name, e.g., `eventname_foo`. The order of values passed
         to this class when evaluating the likelihood are assumed to be the same
         as the order specified in `all_variable_args`.
-    event_likelihood_evaluators : dict
+    likelihood_evaluators : dict
         A dictionary of event names -> likelihood evaluators.
-    common_priors : PriorEvaluator
-        Priors for the common parameters (those without event name prefixes).
-        If None, `noprior` will be used.
+    prior : {None, PriorEvaluator}
+        Priors for the all of the parameters.
+        If None, `_NoPrior` will be used.
     return_meta : {True, bool}
         If True, `logposterior` and `logplr` will return the value of the
         prior and the loglikelihood ratio, along with the posterior/plr.
     """
-    name = "multi_event"
+    name = "hierarchical"
 
-    def __init__(self, all_variable_args, event_likelihood_evaluators,
-                 common_priors=None, return_meta=True):
-        self._event_names = event_likelihood_evaluators.keys()
+    def __init__(self, all_variable_args, likelihood_evaluators,
+                 prior=None, return_meta=True):
+        self._event_names = likelihood_evaluators.keys()
         self._variable_args = all_variable_args
-        self._likelihood_evaluators = event_likelihood_evaluators
+        self._static_args = {}
+        self._likelihood_evaluators = likelihood_evaluators
+        self._vargs_byevent = {}
+        for ename,le in self._likelihood_evaluators.items():
+            # ensure that the likelihood evaluators have no prior set
+            if not isinstance(le.prior_distribution, _NoPrior):
+                raise ValueError("all likelihood evaluators must have "
+                                 "no priors set; to set a prior on parameters "
+                                 "pass a PriorEvaluator to this class's prior "
+                                 "parameter")
+            # turn off return meta for the invidual ones
+            le.return_meta = False
+            # get the static args, making sure that there are no conflicts
+            for arg,val in le.static_args:
+                # rename to {event_name}_{arg}
+                arg = '{}_{}'.format(ename, arg)
+                if arg in self._static_args and self._static_args[arg] != val:
+                    raise ValueError("common static arguments are not the "
+                                     "same across all events")
+                self._static_args[arg] = val
+            # vargs_by_event gives a map between event name and the name of
+            # the parameters in all_variable_args, in the order they are needed
+            # in by each event's likelihood evaluator
+            self._vargs_by_event[ename] = []
+            for arg in le.variable_args:
+                if arg not in self._variable_args:
+                    # means not a common parameter, try adding the prefix
+                    arg = '{}_{}'.format(ename, arg)
+                    # if the argument still isn't in variable_args, there is a
+                    # mismatch between this evaluator and the provided variable
+                    # arguments
+                    if arg not in self._variable_args:
+                        raise ValueError("argument {} used by {} likelihood ".
+                                         format(arg, ename) + "evaluator, but "
+                                         "it is not in all_variable_args")
+                    self._vargs_by_event[ename].append(arg)
         # store prior
         if prior is None:
-            self._prior_distribution = _noprior 
-        else:
-            # check that the variable args of the prior evaluator is the same
-            # as the waveform generator
-            if prior.variable_args != self._waveform_generator.variable_args:
-                raise ValueError("variable args of prior and waveform "
-                    "generator do not match")
-            self._prior_distribution = prior
-        # initialize the log nl to 0
-        self._lognl = None
+            prior = _NoPrior()
+        # check that priors exist for all parameters
+        elif prior.variable_args != self._variable_args:
+            raise ValueError("variable args of prior do not match "
+                             "all_variable_args")
+        self._prior_distribution = prior
+        # the lognl are the sums of the individual evenets lognls
+        self._lognl = sum([le.lognl
+                           for le in self._likelihood_evaluators.values()])
+        # wether to return metadata
         self.return_meta = return_meta
-       
+
 
     @property
     def event_names(self):
@@ -705,23 +740,31 @@ class MultiEventLikelihood(_BaseLikelihoodEvaluator):
         """
         return self._static_args
 
-    def prior(self, params):
-        """This function should return the prior of the given params.
+    def params_by_event(self, params):
+        """Given a list of parameter values, parses them into lists that can be
+        passed to each event's likelihood evaluator.
         """
-        return self._prior(params)
+        pdict = zip(self._variable_args, params) 
+        return {ename: [pdict[arg] for arg in getargs]
+                for ename,getargs in self._vargs_by_event.items()}
 
     def loglikelihood(self, params):
-        """Returns the natural log of the likelihood function.
+        """Returns the sum of the natural log of the likelihood function from
+        all events.
         """
-        raise NotImplementedError("Likelihood function not set.")
+        params_by_event = self.params_by_event(params)
+        return sum([le.loglikelihood(params_by_event[ename])
+                    for ename,le in self._likelihood_evaluators.items()])
 
     def loglr(self, params):
         """Returns the natural log of the likelihood ratio.
         """
-        raise NotImplementedError("Likelihood ratio function not set.")
+        params_by_event = self.params_by_event(params)
+        return sum([le.loglr(params_by_event[ename])
+                    for ename,le in self._likelihood_evaluators.items()])
 
 
 likelihood_evaluators = {GaussianLikelihood.name: GaussianLikelihood}
 
 __all__ = ['_BaseLikelihoodEvaluator', 'GaussianLikelihood',
-           'likelihood_evaluators']
+           'HierarchicalLikelihood', 'likelihood_evaluators']

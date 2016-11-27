@@ -300,7 +300,7 @@ class EmceePTSampler(BaseMCMCSampler):
         ndim = len(likelihood_evaluator.variable_args)
         sampler = emcee.PTSampler(ntemps, nwalkers, ndim,
                                   likelihood_evaluator,
-                                  likelihood_evaluator._prior_distribution,
+                                  likelihood_evaluator.prior_distribution,
                                   pool=pool)
         # initialize
         super(EmceePTSampler, self).__init__(
@@ -559,7 +559,7 @@ class EmceePTSampler(BaseMCMCSampler):
         # map sample values to the values that were actually passed to the
         # waveform generator and prior evaluator
         samples = numpy.array(
-            self.likelihood_evaluator._prior_distribution.
+            self.likelihood_evaluator.prior_distribution.
             apply_boundary_conditions(
             samples.transpose(3,0,1,2))).transpose(1,2,3,0)
 

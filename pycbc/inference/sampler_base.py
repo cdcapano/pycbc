@@ -345,7 +345,7 @@ class BaseMCMCSampler(_BaseSampler):
         # map sample values to the values that were actually passed to the
         # waveform generator and prior evaluator
         samples = numpy.array(
-            self.likelihood_evaluator._prior_distribution.
+            self.likelihood_evaluator.prior_distribution.
             apply_boundary_conditions(
             samples.transpose(2,0,1))).transpose(1,2,0)
 
