@@ -1,0 +1,319 @@
+#! /usr/bin/env python
+
+# Copyright (C) 2016 Collin Capano
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+"""Runs a sampler to find the posterior distributions of a set of hierarchical
+parameters.
+"""
+
+import os
+import argparse
+import logging
+import numpy
+import pycbc
+import pycbc.opt
+import pycbc.weave
+import random
+import pycbc
+from pycbc import fft
+from pycbc import inference
+from pycbc import psd
+from pycbc import scheme
+from pycbc import strain
+from pycbc import types
+from pycbc import waveform
+from pycbc.io.inference_hdf import InferenceFile
+from pycbc.workflow import WorkflowConfigParser
+from pycbc.inference import option_utils
+
+
+
+# command line usage
+parser = argparse.ArgumentParser(usage=__file__ + " [--options]",
+                                 description=__doc__)
+
+# add options needed to set up likelhood generator, including all data options
+parser.add_argument("--seed", type=int, default=0,
+                    help="Seed to use for the random number generator that "
+                         "initially distributes the walkers. Default is 0.")
+
+# add sampler options
+option_utils.add_sampler_option_group(parser)
+
+# add config options
+parser.add_argument("--config-files", type=str, nargs="+", required=True,
+                    help="A file parsable by "
+                         "pycbc.workflow.WorkflowConfigParser.")
+parser.add_argument("--config-overrides", type=str, nargs="+", default=None,
+                    metavar="SECTION:OPTION:VALUE",
+                    help="List of section:option:value combinations to add "
+                         "into the configuration file.")
+
+# output options
+parser.add_argument("--output-file", type=str, required=True,
+                    help="Output file path.")
+parser.add_argument("--force", action="store_true", default=False,
+                    help="If the output-file already exists, overwrite it. "
+                         "Otherwise, an OSError is raised.")
+parser.add_argument("--save-strain", action="store_true", default=False,
+                    help="Save the conditioned strain time series to the "
+                         "output file. If gate-overwhitened, this is done "
+                         "before all gates have been applied.")
+parser.add_argument("--save-stilde", action="store_true", default=False,
+                    help="Save the conditioned strain frequency series to "
+                         "the output file. This is done after all gates have "
+                         "been applied.")
+parser.add_argument("--save-psd", action="store_true", default=False,
+                    help="Save the psd of each ifo to the output file.")
+parser.add_argument("--checkpoint-interval", type=int, default=None,
+                    help="Number of iterations to take before saving new "
+                         "samples to file.")
+parser.add_argument("--checkpoint-fast", action="store_true",
+                    help="Do not calculate derived data (eg. ACL or evidence) "
+                         "after each checkpoint. Calculate them at the end.")
+ 
+# verbose option
+parser.add_argument("--verbose", action="store_true", default=False,
+                    help="Print logging messages.")
+
+# add optimization/processing options
+fft.insert_fft_option_group(parser)
+pycbc.opt.insert_optimization_option_group(parser)
+scheme.insert_processing_option_group(parser)
+pycbc.weave.insert_weave_option_group(parser)
+
+# parse command line
+opts = parser.parse_args()
+
+# verify options are sane
+fft.verify_fft_options(opts, parser)
+pycbc.opt.verify_optimization_options(opts, parser)
+scheme.verify_processing_options(opts, parser)
+pycbc.weave.verify_weave_options(opts, parser)
+
+# check for the output file
+if os.path.exists(opts.output_file) and not opts.force:
+    raise OSError("output-file already exists; use --force if you wish to "
+                  "overwrite it.")
+# create the file for adding to
+fp = InferenceFile(opts.output_file, "w")
+fp.close()
+
+# setup log
+pycbc.init_logging(opts.verbose)
+
+# set the seed
+numpy.random.seed(opts.seed)
+logging.info("Using seed %i" %(opts.seed))
+
+# change measure level for FFT to 0
+fft.fftw.set_measure_level(0)
+
+# get scheme
+ctx = scheme.from_cli(opts)
+fft.from_cli(opts)
+
+# load the configuration file(s)
+cp = inference.config_parser_from_cli(opts)
+
+# get the names of the events
+event_names = cp.options('events')
+
+#
+#  Load the static/variable parameters and set up priors
+#
+logging.info("Loading parameters and setting up priors")
+
+# common
+variable_args, static_args = inference.read_args_from_config(
+    cp, section_group='common')
+# load the priors for the common variables
+distributions = inference.read_distributions_from_config(cp, "common_prior")
+# the event-specific parameters
+event_vargs = {}
+event_sargs = {}
+for ename in event_names:
+    these_vargs, these_sargs = inference.read_args_from_config(
+        cp, section_group=ename)
+
+    event_vargs[ename] = these_vargs
+    event_sargs[ename] = these_sargs
+
+    # check that there's no conflicting options
+    conflicting = set(variable_args+static_args.keys()) & \
+                  set(these_vargs+these_sargs.keys())
+    if conflicting:
+        raise ValueError("found parameter(s) {} in {} ".format(
+            ', '.join(conflicting), ename) + "that conflict with the "
+            "common parameters")
+    
+    # append event name to the specific parameters
+    variable_args.extend(['{}_{}'.format(ename, arg) for arg in these_vargs])
+    static_args.update({'{}_{}'.format(ename, arg): val
+                        for arg,val in these_sargs.items()})
+    # get prior distribution for each variable parameter
+    # first, replace variable names with their event-prefixed name in the prior
+    # sections of the config file
+    prior_section = '{}_prior'.format(ename)
+    subsections = cp.get_subsections(prior_section)
+    for subsection in prior_sections:
+        section = '{}-{}'.format(prior_section, subsection)
+        params = subsection.split(inference.VARARGS_DELIM)
+        new_options = []
+        for param in params:
+            replace_options = [thisopt for thisop in cp.options(section)
+                               if param in thisopt]
+            for thisopt in replace_options:
+                newopt = re.sub(param, '{}_{}'.format(ename, param), thisopt)
+                val = cp.get(section, thisopt)
+                cp.remove(section, thisopt)
+                new_options.append((newopt, val))
+        cp.add_options_to_section(section, new_options)
+    # now load the distributions
+    distributions += inference.read_distributions_from_config(cp,
+                                                              prior_section)
+
+# initialize the prior evaluator with the distributions from all of the
+# paramters
+priors = inference.PriorEvaluator(variable_args, *distributions)
+
+
+with ctx:
+
+    # Setup likelihood evaluators for each event
+    logging.info("Setting up likelihood evaluator for each event")
+    likelihood_evaluators = {}
+    for ename in event_names:
+
+        logging.info(ename)
+        # load the data for this event
+        eopts = inference.inference_opts_from_config(
+            cp, '{}_data'.format(ename), additional_opts=None)
+        strain_dict, stilde_dict, psd_dict = inference.data_from_cli(opts)
+
+        # write data if desired
+        with InferenceFile(opts.output_file, "a") as fp:
+            inference.write_data_to_output(fp,
+                strain_dict=strain_dict if opts.write_strain else None,
+                stilde_dict=stilde_dict if opts.write_stilde else None,
+                psd_dict=psd_dict if opts.write_psd else None,
+                low_frequency_cutoff_dict={ifo: eopts.low_frequency_cutoff
+                                           for ifo in psd_dict},
+                group=ename)
+
+        # select generator that will generate waveform
+        # for likelihood evaluator
+        generator_function = inference.select_waveform_generator(
+                                event_sargs[ename]["approximant"])
+
+        # construct class that will generate waveforms
+        generator = waveform.FDomainDetFrameGenerator(generator_function,
+                            epoch=stilde_dict.values()[0].epoch,
+                            variable_args=event_vargs[ename],
+                            detectors=eopts.instruments,
+                            delta_f=stilde_dict.values()[0].delta_f,
+                            **event_sargs[ename])
+
+        # construct class that will return the natural logarithm of likelihood
+        likelihood_evaluators[ename] = inference.\
+            likelihood_evaluators[eopts.likelihood_evaluator](
+                generator, stilde_dict, eopts.low_frequency_cutoff,
+                psds=psd_dict, prior=None, return_meta=False)
+
+    # construct the hierarchical likelihood evaluator
+    likelihood = inference.HierarchicalLikelihood(variable_args,
+                                                  likelihood_evaluators,
+                                                  prior = priors,
+                                                  return_meta=True)
+
+    # create sampler that will run
+    logging.info("Setting up sampler")
+    sampler = option_utils.sampler_from_cli(opts, likelihood)
+
+    # get distribution to draw from for each walker initial position
+    logging.info("Setting walkers initial conditions for varying parameters")
+
+    # set the initial positions
+    sampler.set_p0(distributions)
+
+    # setup checkpointing
+    if opts.checkpoint_interval:
+
+        # determine intervals to run sampler until we save the new samples 
+        intervals = [i for i in range(0, opts.niterations, opts.checkpoint_interval)]
+
+        # determine if there is a small bit at the end
+        remainder = opts.niterations % opts.checkpoint_interval
+        if remainder:
+            intervals += [intervals[-1]+remainder]
+        else:
+            intervals += [opts.niterations]
+
+    # if not checkpointing then set intervals to run sampler in one call
+    else:
+        intervals = [0, opts.niterations]
+
+    intervals = numpy.array(intervals)
+
+    # check if user wants to skip the burn in
+    if not opts.skip_burn_in:
+        logging.info("Burn in")
+        sampler.burn_in()
+        n_burnin = sampler.burn_in_iterations
+        logging.info("Used %i burn in samples" % n_burnin)
+        with InferenceFile(opts.output_file, "a") as fp:
+            # write the burn in results
+            sampler.write_results(fp, max_iterations=opts.niterations+n_burnin)
+    else:
+        n_burnin = 0
+
+
+    # increase the intervals to account for the burn in
+    intervals += n_burnin
+
+    # loop over number of checkpoints
+    for i,start in enumerate(intervals[:-1]):
+
+        end = intervals[i+1]
+
+        # run sampler and set initial values to None so that sampler
+        # picks up from where it left off next call
+        logging.info("Running sampler for %i to %i out of %i iterations"%(
+            start-n_burnin,end-n_burnin,opts.niterations))
+        sampler.run(end-start)
+
+        # write new samples
+        with InferenceFile(opts.output_file, "a") as fp:
+
+            logging.info("Writing results to file")
+            sampler.write_results(fp, max_iterations=opts.niterations+n_burnin)
+
+            if not opts.checkpoint_fast or end == opts.niterations:
+
+                # compute the acls and write
+                logging.info("Computing acls")
+                sampler.write_acls(fp, sampler.compute_acls(fp))
+
+                # compute evidence, if supported
+                try:
+                    lnz, dlnz = sampler.calculate_logevidence(fp)
+                    logging.info("Saving evidence")
+                    sampler.write_logevidence(fp, lnz, dlnz)
+                except NotImplementedError:
+                    pass
+
+# exit
+logging.info("Done")
