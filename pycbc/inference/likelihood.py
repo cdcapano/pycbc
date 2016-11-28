@@ -726,8 +726,10 @@ class HierarchicalLikelihood(_BaseLikelihoodEvaluator):
     def detector_names(self):
         """Returns the set of detector names used by all of the events.
         """
-        return list(set(l._waveform_generator.detector_names
-                        for l in self._likelihood_evaluators.values()))
+        detectors = []
+        for l in self._likelihood_evaluators.values():
+            detectors += l._waveform_generator.detector_names
+        return sorted(list(set(detectors)))
 
     @property
     def variable_args(self):
