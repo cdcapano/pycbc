@@ -23,6 +23,7 @@ import os
 import argparse
 import logging
 import numpy
+import re
 import pycbc
 import pycbc.opt
 import pycbc.weave
@@ -168,20 +169,31 @@ for ename in event_names:
     # first, replace variable names with their event-prefixed name in the prior
     # sections of the config file
     prior_section = '{}_prior'.format(ename)
-    subsections = cp.get_subsections(prior_section)
-    for subsection in prior_sections:
+    prior_subsections = cp.get_subsections(prior_section)
+    for subsection in prior_subsections:
         section = '{}-{}'.format(prior_section, subsection)
         params = subsection.split(inference.VARARGS_DELIM)
+        newparams = inference.VARARGS_DELIM.join(['{}_{}'.format(ename, p)
+                                                  for p in params])
+        # copy the section to a new one
+        new_section = '{}-{}'.format(prior_section, newparams) 
+        cp.add_section(new_section)
+        cp.add_options_to_section(new_section,
+            [(thisopt, cp.get(section, thisopt))
+             for thisopt in cp.options(section)])
         new_options = []
         for param in params:
-            replace_options = [thisopt for thisop in cp.options(section)
+            replace_options = [thisopt for thisopt in cp.options(new_section)
                                if param in thisopt]
             for thisopt in replace_options:
                 newopt = re.sub(param, '{}_{}'.format(ename, param), thisopt)
-                val = cp.get(section, thisopt)
-                cp.remove(section, thisopt)
+                val = cp.get(new_section, thisopt)
+                cp.remove_option(new_section, thisopt)
                 new_options.append((newopt, val))
-        cp.add_options_to_section(section, new_options)
+        # add the new options
+        cp.add_options_to_section(new_section, new_options)
+        # remove the old section
+        cp.remove_section(section)
     # now load the distributions
     distributions += inference.read_distributions_from_config(cp,
                                                               prior_section)

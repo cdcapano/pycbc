@@ -20,8 +20,9 @@
 """
 
 import logging
+import numpy
 from argparse import ArgumentParser
-from pycbc import psd, strain, waveform
+from pycbc import psd, strain, waveform, types
 from pycbc.workflow import WorkflowConfigParser
 from pycbc.inference import option_utils
 
@@ -145,7 +146,7 @@ def read_args_from_config(cp, section_group=None):
     # get parameters that do not change in sampler
     static_args = dict([(key,cp.get_opt_tags(
         "{}static_args".format(section_prefix), key, []))
-        for key in cp.options("static_args")])
+        for key in cp.options("{}static_args".format(section_prefix))])
     for key,val in static_args.iteritems():
         try:
             static_args[key] = float(val)
