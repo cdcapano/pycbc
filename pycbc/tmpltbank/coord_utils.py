@@ -726,10 +726,10 @@ def find_max_and_min_frequencies(name, mass_range_params, freqs):
                 get_random_mass(1000000, mass_range_params)
         mass1, mass2 = pnutils.mtotal_eta_to_mass1_mass2(tot_mass, eta)
         mass_dict = {}
-        mass_dict['m1'] = mass1
-        mass_dict['m2'] = mass2
-        mass_dict['s1z'] = spin1z
-        mass_dict['s2z'] = spin2z
+        mass_dict['mass1'] = mass1
+        mass_dict['mass2'] = mass2
+        mass_dict['spin1z'] = spin1z
+        mass_dict['spin2z'] = spin2z
         tmp_freqs = cutoff_fns[name](mass_dict)
         upper_f_cutoff = tmp_freqs.max()
         lower_f_cutoff = tmp_freqs.min()
