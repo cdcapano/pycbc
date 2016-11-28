@@ -139,6 +139,7 @@ event_names = cp.options('events')
 logging.info("Loading parameters and setting up priors")
 
 # common
+logging.info("common parameters...")
 variable_args, static_args = inference.read_args_from_config(
     cp, section_group='common')
 # load the priors for the common variables
@@ -147,6 +148,7 @@ distributions = inference.read_distributions_from_config(cp, "common_prior")
 event_vargs = {}
 event_sargs = {}
 for ename in event_names:
+    logging.info("{} parameters...".format(ename))
     these_vargs, these_sargs = inference.read_args_from_config(
         cp, section_group=ename)
 
@@ -202,54 +204,53 @@ for ename in event_names:
 # paramters
 priors = inference.PriorEvaluator(variable_args, *distributions)
 
+# Setup likelihood evaluators for each event
+logging.info("Setting up likelihood evaluator for each event")
+likelihood_evaluators = {}
+for ename in event_names:
+
+    logging.info(ename)
+    # load the data for this event
+    eopts = inference.inference_opts_from_config(
+        cp, '{}_data'.format(ename), additional_opts=None)
+    strain_dict, stilde_dict, psd_dict = inference.data_from_cli(eopts)
+
+    # write data if desired
+    with InferenceFile(opts.output_file, "a") as fp:
+        inference.write_data_to_output(fp,
+            strain_dict=strain_dict if opts.save_strain else None,
+            stilde_dict=stilde_dict if opts.save_stilde else None,
+            psd_dict=psd_dict if opts.save_psd else None,
+            low_frequency_cutoff_dict={ifo: eopts.low_frequency_cutoff
+                                       for ifo in psd_dict},
+            group=ename)
+
+    # select generator that will generate waveform
+    # for likelihood evaluator
+    generator_function = inference.select_waveform_generator(
+                            event_sargs[ename]["approximant"])
+
+    # construct class that will generate waveforms
+    generator = waveform.FDomainDetFrameGenerator(generator_function,
+                        epoch=stilde_dict.values()[0].epoch,
+                        variable_args=event_vargs[ename],
+                        detectors=eopts.instruments,
+                        delta_f=stilde_dict.values()[0].delta_f,
+                        **event_sargs[ename])
+
+    # construct class that will return the natural logarithm of likelihood
+    likelihood_evaluators[ename] = inference.\
+        likelihood_evaluators[eopts.likelihood_evaluator](
+            generator, stilde_dict, eopts.low_frequency_cutoff,
+            psds=psd_dict, prior=None, return_meta=False)
+
+# construct the hierarchical likelihood evaluator
+likelihood = inference.HierarchicalLikelihood(variable_args,
+                                              likelihood_evaluators,
+                                              prior = priors,
+                                              return_meta=True)
 
 with ctx:
-
-    # Setup likelihood evaluators for each event
-    logging.info("Setting up likelihood evaluator for each event")
-    likelihood_evaluators = {}
-    for ename in event_names:
-
-        logging.info(ename)
-        # load the data for this event
-        eopts = inference.inference_opts_from_config(
-            cp, '{}_data'.format(ename), additional_opts=None)
-        strain_dict, stilde_dict, psd_dict = inference.data_from_cli(opts)
-
-        # write data if desired
-        with InferenceFile(opts.output_file, "a") as fp:
-            inference.write_data_to_output(fp,
-                strain_dict=strain_dict if opts.write_strain else None,
-                stilde_dict=stilde_dict if opts.write_stilde else None,
-                psd_dict=psd_dict if opts.write_psd else None,
-                low_frequency_cutoff_dict={ifo: eopts.low_frequency_cutoff
-                                           for ifo in psd_dict},
-                group=ename)
-
-        # select generator that will generate waveform
-        # for likelihood evaluator
-        generator_function = inference.select_waveform_generator(
-                                event_sargs[ename]["approximant"])
-
-        # construct class that will generate waveforms
-        generator = waveform.FDomainDetFrameGenerator(generator_function,
-                            epoch=stilde_dict.values()[0].epoch,
-                            variable_args=event_vargs[ename],
-                            detectors=eopts.instruments,
-                            delta_f=stilde_dict.values()[0].delta_f,
-                            **event_sargs[ename])
-
-        # construct class that will return the natural logarithm of likelihood
-        likelihood_evaluators[ename] = inference.\
-            likelihood_evaluators[eopts.likelihood_evaluator](
-                generator, stilde_dict, eopts.low_frequency_cutoff,
-                psds=psd_dict, prior=None, return_meta=False)
-
-    # construct the hierarchical likelihood evaluator
-    likelihood = inference.HierarchicalLikelihood(variable_args,
-                                                  likelihood_evaluators,
-                                                  prior = priors,
-                                                  return_meta=True)
 
     # create sampler that will run
     logging.info("Setting up sampler")

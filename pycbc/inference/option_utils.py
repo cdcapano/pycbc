@@ -22,7 +22,7 @@ import logging
 from pycbc.io import InferenceFile
 import pycbc.inference.sampler
 from pycbc.inference import likelihood
-from pycbc import psd, strain
+from pycbc import psd, strain, types
 
 def add_likelihood_opts_to_parser(parser):
     """Adds all of the options needed to setup a likelihood evaluator
@@ -61,11 +61,13 @@ def add_likelihood_opts_to_parser(parser):
 
     # add inference options
     parser.add_argument("--likelihood-evaluator", required=True,
-                        choices=inference.likelihood_evaluators.keys(),
+                        choices=likelihood.likelihood_evaluators.keys(),
                         help="Evaluator class to use to calculate the "
                              "likelihood.")
     psd.insert_psd_option_group_multi_ifo(parser)
     strain.insert_strain_option_group_multi_ifo(parser)
+
+    return parser
 
 
 
