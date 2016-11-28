@@ -306,7 +306,7 @@ class _BaseLikelihoodEvaluator(object):
         # if the prior returns -inf, just return
         logp = self._prior_distribution(params)
         if logp == -numpy.inf:
-            return self._formatreturn(logp, prior=logp)
+            return self._formatreturn(logp, logprior=logp)
         llr = self.loglr(params)
         return self._formatreturn(llr + logp, logprior=logp, loglr=llr)
 
@@ -316,9 +316,10 @@ class _BaseLikelihoodEvaluator(object):
         # if the logprior returns -inf, just return
         logp = self._prior_distribution(params)
         if logp == -numpy.inf:
-            return self._formatreturn(logp, prior=logp)
+            return self._formatreturn(logp, logprior=logp)
         ll = self.loglikelihood(params)
-        return self._formatreturn(ll + logp, prior=logp, loglr=ll-self._lognl)
+        return self._formatreturn(ll + logp, logprior=logp,
+                                  loglr=ll-self._lognl)
 
     def snr(self, params):
         """Returns the "SNR" of the given params. This will return
@@ -645,10 +646,10 @@ class HierarchicalLikelihood(_BaseLikelihoodEvaluator):
     def __init__(self, all_variable_args, likelihood_evaluators,
                  prior=None, return_meta=True):
         self._event_names = likelihood_evaluators.keys()
-        self._variable_args = all_variable_args
+        self._variable_args = tuple(all_variable_args)
         self._static_args = {}
         self._likelihood_evaluators = likelihood_evaluators
-        self._vargs_byevent = {}
+        self._vargs_by_event = {}
         for ename,le in self._likelihood_evaluators.items():
             # ensure that the likelihood evaluators have no prior set
             if not isinstance(le.prior_distribution, _NoPrior):
@@ -659,7 +660,7 @@ class HierarchicalLikelihood(_BaseLikelihoodEvaluator):
             # turn off return meta for the invidual ones
             le.return_meta = False
             # get the static args, making sure that there are no conflicts
-            for arg,val in le.static_args:
+            for arg,val in le.static_args.items():
                 # rename to {event_name}_{arg}
                 arg = '{}_{}'.format(ename, arg)
                 if arg in self._static_args and self._static_args[arg] != val:
@@ -681,7 +682,7 @@ class HierarchicalLikelihood(_BaseLikelihoodEvaluator):
                         raise ValueError("argument {} used by {} likelihood ".
                                          format(arg, ename) + "evaluator, but "
                                          "it is not in all_variable_args")
-                    self._vargs_by_event[ename].append(arg)
+                self._vargs_by_event[ename].append(arg)
         # store prior
         if prior is None:
             prior = _NoPrior()
@@ -744,7 +745,7 @@ class HierarchicalLikelihood(_BaseLikelihoodEvaluator):
         """Given a list of parameter values, parses them into lists that can be
         passed to each event's likelihood evaluator.
         """
-        pdict = zip(self._variable_args, params) 
+        pdict = dict(zip(self._variable_args, params))
         return {ename: [pdict[arg] for arg in getargs]
                 for ename,getargs in self._vargs_by_event.items()}
 
