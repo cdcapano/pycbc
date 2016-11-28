@@ -527,7 +527,7 @@ class FDomainDetFrameGenerator(object):
             self.detectors = {'RF': None}
         self.detector_names = sorted(self.detectors.keys())
         # add the optional args if they were not requested
-        for arg,val in self.optional_args:
+        for arg,val in self.optional_args.items():
             if arg not in self.current_params:
                 self.current_params[arg] = val
             

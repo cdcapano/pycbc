@@ -24,6 +24,7 @@ import argparse
 import logging
 import numpy
 import re
+import copy
 import pycbc
 import pycbc.opt
 import pycbc.weave
@@ -139,16 +140,18 @@ event_names = cp.options('events')
 logging.info("Loading parameters and setting up priors")
 
 # common
-logging.info("common parameters...")
+logging.info("common...")
 variable_args, static_args = inference.read_args_from_config(
     cp, section_group='common')
+common_vargs = copy.copy(variable_args)
+common_sargs = copy.copy(static_args)
 # load the priors for the common variables
 distributions = inference.read_distributions_from_config(cp, "common_prior")
 # the event-specific parameters
 event_vargs = {}
 event_sargs = {}
 for ename in event_names:
-    logging.info("{} parameters...".format(ename))
+    logging.info("{}...".format(ename))
     these_vargs, these_sargs = inference.read_args_from_config(
         cp, section_group=ename)
 
@@ -225,6 +228,10 @@ for ename in event_names:
                                        for ifo in psd_dict},
             group=ename)
 
+    # add the common parameters
+    event_sargs[ename].update(common_sargs)
+    event_vargs[ename] += common_vargs
+
     # select generator that will generate waveform
     # for likelihood evaluator
     generator_function = inference.select_waveform_generator(
@@ -266,7 +273,8 @@ with ctx:
     if opts.checkpoint_interval:
 
         # determine intervals to run sampler until we save the new samples 
-        intervals = [i for i in range(0, opts.niterations, opts.checkpoint_interval)]
+        intervals = [i for i in range(0, opts.niterations,
+                                      opts.checkpoint_interval)]
 
         # determine if there is a small bit at the end
         remainder = opts.niterations % opts.checkpoint_interval
