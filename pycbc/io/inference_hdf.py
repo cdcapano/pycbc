@@ -256,7 +256,7 @@ class InferenceFile(h5py.File):
         if group is None:
             group = subgroup 
         else:
-            group = '/'.join(group, subgroup)
+            group = '/'.join([group, subgroup])
 
         for ifo,strain in strain_dict.items():
             self[group.format(ifo=ifo)] = strain
@@ -279,7 +279,7 @@ class InferenceFile(h5py.File):
         if group is None:
             group = subgroup 
         else:
-            group = '/'.join(group, subgroup)
+            group = '/'.join([group, subgroup])
 
         for ifo,stilde in stilde_dict.items():
             self[group.format(ifo=ifo)] = stilde
@@ -304,7 +304,7 @@ class InferenceFile(h5py.File):
         if group is None:
             group = subgroup 
         else:
-            group = '/'.join(group, subgroup)
+            group = '/'.join([group, subgroup])
         self.attrs["low_frequency_cutoff"] = min(low_frequency_cutoff.values())
         for ifo in psds:
             self[group.format(ifo=ifo)] = psds[ifo]

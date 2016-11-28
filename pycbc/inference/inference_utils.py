@@ -22,23 +22,28 @@
 import logging
 import numpy
 from argparse import ArgumentParser
-from pycbc import psd, strain, waveform, types
+from pycbc.psd import from_cli_multi_ifos as psd_from_cli_multi_ifos
+from pycbc.strain import gate_data
+from pycbc.strain import from_cli_multi_ifos as strain_from_cli_multi_ifos
+from pycbc import waveform as _waveform
+from pycbc.types import FrequencySeries
 from pycbc.workflow import WorkflowConfigParser
 from pycbc.inference import option_utils
+from pycbc import DYN_RANGE_FAC
 
 def select_waveform_generator(approximant):
     """ Returns the generator for the approximant.
     """
-    if approximant in waveform.fd_approximants():
-        return waveform.FDomainCBCGenerator
-    elif approximant in waveform.td_approximants():
-        return waveform.TDomainCBCGenerator
-    elif approximant in waveform.ringdown_fd_approximants:
+    if approximant in _waveform.fd_approximants():
+        return _waveform.FDomainCBCGenerator
+    elif approximant in _waveform.td_approximants():
+        return _waveform.TDomainCBCGenerator
+    elif approximant in _waveform.ringdown_fd_approximants:
         if approximant=='FdQNM':
-            return waveform.FDomainRingdownGenerator
+            return _waveform.FDomainRingdownGenerator
         elif approximant=='FdQNMmultiModes':
-            return waveform.FDomainMultiModeRingdownGenerator
-    elif approximant in waveform.ringdown_td_approximants:
+            return _waveform.FDomainMultiModeRingdownGenerator
+    elif approximant in _waveform.ringdown_td_approximants:
         raise ValueError("Time domain ringdowns not supported")
     else:
         raise ValueError("%s is not a valid approximant."%approximant)
@@ -103,8 +108,7 @@ def inference_opts_from_config(cp, section, additional_opts=None):
     if additional_opts is not None:
         optstr = '{} {}'.format(opts, ' '.join(additional_opts))
     # create the dummy parser
-    parser = ArgumentParser()
-    option_utils.add_likelihood_opts_to_parser(parser)
+    parser = option_utils.add_likelihood_opts_to_parser(ArgumentParser())
     return parser.parse_args(optstr.split(' '))
 
 
@@ -227,7 +231,7 @@ def apply_gates_to_td(strain_dict, gates):
     outdict = dict(strain_dict.items())
     for ifo in gates:
         logging.info("Gating {} strain".format(ifo))
-        outdict[ifo] = strain.gate_data(outdict[ifo], gates[ifo])
+        outdict[ifo] = gate_data(outdict[ifo], gates[ifo])
     return outdict
 
 
@@ -286,7 +290,7 @@ def data_from_cli(opts):
     psd_gates = psd_gates_from_cli(opts)
 
     # get strain time series
-    strain_dict = strain.from_cli_multi_ifos(opts, opts.instruments,
+    strain_dict = strain_from_cli_multi_ifos(opts, opts.instruments,
                                              precision="double")
     # apply gates if not waiting to overwhiten
     if not opts.gate_overwhitened:
@@ -301,7 +305,7 @@ def data_from_cli(opts):
         psd_opts = opts
         psd_opts.gps_start_time = psd_opts.psd_start_time
         psd_opts.gps_end_time = psd_opts.psd_end_time
-        psd_strain_dict = strain.from_cli_multi_ifos(psd_opts,
+        psd_strain_dict = strain_from_cli_multi_ifos(psd_opts,
                                                     opts.instruments,
                                                     precision="double")
         # apply any gates
@@ -328,7 +332,7 @@ def data_from_cli(opts):
         low_frequency_cutoff_dict[ifo] = opts.low_frequency_cutoff
 
     # get PSD as frequency series
-    psd_dict = psd.from_cli_multi_ifos(opts, length_dict, delta_f_dict,
+    psd_dict = psd_from_cli_multi_ifos(opts, length_dict, delta_f_dict,
                                low_frequency_cutoff_dict, opts.instruments,
                                strain_dict=psd_strain_dict, precision="double")
 
@@ -378,8 +382,8 @@ def write_data_to_output(fp, strain_dict=None, stilde_dict=None,
         logging.info("Saving PSDs")
         psd_dyn_dict = {}
         for key,val in psd_dict.iteritems():
-             psd_dyn_dict[key] = types.FrequencySeries(
-                                        psd_dict[key] * pycbc.DYN_RANGE_FAC**2,
+             psd_dyn_dict[key] = FrequencySeries(
+                                        psd_dict[key] * DYN_RANGE_FAC**2,
                                         delta_f=psd_dict[key].delta_f)
         fp.write_psd(psds=psd_dyn_dict,
                      low_frequency_cutoff=low_frequency_cutoff_dict,
