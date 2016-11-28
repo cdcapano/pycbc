@@ -493,10 +493,6 @@ class FDomainDetFrameGenerator(object):
         # initialize frozen & current parameters:
         self.current_params = frozen_params.copy()
         self._static_args = frozen_params.copy()
-        # add any optional defaults
-        for arg,val in self.optional_args.items():
-            if arg not in variable_args and arg not frozen_params:
-                self._static_args[arg] = val
         # we'll separate out frozen location parameters from the frozen
         # parameters that are sent to the rframe generator
         self.frozen_location_args = {}
