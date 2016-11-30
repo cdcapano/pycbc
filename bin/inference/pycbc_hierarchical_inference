@@ -320,7 +320,9 @@ with ctx:
         with InferenceFile(opts.output_file, "a") as fp:
 
             logging.info("Writing results to file")
-            sampler.write_results(fp, max_iterations=opts.niterations+n_burnin)
+            sampler.write_results(fp, start_iteration=start,
+                                  end_iterations=end,
+                                  max_iterations=opts.niterations+n_burnin)
 
             if not opts.checkpoint_fast or end == opts.niterations:
 
@@ -335,6 +337,10 @@ with ctx:
                     sampler.write_logevidence(fp, lnz, dlnz)
                 except NotImplementedError:
                     pass
+
+            # clear the in-memory chain to save memory
+            logging.info("Clearing chain")
+            sampler.clear_chain()
 
 # exit
 logging.info("Done")
