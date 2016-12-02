@@ -28,7 +28,7 @@ from pycbc.strain import from_cli_multi_ifos as strain_from_cli_multi_ifos
 from pycbc import waveform as _waveform
 from pycbc.types import FrequencySeries
 from pycbc.workflow import WorkflowConfigParser
-from pycbc.inference import option_utils
+from pycbc.inference import option_utils as _option_utils
 from pycbc import DYN_RANGE_FAC
 
 def select_waveform_generator(approximant):
@@ -108,7 +108,7 @@ def inference_opts_from_config(cp, section, additional_opts=None):
     if additional_opts is not None:
         optstr = '{} {}'.format(opts, ' '.join(additional_opts))
     # create the dummy parser
-    parser = option_utils.add_likelihood_opts_to_parser(ArgumentParser())
+    parser = _option_utils.add_likelihood_opts_to_parser(ArgumentParser())
     return parser.parse_args(optstr.split(' '))
 
 

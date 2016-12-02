@@ -19,8 +19,9 @@ This module contains standard options used for inference-related programs.
 """
 
 import logging
-from pycbc.io import InferenceFile
+import pycbc.io.inference_hdf
 import pycbc.inference.sampler
+import pycbc.inference.likelihood
 from pycbc.inference import likelihood
 from pycbc import psd, strain, types
 
@@ -61,7 +62,8 @@ def add_likelihood_opts_to_parser(parser):
 
     # add inference options
     parser.add_argument("--likelihood-evaluator", required=True,
-                        choices=likelihood.likelihood_evaluators.keys(),
+                        choices=pycbc.inference.likelihood.
+                                likelihood_evaluators.keys(),
                         help="Evaluator class to use to calculate the "
                              "likelihood.")
     psd.insert_psd_option_group_multi_ifo(parser)
@@ -216,7 +218,7 @@ def results_from_cli(opts, load_samples=True, walkers=None):
         If load_samples, the samples as a WaveformArray; otherwise, None.
     """
     logging.info("Reading input file")
-    fp = InferenceFile(opts.input_file, "r")
+    fp = pycbc.io.inference_hdf.InferenceFile(opts.input_file, "r")
     parameters = fp.variable_args if opts.parameters is None \
                  else opts.parameters
     # load the labels
@@ -265,7 +267,8 @@ def get_zvalues(fp, arg, likelihood_stats):
         zvals = likelihood_stats.loglr
         zlbl = r'$\log\mathcal{L}(\vec{\vartheta})$'
     elif arg == 'snr':
-        zvals = likelihood.snr_from_loglr(likelihood_stats.loglr)
+        zvals = pycbc.inference.likelihood.snr_from_loglr(
+            likelihood_stats.loglr)
         zlbl = r'$\rho(\vec{\vartheta})$'
     elif arg == 'logplr':
         zvals = likelihood_stats.loglr + likelihood_stats.prior
