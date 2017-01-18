@@ -30,10 +30,12 @@ import waveform
 import ringdown
 from pycbc import coordinates
 from pycbc.waveform import parameters
-from pycbc.waveform.utils import apply_fd_time_shift
+from pycbc.waveform.utils import apply_fd_time_shift, time_from_frequencyseries
+from pycbc.waveform import NoWaveformError
 from pycbc.detector import Detector
 from pycbc import pnutils
 import lal as _lal
+import pycbc.io.record
 
 #
 #   Pregenerator functions for generator
@@ -485,8 +487,9 @@ class FDomainDetFrameGenerator(object):
     {'H1': <pycbc.types.frequencyseries.FrequencySeries at 0x116637350>,
      'L1': <pycbc.types.frequencyseries.FrequencySeries at 0x116637a50>}
     """
-    location_args = set(['tc', 'ra', 'dec', 'polarization', 'tc_offset'])
-    optional_args = {'tc_offset': 0.}
+    location_args = set(['tc', 'ra', 'dec', 'polarization', 'tc_offset',
+                         'ffinal_tc', 'boundargs'])
+    optional_args = {'tc_offset': 0., 'ffinal_tc': False, 'boundargs': None}
 
     def __init__(self, rFrameGeneratorClass, epoch, detectors=None,
             variable_args=(), **frozen_params):
@@ -549,6 +552,12 @@ class FDomainDetFrameGenerator(object):
         """Generates a waveform, applies a time shift and the detector response
         function."""
         self.current_params.update(dict(zip(self.variable_args, args)))
+        # if any bound args are specified and we are outside of them, return 0
+        if 'boundargs' in self.current_params:
+            checkarr = pycbc.io.record.WaveformArray.from_kwargs(
+                **self.current_params)
+            if not checkarr[self.current_params['boundargs']][0]:
+                raise NoWaveformError
         # FIXME: use the following when we switch to 2.7
         #rfparams = {param: self.current_params[param]
         #    for param in self.rframe_generator.variable_args}
@@ -562,6 +571,12 @@ class FDomainDetFrameGenerator(object):
                 kmin = int(self.current_params['f_lower']/hp.delta_f)
             except KeyError:
                 kmin = 0
+        # if using the time at ffinal as the coalescence time, figure out the
+        # shif that is needed
+        if 'ffinal_tc' in self.current_params and self.current_params['ffinal_tc']:
+            tshift = float(time_from_frequencyseries(hp).max())
+        else:
+            tshift = 0.
         if self.detector_names != ['RF']:
             for detname, det in self.detectors.items():
                 # apply detector response function
@@ -576,7 +591,7 @@ class FDomainDetFrameGenerator(object):
                                                      self.current_params['dec'],
                                                      self.current_params['tc'])
                 # apply any additional desired offset
-                tc += self.current_params['tc_offset']
+                tc += self.current_params['tc_offset'] + tshift
                 # do the time shift
                 h[detname] = apply_fd_time_shift(thish, tc, kmin=kmin, copy=False)
         else:

@@ -371,3 +371,5 @@ class InferenceFile(h5py.File):
             except KeyError:
                 pass
         return slice(thin_start, thin_end, thin_interval)
+
+__all__ = ['InferenceFile']
