@@ -488,8 +488,9 @@ class FDomainDetFrameGenerator(object):
      'L1': <pycbc.types.frequencyseries.FrequencySeries at 0x116637a50>}
     """
     location_args = set(['tc', 'ra', 'dec', 'polarization', 'tc_offset',
-                         'ffinal_tc', 'boundargs'])
-    optional_args = {'tc_offset': 0., 'ffinal_tc': False, 'boundargs': None}
+                         'ffinal_tc', 'boundargs', 'tc_ref_frame'])
+    optional_args = {'tc_offset': 0., 'ffinal_tc': False, 'boundargs': None,
+                     'tc_ref_frame': 'geocentric'}
 
     def __init__(self, rFrameGeneratorClass, epoch, detectors=None,
             variable_args=(), **frozen_params):
@@ -553,11 +554,11 @@ class FDomainDetFrameGenerator(object):
         function."""
         self.current_params.update(dict(zip(self.variable_args, args)))
         # if any bound args are specified and we are outside of them, return 0
-        if 'boundargs' in self.current_params:
-            checkarr = pycbc.io.record.WaveformArray.from_kwargs(
-                **self.current_params)
-            if not checkarr[self.current_params['boundargs']][0]:
-                raise NoWaveformError
+        #if 'boundargs' in self.current_params:
+        #    checkarr = pycbc.io.record.WaveformArray.from_kwargs(
+        #        **self.current_params)
+        #    if not checkarr[self.current_params['boundargs']][0]:
+        #        raise NoWaveformError
         # FIXME: use the following when we switch to 2.7
         #rfparams = {param: self.current_params[param]
         #    for param in self.rframe_generator.variable_args}
@@ -578,22 +579,35 @@ class FDomainDetFrameGenerator(object):
         else:
             tshift = 0.
         if self.detector_names != ['RF']:
+            ra = self.current_params['ra']
+            dec = self.current_params['dec']
+            pol = self.current_params['polarization']
+            tc = self.current_params['tc']
+            tc_ref_frame = self.current_params['tc_ref_frame']
+            if tc_ref_frame == 'geocentric':
+                geocentric_tc = tc
+            else:
+                try:
+                    det = self.detectors[tc_ref_frame]
+                    geocentric_tc = tc - \
+                        det.time_delay_from_earth_center(ra, dec, tc)
+                except KeyError:
+                    raise ValueError("unrecognized tc_ref_frame {}".format(
+                        tc_ref_frame))
             for detname, det in self.detectors.items():
                 # apply detector response function
-                fp, fc = det.antenna_pattern(self.current_params['ra'],
-                            self.current_params['dec'],
-                            self.current_params['polarization'],
-                            self.current_params['tc'])
+                fp, fc = det.antenna_pattern(ra, dec, pol, geocentric_tc)
                 thish = fp*hp + fc*hc
                 # apply the time shift
-                tc = self.current_params['tc'] + \
-                    det.time_delay_from_earth_center(self.current_params['ra'],
-                                                     self.current_params['dec'],
-                                                     self.current_params['tc'])
+                if tc_ref_frame == detname:
+                    det_tc = tc
+                else:
+                    det_tc = geocentric_tc + \
+                        det.time_delay_from_earth_center(ra, dec, geocentric_tc)
                 # apply any additional desired offset
-                tc += self.current_params['tc_offset'] + tshift
+                det_tc = det_tc + self.current_params['tc_offset'] + tshift
                 # do the time shift
-                h[detname] = apply_fd_time_shift(thish, tc, kmin=kmin, copy=False)
+                h[detname] = apply_fd_time_shift(thish, det_tc, kmin=kmin, copy=False)
         else:
             # no detector response, just use the + polarization
             if 'tc' in self.current_params:
