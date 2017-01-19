@@ -1778,7 +1778,10 @@ class WaveformArray(_FieldArrayWithDefaults):
     def det_tc(self, detector):
         """Returns the coalesence time in the given detector."""
         detector = Detector(detector)
-        return time_delay_from_center(detector, self.ra, self.dec, self.tc)
+        tc = self.tc
+        if 'tc_offset' in self.fieldnames:
+            tc = tc + self.tc_offset
+        return time_delay_from_center(detector, self.ra, self.dec, tc)
 
 
 __all__ = ['FieldArray', 'WaveformArray']
