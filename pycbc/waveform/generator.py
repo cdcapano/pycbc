@@ -574,8 +574,16 @@ class FDomainDetFrameGenerator(object):
                 kmin = 0
         # if using the time at ffinal as the coalescence time, figure out the
         # shif that is needed
-        if 'ffinal_tc' in self.current_params and self.current_params['ffinal_tc']:
-            tshift = float(time_from_frequencyseries(hp).max())
+        if 'ffinal_tc' in self.current_params and \
+                self.current_params['ffinal_tc']:
+            # Note: we stick a negative in front because time_from_frequency
+            # series increases from -(length of waveform) to 0, with 0 occuring
+            # at the default ending frequency. The maximum value therefore
+            # gives -(the number of seconds ffinal occurs before the end).
+            # Negating that thus gives the amount of time the waveform needs
+            # to be shifted forward such that ffinal occurs at the end of the
+            # waveform's equivalent in the time domain
+            tshift = -float(time_from_frequencyseries(hp).max())
         else:
             tshift = 0.
         if self.detector_names != ['RF']:
