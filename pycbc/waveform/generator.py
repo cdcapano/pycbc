@@ -28,6 +28,7 @@ This modules provides classes for generating waveforms.
 import functools
 import waveform
 import ringdown
+import numpy
 from pycbc import coordinates
 from pycbc.waveform import parameters
 from pycbc.waveform.utils import apply_fd_time_shift, time_from_frequencyseries
@@ -488,9 +489,10 @@ class FDomainDetFrameGenerator(object):
      'L1': <pycbc.types.frequencyseries.FrequencySeries at 0x116637a50>}
     """
     location_args = set(['tc', 'ra', 'dec', 'polarization', 'tc_offset',
-                         'ffinal_tc', 'boundargs', 'tc_ref_frame'])
+                         'ffinal_tc', 'boundargs', 'tc_ref_frame',
+                         'spa_gate_time'])
     optional_args = {'tc_offset': 0., 'ffinal_tc': False, 'boundargs': None,
-                     'tc_ref_frame': 'geocentric'}
+                     'tc_ref_frame': 'geocentric', 'spa_gate_time': None}
 
     def __init__(self, rFrameGeneratorClass, epoch, detectors=None,
             variable_args=(), **frozen_params):
@@ -572,8 +574,13 @@ class FDomainDetFrameGenerator(object):
                 kmin = int(self.current_params['f_lower']/hp.delta_f)
             except KeyError:
                 kmin = 0
+        #  get an estimate of t(f) if needed
+        spa_gate = self.current_params['spa_gate_time']
+        if (spa_gate is not None) or ('ffinal_tc' in self.current_params and
+                                      self.current_params['ffinal_tc']):
+            t_of_f = time_from_frequencyseries(hp)
         # if using the time at ffinal as the coalescence time, figure out the
-        # shif that is needed
+        # shift that is needed
         if 'ffinal_tc' in self.current_params and \
                 self.current_params['ffinal_tc']:
             # Note: we stick a negative in front because time_from_frequency
@@ -583,14 +590,14 @@ class FDomainDetFrameGenerator(object):
             # Negating that thus gives the amount of time the waveform needs
             # to be shifted forward such that ffinal occurs at the end of the
             # waveform's equivalent in the time domain
-            tshift = -float(time_from_frequencyseries(hp).max())
+            tshift = -float(t_of_f.max())
         else:
             tshift = 0.
         if self.detector_names != ['RF']:
             ra = self.current_params['ra']
             dec = self.current_params['dec']
             pol = self.current_params['polarization']
-            tc = self.current_params['tc']
+            tc = self.current_params['tc'] + self.current_params['tc_offset']
             tc_ref_frame = self.current_params['tc_ref_frame']
             if tc_ref_frame == 'geocentric':
                 geocentric_tc = tc
@@ -602,6 +609,16 @@ class FDomainDetFrameGenerator(object):
                 except KeyError:
                     raise ValueError("unrecognized tc_ref_frame {}".format(
                         tc_ref_frame))
+            # if applying a spa gate, we need to figure out what reference
+            # frame the provided spa gate is in, then 0 out everything after it
+            if spa_gate is not None:
+                gate_time = spa_gate - tc - tshift
+                kindex = numpy.searchsorted(t_of_f, gate_time, side='right')
+                # we add 1 to kindex because the waveforms have an extra
+                # sample point compared to t_of_f due to the DC component
+                hp.data[kindex+1:] = 0.
+                hc.data[kindex+1:] = 0.
+
             for detname, det in self.detectors.items():
                 # apply detector response function
                 fp, fc = det.antenna_pattern(ra, dec, pol, geocentric_tc)
@@ -611,11 +628,13 @@ class FDomainDetFrameGenerator(object):
                     det_tc = tc
                 else:
                     det_tc = geocentric_tc + \
-                        det.time_delay_from_earth_center(ra, dec, geocentric_tc)
+                        det.time_delay_from_earth_center(ra, dec,
+                                                         geocentric_tc)
                 # apply any additional desired offset
-                det_tc = det_tc + self.current_params['tc_offset'] + tshift
+                det_tc = det_tc + tshift
                 # do the time shift
-                h[detname] = apply_fd_time_shift(thish, det_tc, kmin=kmin, copy=False)
+                h[detname] = apply_fd_time_shift(thish, det_tc, kmin=kmin,
+                                                 copy=False)
         else:
             # no detector response, just use the + polarization
             if 'tc' in self.current_params:
