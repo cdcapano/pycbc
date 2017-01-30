@@ -32,6 +32,8 @@ import h5py
 from ConfigParser import Error
 import warnings
 from pycbc.inference import boundaries
+from pycbc import detector
+import lal
 
 VARARGS_DELIM = '+'
 
@@ -183,7 +185,7 @@ def _bounded_from_config(cls, cp, section, variable_args,
         if key in special_args:
             continue
         # check if option can be cast as a float
-        val = cp.get_opt_tag("prior", key, tag)
+        val = cp.get_opt_tag(section, key, tag)
         try:
             val = float(val)
         except ValueError:
@@ -782,9 +784,12 @@ class UniformSolidAngle(_BoundedDist):
     _default_polar_angle = 'theta'
     _default_azimuthal_angle = 'phi'
 
-    def __init__(self, polar_angle=_default_polar_angle,
-                 azimuthal_angle=_default_azimuthal_angle,
+    def __init__(self, polar_angle=None, azimuthal_angle=None,
                  polar_bounds=None, azimuthal_bounds=None):
+        if polar_angle is None:
+            polar_angle = self._default_polar_angle
+        if azimuthal_angle is None:
+            azimuthal_angle = self._default_azimuthal_angle
         self._polardist = self._polardistcls(**{
             polar_angle: polar_bounds}) 
         self._azimuthaldist = self._azimuthaldistcls(**{
@@ -1220,6 +1225,7 @@ class Gaussian(_BoundedDist):
         return _bounded_from_config(cls, cp, section, variable_args,
             bounds_required=False)
 
+
 class FromFile(_BoundedDist):
     """A distribution that reads the values of the parameter(s) from an hdf
     file, computes the kde to construct the pdf, and draws random variables
@@ -1650,6 +1656,100 @@ class UniformRadius(_BoundedDist):
         """Returns a distribution based on a configuration file. The parameters
         for the distribution are retrieved from the section titled
         "[`section`-`variable_args`]" in the config file.
+        
+        Parameters
+        ----------
+        cp : pycbc.workflow.WorkflowConfigParser
+            A parsed configuration file that contains the distribution
+            options.
+        section : str
+            Name of the section in the configuration file.
+        variable_args : str
+            The names of the parameters for this distribution, separated by
+            `prior.VARARGS_DELIM`. These must appear in the "tag" part
+            of the section header.
+        Returns
+        -------
+        Uniform
+            A distribution instance from the pycbc.inference.prior module.
+        """
+        return super(UniformRadius, cls).from_config(cp, section,
+                                                       variable_args,
+                                                       bounds_required=True)
+
+class SkyFromArrivalTimeDiffs(UniformSky):
+    r"""A distribution in ra and dec based on distributions on the arrival
+    time differences between detectors.
+    """
+    name = 'sky_from_dts'
+
+    def __init__(self, detector_combos, distributions):
+        super(SkyFromArrivalTimeDiffs, self).__init__()
+        self.detector_combos = detector_combos
+        self.distributions = distributions
+        # initialize all needed detectors
+        dets = set([d for dcombo in detector_combos.values() for d in dcombo])
+        self.detectors = {d: detector.Detector(d) for d in dets}
+        self.derived_params = detector_combos.keys()
+
+    def apply_boundary_conditions(self, **kwargs):
+        conditioned = super(SkyFromArrivalTimeDiffs,
+                            self).apply_boundary_conditions(**kwargs)
+        try:
+            conditioned.update({'tc': kwargs['tc']})
+        except KeyError:
+            pass
+        try:
+            conditioned.update({'tc_offset': kwargs['tc_offset']})
+        except KeyError:
+            pass
+        return conditioned
+
+    def _logpdf(self, **kwargs):
+        try:
+            ra = kwargs['ra']
+            dec = kwargs['dec']
+            tc = kwargs['tc']
+        except KeyError:
+            raise ValueError("must provide an ra, dec, and tc")
+        try:
+            tc = tc + kwargs['tc_offset']
+        except KeyError:
+            pass
+        lp = 0.
+        for varname, (det1, det2) in self.detector_combos.items():
+            dt = lal.ArrivalTimeDiff(self.detectors[det1].location,
+                                     self.detectors[det2].location,
+                                     ra, dec, tc)
+            lp += self.distributions[varname].logpdf(**{varname: dt})
+        return lp
+
+    def _pdf(self, **kwargs):
+        return numpy.exp(self.logpdf(**kwargs))
+            
+    def __call__(self, **kwargs):
+        return self.logpdf(**kwargs)
+
+    def rvs(self, size=1, param=None):
+        """Random variates are not implemented for this distribution."""
+        raise NotImplementedError("Random variates are not implemented for "
+                                  "this distribution.")
+
+
+    @classmethod
+    def from_config(cls, cp, section, tag='ra+dec'):
+        """Returns a distribution based on a configuration file. The parameters
+        for the distribution are retrieved from the section titled
+        "[`section`-`variable_args`]" in the config file.
+
+        The file to construct the distribution from must be provided by setting
+        `file_name`. Boundary arguments can be provided in the same way as
+        described in `get_param_bounds_from_config`.
+
+        .. code::
+            [{section}-ra+dec]
+            name = sky_from_dts
+            dtHL = H1,L1
 
         Parameters
         ----------
@@ -1665,12 +1765,24 @@ class UniformRadius(_BoundedDist):
 
         Returns
         -------
-        Uniform
+        SkyFromArrivalTimeDiffs
             A distribution instance from the pycbc.inference.prior module.
         """
-        return super(UniformRadius, cls).from_config(cp, section,
-                                                       variable_args,
-                                                       bounds_required=True)
+        # get the names of the variables
+        special_args = ["name"]
+        detector_combos = {}
+        distributions = {}
+        distsec = '{}_{}'.format(section, cp.get_opt_tag(section, 'name', tag))
+        for var in cp.options( "-".join([section,tag])):
+            if var not in special_args:
+                detectors = tuple(cp.get_opt_tag(section, var, tag).split(','))
+                detector_combos[var] = detectors
+                # initialize the distribution
+                name = cp.get_opt_tag(distsec, 'name', var)
+                distributions[var] = distribs[name].from_config(cp, distsec,
+                                                                var)
+        return cls(detector_combos, distributions)
+
 
 distribs = {
     Uniform.name : Uniform,
@@ -1682,6 +1794,7 @@ distribs = {
     UniformRadius.name : UniformRadius,
     Gaussian.name : Gaussian,
     FromFile.name : FromFile,
+    SkyFromArrivalTimeDiffs.name: SkyFromArrivalTimeDiffs,
 }
 
 def read_distributions_from_config(cp, section="prior"):
