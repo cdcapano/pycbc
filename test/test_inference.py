@@ -64,7 +64,7 @@ class TestInference(unittest.TestCase):
 
         # get a prior evaluator
         uniform_prior = inference.distributions.Uniform(tc=(tsig-0.2,tsig+0.2))
-        prior_eval = inference.prior.PriorEvaluator(["tc"], uniform_prior)
+        prior_eval = inference.prior.PriorEvaluator(["tc"], [uniform_prior])
 
         # setup likelihood evaluator
         likelihood_eval = inference.GaussianLikelihood(generator, signal, fmin,

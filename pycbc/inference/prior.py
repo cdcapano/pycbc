@@ -26,6 +26,8 @@ This modules provides classes and functions for evaluating the prior
 for parameter estimation.
 """
 
+import numpy
+
 class PriorEvaluator(object):
     """
     Callable class that calculates the prior.
@@ -50,10 +52,13 @@ class PriorEvaluator(object):
         The distributions for the parameters.
     """
 
-    def __init__(self, variable_args, *distributions):
+    def __init__(self, variable_args, distributions, static_args=None):
 
         # store the names of the variable params
         self.variable_args = tuple(variable_args)
+        if static_args is None:
+            static_args = {}
+        self.static_args = static_args
         # store the distributions
         self.distributions = distributions
 
@@ -93,10 +98,35 @@ class PriorEvaluator(object):
             params.update(dist.apply_boundary_conditions(**params))
         return [params[p] for p in self.variable_args]
 
+    def rvs(self, size=1):
+        """Gives a set of random values drawn from the distributions.
+
+        Parameters
+        ----------
+        size : {1, int}
+            The number of values to generate; default is 1.
+
+        Returns
+        -------
+        structured array
+            The random values in a numpy structured array. If a param was
+            specified, the array will only have an element corresponding to the
+            given parameter. Otherwise, the array will have an element for each
+            parameter in self's params.
+        """
+        dtype = [(p, float) for p in self.variable_args]
+        arr = numpy.zeros(size, dtype=dtype)
+        for dist in self.distributions:
+            draws = dist.rvs(size=size)
+            for p in dist.params:
+                arr[p] = draws[p]
+        return arr
+
     def __call__(self, params):
         """ Evalualate prior for parameters.
         """
         params = dict(zip(self.variable_args, params))
+        params.update(self.static_args)
         return sum([d(**params) for d in self.distributions])
 
 

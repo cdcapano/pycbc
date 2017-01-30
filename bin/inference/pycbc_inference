@@ -276,7 +276,7 @@ with ctx:
     distributions = inference.read_distributions_from_config(cp, "prior")
 
     # construct class that will return the prior
-    prior = inference.PriorEvaluator(variable_args, *distributions)
+    prior = inference.PriorEvaluator(variable_args, distributions)
 
     # select generator that will generate waveform for a single IFO
     # for likelihood evaluator
