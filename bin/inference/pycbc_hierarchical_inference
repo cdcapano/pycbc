@@ -42,6 +42,42 @@ from pycbc.workflow import WorkflowConfigParser
 from pycbc.inference import option_utils
 
 
+def get_event_priors(cp, ename, section='prior'):
+    """Adds event name as prefix to all variables in the given section.
+    """
+    # first, replace variable names with their event-prefixed name in the prior
+    # sections of the config file
+    cp = copy.copy(cp)
+    prior_section = '{}_{}'.format(ename, section)
+    prior_subsections = cp.get_subsections(prior_section)
+    for subsection in prior_subsections:
+        section = '{}-{}'.format(prior_section, subsection)
+        params = subsection.split(inference.VARARGS_DELIM)
+        newparams = inference.VARARGS_DELIM.join(['{}_{}'.format(ename, p)
+                                                  for p in params])
+        # copy the section to a new one
+        new_section = '{}-{}'.format(prior_section, newparams) 
+        cp.add_section(new_section)
+        cp.add_options_to_section(new_section,
+            [(thisopt, cp.get(section, thisopt))
+             for thisopt in cp.options(section)])
+        new_options = []
+        for param in params:
+            replace_options = [thisopt for thisopt in cp.options(new_section)
+                               if param in thisopt]
+            for thisopt in replace_options:
+                newopt = re.sub(param, '{}_{}'.format(ename, param), thisopt)
+                val = cp.get(new_section, thisopt)
+                cp.remove_option(new_section, thisopt)
+                new_options.append((newopt, val))
+        # add the new options
+        cp.add_options_to_section(new_section, new_options)
+        # remove the old section
+        cp.remove_section(section)
+    # now load the distributions
+    distributions = inference.read_distributions_from_config(cp, prior_section)
+    return distributions, cp
+
 
 # command line usage
 parser = argparse.ArgumentParser(usage=__file__ + " [--options]",
@@ -147,6 +183,12 @@ common_vargs = copy.copy(variable_args)
 common_sargs = copy.copy(static_args)
 # load the priors for the common variables
 distributions = inference.read_distributions_from_config(cp, "common_prior")
+if len(cp.get_subsections("common_initial")):
+    initial_distributions = inference.read_distributions_from_config(cp,
+        section="common_initial")
+else:
+    initial_distributions = [d for d in distributions]
+
 # the event-specific parameters
 event_vargs = {}
 event_sargs = {}
@@ -171,41 +213,19 @@ for ename in event_names:
     static_args.update({'{}_{}'.format(ename, arg): val
                         for arg,val in these_sargs.items()})
     # get prior distribution for each variable parameter
-    # first, replace variable names with their event-prefixed name in the prior
-    # sections of the config file
-    prior_section = '{}_prior'.format(ename)
-    prior_subsections = cp.get_subsections(prior_section)
-    for subsection in prior_subsections:
-        section = '{}-{}'.format(prior_section, subsection)
-        params = subsection.split(inference.VARARGS_DELIM)
-        newparams = inference.VARARGS_DELIM.join(['{}_{}'.format(ename, p)
-                                                  for p in params])
-        # copy the section to a new one
-        new_section = '{}-{}'.format(prior_section, newparams) 
-        cp.add_section(new_section)
-        cp.add_options_to_section(new_section,
-            [(thisopt, cp.get(section, thisopt))
-             for thisopt in cp.options(section)])
-        new_options = []
-        for param in params:
-            replace_options = [thisopt for thisopt in cp.options(new_section)
-                               if param in thisopt]
-            for thisopt in replace_options:
-                newopt = re.sub(param, '{}_{}'.format(ename, param), thisopt)
-                val = cp.get(new_section, thisopt)
-                cp.remove_option(new_section, thisopt)
-                new_options.append((newopt, val))
-        # add the new options
-        cp.add_options_to_section(new_section, new_options)
-        # remove the old section
-        cp.remove_section(section)
-    # now load the distributions
-    distributions += inference.read_distributions_from_config(cp,
-                                                              prior_section)
+    edists, cp = get_event_priors(cp, ename, section='prior')
+    distributions += edists
+    # do the same for initial distributions
+    if len(cp.get_subsections("{}_initial".format(ename))):
+        eidists, cp = get_event_priors(cp, ename, section='initial')
+        initial_distributions += eidists
+    else:
+        initial_distributions += edists
 
 # initialize the prior evaluator with the distributions from all of the
 # paramters
-priors = inference.PriorEvaluator(variable_args, *distributions)
+priors = inference.PriorEvaluator(variable_args, distributions,
+                                  static_args=static_args)
 
 # Setup likelihood evaluators for each event
 logging.info("Setting up likelihood evaluator for each event")
@@ -267,7 +287,7 @@ with ctx:
     logging.info("Setting walkers initial conditions for varying parameters")
 
     # set the initial positions
-    sampler.set_p0(distributions)
+    sampler.set_p0(initial_distributions)
 
     # setup checkpointing
     if opts.checkpoint_interval:
