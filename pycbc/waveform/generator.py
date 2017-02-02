@@ -599,18 +599,14 @@ class FDomainDetFrameGenerator(object):
             pol = self.current_params['polarization']
             tc = self.current_params['tc'] + self.current_params['tc_offset']
             tc_ref_frame = self.current_params['tc_ref_frame']
-            if tc_ref_frame == 'geocentric':
-                geocentric_tc = tc
-            else:
+            if tc_ref_frame != 'geocentric':
                 try:
-                    det = self.detectors[tc_ref_frame]
-                    geocentric_tc = tc - \
-                        det.time_delay_from_earth_center(ra, dec, tc)
+                    ref_det = self.detectors[tc_ref_frame]
                 except KeyError:
                     raise ValueError("unrecognized tc_ref_frame {}".format(
                         tc_ref_frame))
-            # if applying a spa gate, we need to figure out what reference
-            # frame the provided spa gate is in, then 0 out everything after it
+            # zero out any part of the waveform that occurs after the gate
+            # time
             if spa_gate is not None:
                 gate_time = spa_gate - tc - tshift
                 kindex = numpy.searchsorted(t_of_f, gate_time, side='right')
@@ -621,16 +617,17 @@ class FDomainDetFrameGenerator(object):
 
             for detname, det in self.detectors.items():
                 # apply detector response function
-                fp, fc = det.antenna_pattern(ra, dec, pol, geocentric_tc)
+                fp, fc = det.antenna_pattern(ra, dec, pol, tc)
                 thish = fp*hp + fc*hc
                 # apply the time shift
                 if tc_ref_frame == detname:
                     det_tc = tc
+                elif tc_ref_frame == 'geocentric':
+                    det_tc = tc + det.time_delay_from_earth_center(ra, dec, tc)
                 else:
-                    det_tc = geocentric_tc + \
-                        det.time_delay_from_earth_center(ra, dec,
-                                                         geocentric_tc)
-                # apply any additional desired offset
+                    det_tc = tc + det.time_delay_from_detector(ref_det,
+                                                               ra, dec, tc)
+                # apply any time offset from definition of ffinal
                 det_tc = det_tc + tshift
                 # do the time shift
                 h[detname] = apply_fd_time_shift(thish, det_tc, kmin=kmin,
