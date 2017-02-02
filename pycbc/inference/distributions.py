@@ -538,7 +538,7 @@ class UniformAngle(Uniform):
     name = 'uniform_angle'
     # _domain is a bounds instance used apply the cyclic conditions; this is
     # applied first, before any bounds specified in the initialization are used
-    _domain = boundaries.Bounds(0., 2*numpy.pi, cyclic=True)
+    _domain = boundaries.Bounds(0., 2*numpy.pi, cyclic=False)
 
     def __init__(self, **params):
         for p,bnds in params.items():
@@ -1716,6 +1716,8 @@ class SkyFromArrivalTimeDiffs(UniformSky):
             tc = tc + kwargs['tc_offset']
         except KeyError:
             pass
+        if kwargs not in self:
+            return -numpy.inf
         lp = 0.
         for varname, (det1, det2) in self.detector_combos.items():
             dt = lal.ArrivalTimeDiff(self.detectors[det1].location,
