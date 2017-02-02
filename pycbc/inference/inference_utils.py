@@ -23,31 +23,14 @@ import logging
 import numpy
 from argparse import ArgumentParser
 from pycbc.psd import from_cli_multi_ifos as psd_from_cli_multi_ifos
-from pycbc.strain import gate_data
 from pycbc.strain import from_cli_multi_ifos as strain_from_cli_multi_ifos
 from pycbc import waveform as _waveform
 from pycbc.types import FrequencySeries
 from pycbc.workflow import WorkflowConfigParser
 from pycbc.inference import option_utils as _option_utils
 from pycbc import DYN_RANGE_FAC
-
-def select_waveform_generator(approximant):
-    """ Returns the generator for the approximant.
-    """
-    if approximant in _waveform.fd_approximants():
-        return _waveform.FDomainCBCGenerator
-    elif approximant in _waveform.td_approximants():
-        return _waveform.TDomainCBCGenerator
-    elif approximant in _waveform.ringdown_fd_approximants:
-        if approximant=='FdQNM':
-            return _waveform.FDomainRingdownGenerator
-        elif approximant=='FdQNMmultiModes':
-            return _waveform.FDomainMultiModeRingdownGenerator
-    elif approximant in _waveform.ringdown_td_approximants:
-        raise ValueError("Time domain ringdowns not supported")
-    else:
-        raise ValueError("%s is not a valid approximant."%approximant)
-
+from pycbc.gate import gates_from_cli, psd_gates_from_cli, apply_gates_to_td, \
+                       apply_gates_to_fd 
 
 def convert_liststring_to_list(lstring):
     """ Checks if an argument of the configuration file is a string of a list
@@ -171,100 +154,6 @@ def read_args_from_config(cp, section_group=None):
 #                   Data conditioning utilities
 #
 #-----------------------------------------------------------------------------
-
-def _gates_from_cli(opts, gate_opt):
-    """Parses the given `gate_opt` into something understandable by
-    `strain.gate_data`.
-    """
-    gates = {}
-    if getattr(opts, gate_opt) is None:
-        return gates
-    for gate in getattr(opts, gate_opt):
-        try:
-            ifo, central_time, half_dur, taper_dur = gate.split(':')
-            central_time = float(central_time)
-            half_dur = float(half_dur)
-            taper_dur = float(taper_dur)
-        except ValueError:
-            raise ValueError("--gate {} not formatted correctly; ".format(
-                gate) + "see help")
-        try:
-            gates[ifo].append((central_time, half_dur, taper_dur))
-        except KeyError:
-            gates[ifo] = [(central_time, half_dur, taper_dur)]
-    return gates
-
-
-def gates_from_cli(opts):
-    """Parses the --gate option into something understandable by
-    `strain.gate_data`.
-    """
-    return _gates_from_cli(opts, 'gate')
-
-
-def psd_gates_from_cli(opts):
-    """Parses the --psd-gate option into something understandable by
-    `strain.gate_data`.
-    """
-    return _gates_from_cli(opts, 'psd_gate')
-
-
-def apply_gates_to_td(strain_dict, gates):
-    """Applies the given dictionary of gates to the given dictionary of
-    strain.
-
-    Parameters
-    ----------
-    strain_dict : dict
-        Dictionary of time-domain strain, keyed by the ifos.
-    gates : dict
-        Dictionary of gates. Keys should be the ifo to apply the data to,
-        values are a tuple giving the central time of the gate, the half
-        duration, and the taper duration.
-
-    Returns
-    -------
-    dict
-        Dictionary of time-domain strain with the gates applied.
-    """
-    # copy data to new dictionary
-    outdict = dict(strain_dict.items())
-    for ifo in gates:
-        logging.info("Gating {} strain".format(ifo))
-        outdict[ifo] = gate_data(outdict[ifo], gates[ifo])
-    return outdict
-
-
-def apply_gates_to_fd(stilde_dict, gates):
-    """Applies the given dictionary of gates to the given dictionary of
-    strain in the frequency domain.
-
-    Gates are applied by IFFT-ing the strain data to the time domain, applying
-    the gate, then FFT-ing back to the frequency domain.
-
-    Parameters
-    ----------
-    stilde_dict : dict
-        Dictionary of frequency-domain strain, keyed by the ifos.
-    gates : dict
-        Dictionary of gates. Keys should be the ifo to apply the data to,
-        values are a tuple giving the central time of the gate, the half
-        duration, and the taper duration.
-
-    Returns
-    -------
-    dict
-        Dictionary of frequency-domain strain with the gates applied.
-    """
-    # copy data to new dictionary
-    outdict = dict(stilde_dict.items())
-    # create a time-domin strain dictionary to apply the gates to
-    strain_dict = dict([[ifo, outdict[ifo].to_timeseries()] for ifo in gates])
-    # apply gates and fft back to the frequency domain
-    for ifo,d in apply_gates_to_td(strain_dict, gates).items():
-        outdict[ifo] = d.to_frequencyseries()
-    return outdict
-
 
 def data_from_cli(opts):
     """Loads data needed for an likelihood evaluator from the given

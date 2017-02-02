@@ -36,7 +36,7 @@ from pycbc import psd
 from pycbc import scheme
 from pycbc import strain
 from pycbc import types
-from pycbc import waveform
+from pycbc.waveform import generator as wfgen
 from pycbc.io.inference_hdf import InferenceFile
 from pycbc.workflow import WorkflowConfigParser
 from pycbc.inference import option_utils
@@ -254,11 +254,11 @@ for ename in event_names:
 
     # select generator that will generate waveform
     # for likelihood evaluator
-    generator_function = inference.select_waveform_generator(
+    generator_function = wfgen.select_waveform_generator(
                             event_sargs[ename]["approximant"])
 
     # construct class that will generate waveforms
-    generator = waveform.FDomainDetFrameGenerator(generator_function,
+    generator = wfgen.FDomainDetFrameGenerator(generator_function,
                         epoch=stilde_dict.values()[0].epoch,
                         variable_args=event_vargs[ename],
                         detectors=eopts.instruments,

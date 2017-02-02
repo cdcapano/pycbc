@@ -23,7 +23,7 @@ import pycbc.io.inference_hdf
 import pycbc.inference.sampler
 import pycbc.inference.likelihood
 from pycbc.inference import likelihood
-from pycbc import psd, strain, types
+from pycbc import psd, strain, types, gate
 
 def add_likelihood_opts_to_parser(parser):
     """Adds all of the options needed to setup a likelihood evaluator
@@ -32,10 +32,6 @@ def add_likelihood_opts_to_parser(parser):
     # add data options
     parser.add_argument("--instruments", type=str, nargs="+", required=True,
                         help="IFOs, eg. H1 L1.")
-    parser.add_argument("--frame-type", type=str, nargs="+",
-                        action=types.MultiDetOptionAction,
-                        metavar="IFO:FRAME_TYPE",
-                        help="Frame type for each IFO.")
     parser.add_argument("--low-frequency-cutoff", type=float, required=True,
                         help="Low frequency cutoff for each IFO.")
     parser.add_argument("--psd-start-time", type=float, default=None,
@@ -44,22 +40,6 @@ def add_likelihood_opts_to_parser(parser):
     parser.add_argument("--psd-end-time", type=float, default=None,
                         help="End time to use for PSD estimation if different "
                              "from analysis.")
-    parser.add_argument("--gate", nargs="+", type=str,
-                        metavar="IFO:CENTRALTIME:HALFDUR:TAPERDUR",
-                        help="Apply one or more gates to the data before "
-                             "filtering.")
-    parser.add_argument("--gate-overwhitened", action="store_true",
-                        default=False,
-                        help="Overwhiten data first, then apply the gates "
-                             "specified in --gate. Overwhitening allows for "
-                             "sharper tapers to be used, since lines are not "
-                             "blurred.")
-    parser.add_argument("--psd-gate", nargs="+", type=str,
-                        metavar="IFO:CENTRALTIME:HALFDUR:TAPERDUR",
-                        help="Apply one or more gates to the data used for "
-                             "computing the PSD. Gates are applied prior to "
-                             "FFT-ing the data for PSD estimation.")
-
     # add inference options
     parser.add_argument("--likelihood-evaluator", required=True,
                         choices=pycbc.inference.likelihood.
@@ -68,6 +48,7 @@ def add_likelihood_opts_to_parser(parser):
                              "likelihood.")
     psd.insert_psd_option_group_multi_ifo(parser)
     strain.insert_strain_option_group_multi_ifo(parser)
+    gate.add_gate_option_group(parser)
 
     return parser
 
