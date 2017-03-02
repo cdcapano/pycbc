@@ -1740,15 +1740,10 @@ class UniformChiPChiEff(object):
         xi1_bound = ((4.+3*q)/(4.*q**2.+3.*q))*numpy.sqrt(
             1. - (1+q)**2.*(chi_eff + chi_a)**2./4.)
         xi2_bound = numpy.sqrt(1 - (1+q)**2.*(chi_eff - chi_a)**2./(4*q**2.))
-        xi1 = numpy.zeros(size, dtype=float)
-        xi2 = numpy.zeros(size, dtype=float)
-        for ii in range(size):
-            self.xi1_distr._bounds[1] = xi1_bound[ii]
-            self.xi2_distr._bounds[1] = xi2_bound[ii]
-            self.xi1_distr.update_norm()
-            self.xi2_distr.update_norm()
-            xi1[ii] = self.xi1_distr.rvs(size=1)['xi1']
-            xi2[ii] = self.xi2_distr.rvs(size=1)['xi2']
+        xi1 = self.xi1_distr.rvs(size=size)['xi1']
+        xi2 = self.xi2_distr.rvs(size=size)['xi2']
+        xi1 *= xi1_bound
+        xi2 *= xi2_bound
         dtype = [(p, float) for p in self.params]
         arr = numpy.zeros(size, dtype=dtype)
         arr['mass1'] = m1
