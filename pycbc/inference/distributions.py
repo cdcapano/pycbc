@@ -32,6 +32,7 @@ import h5py
 from ConfigParser import Error
 import warnings
 from pycbc.inference import boundaries
+from pycbc import conversions
 
 VARARGS_DELIM = '+'
 
@@ -1563,16 +1564,20 @@ class UniformRadius(_BoundedDist):
     dim = 3
     def __init__(self, **params):
         super(UniformRadius, self).__init__(**params)
-        self._norm = 1.0
-        self._lognorm = 0.0
+        self.update_norm()
+
+    def update_norm(self):
+        """Calculates and saves the norm and lognorm using self's bounds."""
+        norm = 1.0
         for p in self._params:
             if self._bounds[p][0] != 0:
                 raise ValueError("Lower bound must be 0 for %s" % p)
             if not self.bounds[p][1] > 0:
                 raise ValueError("Upper bound must be greater than 0 "
                                  "for %s" % p)
-            self._norm *= self.dim  / self._bounds[p][1]**(self.dim)
-            self._lognorm = numpy.log(self._norm)
+            norm *= self.dim  / self._bounds[p][1]**(self.dim)
+        self._norm = norm
+        self._lognorm = numpy.log(self._norm)
 
     @property
     def norm(self):
@@ -1677,6 +1682,88 @@ class UniformSquareRoot(UniformRadius):
     """
     name = "uniform_square_root"
     dim = 0.5
+
+class UniformChiPChiEff(object):
+    r"""A distribution uniform in :math:`\chi_{\mathrm{eff}}` and
+    :math:`\chi_p`.
+
+    To ensure constraints are applied correctly, this distribution produces all
+    three components of both spins.
+
+    FIXME: Since the distribution also needs to know about the masses, I'm
+    hard-coding this to use a uniform distribution on mass1 and mass2 for now.
+    We may want to make it possible to specify the mass distribution
+    separately.
+    """
+    name = "uniform_chip_chieff"
+
+    def __init__(self, mass1=None, mass2=None, chi_eff=None, chi_a=None):
+
+        self.mass1_distr = Uniform(mass1=mass1)
+        self.mass2_distr = Uniform(mass2=mass2)
+        # xis: we'll just set the bounds to be 0,1 for now; these will
+        # be updated on the fly when drawing values and computing pdfs
+        self.xi1_distr = UniformSquareRoot(xi1=(0.,1.))
+        self.xi2_distr = UniformSquareRoot(xi2=(0.,1.))
+        # chi eff
+        if chi_eff is None:
+            chi_eff = (0., 1.)
+        self.chieff_distr = Uniform(chi_eff=chi_eff)
+        if chi_a is None:
+            chi_a = (-1., 1.)
+        self.chia_distr = Uniform(chi_a=chi_a)
+        # the angles
+        self.phia_distr = Uniform(phi_a=(0., 2*numpy.pi))
+        self.phis_distr = Uniform(phi_s=(0., 2*numpy.pi))
+        self._params = ['mass1', 'mass2', 'xi1', 'xi2', 'chi_eff', 'chi_a',
+                        'phi_a', 'phi_s']
+
+    @property
+    def params(self):
+        return self._params
+
+    def rvs(self, size=1):
+        """Returns random values for all of the parameters.
+        """
+        # draw masses
+        m1 = self.mass1_distr.rvs(size=size)['mass1']
+        m2 = self.mass2_distr.rvs(size=size)['mass2']
+        # draw angles
+        phi_a = self.phia_distr.rvs(size=size)['phi_a']
+        phi_s = self.phis_distr.rvs(size=size)['phi_s']
+        # draw chi_eff, chi_a
+        chi_eff = self.chieff_distr.rvs(size=size)['chi_eff']
+        chi_a = self.chia_distr.rvs(size=size)['chi_a']
+        # compute bounds on xis
+        q = conversions.q_from_mass1_mass2(m1, m2)
+        print 1. - (1+q)**2.*(chi_eff + chi_a)**2./4.
+        xi1_bound = ((4.+3*q)/(4.*q**2.+3.*q))*numpy.sqrt(
+            1. - (1+q)**2.*(chi_eff + chi_a)**2./4.)
+        xi2_bound = numpy.sqrt(1 - (1+q)**2.*(chi_eff - chi_a)**2./(4*q**2.))
+        xi1 = numpy.zeros(size, dtype=float)
+        xi2 = numpy.zeros(size, dtype=float)
+        for ii in range(size):
+            self.xi1_distr._bounds[1] = xi1_bound[ii]
+            self.xi2_distr._bounds[1] = xi2_bound[ii]
+            self.xi1_distr.update_norm()
+            self.xi2_distr.update_norm()
+            xi1[ii] = self.xi1_distr.rvs(size=1)['xi1']
+            xi2[ii] = self.xi2_distr.rvs(size=1)['xi2']
+        dtype = [(p, float) for p in self.params]
+        arr = numpy.zeros(size, dtype=dtype)
+        arr['mass1'] = m1
+        arr['mass2'] = m2
+        arr['phi_a'] = phi_a
+        arr['phi_s'] = phi_s
+        arr['chi_eff'] = chi_eff
+        arr['chi_a'] = chi_a
+        arr['xi1'] = xi1
+        arr['xi2'] = xi2
+        return arr
+
+    def logpdf(**kwargs):
+        print 'write_me'
+
 
 distribs = {
     Uniform.name : Uniform,
