@@ -1683,6 +1683,7 @@ class UniformSquareRoot(UniformRadius):
     name = "uniform_square_root"
     dim = 0.5
 
+
 class UniformChiPChiEff(object):
     r"""A distribution uniform in :math:`\chi_{\mathrm{eff}}` and
     :math:`\chi_p`.
@@ -1696,27 +1697,39 @@ class UniformChiPChiEff(object):
     separately.
     """
     name = "uniform_chip_chieff"
+    _params = ['mass1', 'mass2', 'xi1', 'xi2', 'chi_eff', 'chi_a',
+               'phi_a', 'phi_s']
 
     def __init__(self, mass1=None, mass2=None, chi_eff=None, chi_a=None):
 
-        self.mass1_distr = Uniform(mass1=mass1)
-        self.mass2_distr = Uniform(mass2=mass2)
+        if isinstance(mass1, _BoundedDist):
+            self.mass1_distr = mass1
+        else:
+            self.mass1_distr = Uniform(mass1=mass1)
+        if isinstance(mass2, _BoundedDist):
+            self.mass2_distr = mass2
+        else:
+            self.mass2_distr = Uniform(mass2=mass2)
+        # chi eff
+        if isinstance(chi_eff, _BoundedDist):
+            self.chieff_distr = chi_eff
+        else:
+            if chi_eff is None:
+                chi_eff = (-1., 1.)
+            self.chieff_distr = Uniform(chi_eff=chi_eff)
+        if isinstance(chi_a, _BoundedDist):
+            self.chia_distr = chi_a
+        else:
+            if chi_a is None:
+                chi_a = (-1., 1.)
+            self.chia_distr = Uniform(chi_a=chi_a)
         # xis: we'll just set the bounds to be 0,1 for now; these will
         # be updated on the fly when drawing values and computing pdfs
         self.xi1_distr = UniformSquareRoot(xi1=(0.,1.))
         self.xi2_distr = UniformSquareRoot(xi2=(0.,1.))
-        # chi eff
-        if chi_eff is None:
-            chi_eff = (-1., 1.)
-        self.chieff_distr = Uniform(chi_eff=chi_eff)
-        if chi_a is None:
-            chi_a = (-1., 1.)
-        self.chia_distr = Uniform(chi_a=chi_a)
         # the angles
         self.phia_distr = Uniform(phi_a=(0., 2*numpy.pi))
         self.phis_distr = Uniform(phi_s=(0., 2*numpy.pi))
-        self._params = ['mass1', 'mass2', 'xi1', 'xi2', 'chi_eff', 'chi_a',
-                        'phi_a', 'phi_s']
         self.distributions = {'mass1': self.mass1_distr,
                               'mass2': self.mass2_distr,
                               'xi1': self.xi1_distr,
@@ -1858,6 +1871,41 @@ class UniformChiPChiEff(object):
         are ignored.
         """
         return numpy.exp(self.logpdf(**kwargs))
+
+    @classmethod
+    def from_config(cls, cp, section, variable_args):
+        """Returns a distribution based on a configuration file. The parameters
+        for the distribution are retrieved from the section titled
+        "[`section`-`variable_args`]" in the config file.
+
+        Parameters
+        ----------
+        cp : pycbc.workflow.WorkflowConfigParser
+            A parsed configuration file that contains the distribution
+            options.
+        section : str
+            Name of the section in the configuration file.
+        variable_args : str
+            The names of the parameters for this distribution, separated by
+            `prior.VARARGS_DELIM`. These must appear in the "tag" part
+            of the section header.
+
+        Returns
+        -------
+        Uniform
+            A distribution instance from the pycbc.inference.prior module.
+        """
+        tag = variable_args
+        variable_args = variable_args.split(VARARGS_DELIM)
+        if not set(variable_args) == set(cls._params):
+            raise ValueError("Not all parameters used by this distribution "
+                             "included in tag portion of section name")
+        # get the bounds for the setable parameters
+        mass1 = get_param_bounds_from_config(cp, section, tag, 'mass1')
+        mass2 = get_param_bounds_from_config(cp, section, tag, 'mass2')
+        chi_eff = get_param_bounds_from_config(cp, section, tag, 'chi_eff')
+        chi_a = get_param_bounds_from_config(cp, section, tag, 'chi_a')
+        return cls(mass1=mass1, mass2=mass2, chi_eff=chi_eff, chi_a=chi_a)
 
     __call__ = logpdf
 
