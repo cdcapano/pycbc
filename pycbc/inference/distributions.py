@@ -1707,7 +1707,7 @@ class UniformChiPChiEff(object):
         self.xi2_distr = UniformSquareRoot(xi2=(0.,1.))
         # chi eff
         if chi_eff is None:
-            chi_eff = (0., 1.)
+            chi_eff = (-1., 1.)
         self.chieff_distr = Uniform(chi_eff=chi_eff)
         if chi_a is None:
             chi_a = (-1., 1.)
@@ -1722,38 +1722,82 @@ class UniformChiPChiEff(object):
     def params(self):
         return self._params
 
-    def rvs(self, size=1):
-        """Returns random values for all of the parameters.
+    def _constraints(self, values):
+        """Applies physical constraints to the given parameter values.
+
+        Parameters
+        ----------
+        values : {arr or dict}
+            A dictionary or structured array giving the values.
+
+        Returns
+        -------
+        bool
+            Whether or not the values satisfy physical
+        """
+        mass1 = conversions._ensurearray(values['mass1'])
+        mass2 = conversions._ensurearray(values['mass2'])
+        phi_a = conversions._ensurearray(values['phi_a'])
+        phi_s = conversions._ensurearray(values['phi_s'])
+        chi_eff = conversions._ensurearray(values['chi_eff'])
+        chi_a = conversions._ensurearray(values['chi_a'])
+        xi1 = conversions._ensurearray(values['xi1'])
+        xi2 = conversions._ensurearray(values['xi2'])
+        s1x = conversions.spin1x_from_xi1_phi_a_phi_s(xi1, phi_a, phi_s)
+        s2x = conversions.spin2x_from_mass1_mass2_xi2_phi_a_phi_s(mass1, mass2,
+            xi2, phi_a, phi_s)
+        s1y = conversions.spin1y_from_xi1_phi_a_phi_s(xi1, phi_a, phi_s)
+        s2y = conversions.spin2y_from_mass1_mass2_xi2_phi_a_phi_s(mass1, mass2,
+            xi2, phi_a, phi_s)
+        s1z = conversions.spin1z_from_mass1_mass2_chi_eff_chi_a(mass1, mass2,
+            chi_eff, chi_a)
+        s2z = conversions.spin2z_from_mass1_mass2_chi_eff_chi_a(mass1, mass2,
+            chi_eff, chi_a)
+        test = ((s1x**2. + s1y**2. + s1z**2.) < 1.) & \
+               ((s2x**2. + s2y**2. + s2z**2.) < 1.)
+        return test
+
+    def _draw(self, size=1):
+        """Draws random samples without applying physical constrains.
         """
         # draw masses
-        m1 = self.mass1_distr.rvs(size=size)['mass1']
-        m2 = self.mass2_distr.rvs(size=size)['mass2']
+        mass1 = self.mass1_distr.rvs(size=size)['mass1']
+        mass2 = self.mass2_distr.rvs(size=size)['mass2']
         # draw angles
         phi_a = self.phia_distr.rvs(size=size)['phi_a']
         phi_s = self.phis_distr.rvs(size=size)['phi_s']
         # draw chi_eff, chi_a
         chi_eff = self.chieff_distr.rvs(size=size)['chi_eff']
         chi_a = self.chia_distr.rvs(size=size)['chi_a']
-        # compute bounds on xis
-        q = conversions.q_from_mass1_mass2(m1, m2)
-        print 1. - (1+q)**2.*(chi_eff + chi_a)**2./4.
-        xi1_bound = ((4.+3*q)/(4.*q**2.+3.*q))*numpy.sqrt(
-            1. - (1+q)**2.*(chi_eff + chi_a)**2./4.)
-        xi2_bound = numpy.sqrt(1 - (1+q)**2.*(chi_eff - chi_a)**2./(4*q**2.))
+        # draw xis
         xi1 = self.xi1_distr.rvs(size=size)['xi1']
         xi2 = self.xi2_distr.rvs(size=size)['xi2']
-        xi1 *= xi1_bound
-        xi2 *= xi2_bound
         dtype = [(p, float) for p in self.params]
         arr = numpy.zeros(size, dtype=dtype)
-        arr['mass1'] = m1
-        arr['mass2'] = m2
+        arr['mass1'] = mass1
+        arr['mass2'] = mass2
         arr['phi_a'] = phi_a
         arr['phi_s'] = phi_s
         arr['chi_eff'] = chi_eff
         arr['chi_a'] = chi_a
         arr['xi1'] = xi1
         arr['xi2'] = xi2
+        return arr
+
+    def rvs(self, size=1):
+        """Returns random values for all of the parameters.
+        """
+        dtype = [(p, float) for p in self.params]
+        arr = numpy.zeros(size, dtype=dtype)
+        remaining = size
+        keepidx = 0
+        while remaining:
+            draws = self._draw(size=remaining)
+            mask = self._constraints(draws)
+            addpts = mask.sum()
+            arr[keepidx:keepidx+addpts] = draws[mask]
+            keepidx += addpts
+            remaining = size - keepidx
         return arr
 
     def logpdf(**kwargs):
