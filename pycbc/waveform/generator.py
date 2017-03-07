@@ -121,12 +121,49 @@ def generator_spin_spherical_to_spin_cartesian(generator):
     generator.current_params["spin2z"] = z
 
 
+@add_attrs(input_params=[parameters.mass1, parameters.mass2,
+                         parameters.chi_eff, parameters.chi_a,
+                         parameters.xi1, parameters.xi2,
+                         parameters.phi_a, parameters.phi_s],
+           output_params=[parameters.spin1x, parameters.spin2x,
+                          parameters.spin1y, parameters.spin2y,
+                          parameters.spin1z, parameters.spin2z])
+def generator_chieff_chip_to_spin_cartesian(generator):
+    """Converts uniform chi_eff, chi_p coordinate system in `current_params`
+    to cartesian component spins.
+    """
+    mass1 = generator.current_params['mass1']
+    mass2 = generator.current_params['mass2']
+    chi_eff = generator.current_params['chi_eff']
+    chi_a = generator.current_params['chi_a']
+    xi1 = generator.current_params['xi1']
+    xi2 = generator.current_params['xi2']
+    phi_a = generator.current_params['phi_a']
+    phi_s = generator.current_params['phi_s']
+    s1x = conversions.spin1x_from_xi1_phi_a_phi_s(xi1, phi_a, phi_s)
+    s2x = conversions.spin2x_from_mass1_mass2_xi2_phi_a_phi_s(mass1, mass2,
+        xi2, phi_a, phi_s)
+    s1y = conversions.spin1y_from_xi1_phi_a_phi_s(xi1, phi_a, phi_s)
+    s2y = conversions.spin2y_from_mass1_mass2_xi2_phi_a_phi_s(mass1, mass2,
+        xi2, phi_a, phi_s)
+    s1z = conversions.spin1z_from_mass1_mass2_chi_eff_chi_a(mass1, mass2,
+        chi_eff, chi_a)
+    s2z = conversions.spin2z_from_mass1_mass2_chi_eff_chi_a(mass1, mass2,
+        chi_eff, chi_a)
+    generator.current_params['spin1x'] = s1x
+    generator.current_params['spin2x'] = s2x
+    generator.current_params['spin1y'] = s1y
+    generator.current_params['spin2y'] = s2y
+    generator.current_params['spin1z'] = s1z
+    generator.current_params['spin2z'] = s2z
+
 # a list of all generator functions
 generator_functions = [
     generator_mchirp_eta_to_mass1_mass2,
     generator_mtotal_eta_to_mass1_mass2,
     generator_mchirp_q_to_mass1_mass2,
     generator_spin_spherical_to_spin_cartesian,
+    generator_chieff_chip_to_spin_cartesian,
 ]
 
 #

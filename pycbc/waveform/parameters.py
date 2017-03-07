@@ -216,6 +216,29 @@ m_s = Parameter("m_s",
 chi_eff = Parameter("chi_eff",
                 dtype=float, label=r"$\chi_\mathrm{eff}$",
                 description="Effective spin of the binary.")
+chi_a = Parameter("chi_a",
+                dtype=float, label=r"$\chi_a$",
+                description="Mass-weighted difference in z-component of "
+                            "spins.")
+xi1 = Parameter("xi1",
+                dtype=float, label=r"$\xi_1$",
+                description="In-plane spin of the more massive component. "
+                            "Used for deriving $\chi_p$.")
+xi2 = Parameter("xi2",
+                dtype=float, label=r"$\xi_2$",
+                description="Mass-ratio weighted in-plane spin. Used for "
+                            "deriving $\chi_p$.")
+chi_p = Parameter("chi_p",
+                dtype=float, label=r"$\chi_p$",
+                description="In-plane spin parameter.")
+phi_a = Parameter("phi_a",
+                dtype=float, label=r"$\phi_a$",
+                description="Difference in the angles between the in-plane "
+                            "spins of the two bodies.")
+phi_s = Parameter("phi_s",
+                dtype=float, label=r"$\phi_s$",
+                description="Sum of the angles between the in-plane "
+                            "spins of the two bodies.")
 spin_px = Parameter("spin_px",
                 dtype=float, label=r"$\chi_{\mathrm{pr}\,x}$",
                 description="The x component of the dimensionless spin of the "
