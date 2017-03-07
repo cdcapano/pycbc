@@ -1717,6 +1717,14 @@ class UniformChiPChiEff(object):
         self.phis_distr = Uniform(phi_s=(0., 2*numpy.pi))
         self._params = ['mass1', 'mass2', 'xi1', 'xi2', 'chi_eff', 'chi_a',
                         'phi_a', 'phi_s']
+        self.distributions = {'mass1': self.mass1_distr,
+                              'mass2': self.mass2_distr,
+                              'xi1': self.xi1_distr,
+                              'xi2': self.xi2_distr,
+                              'chi_eff': self.chieff_distr,
+                              'chi_a': self.chia_distr,
+                              'phi_a': self.phia_distr,
+                              'phi_s': self.phis_distr}
 
     @property
     def params(self):
@@ -1757,21 +1765,55 @@ class UniformChiPChiEff(object):
                ((s2x**2. + s2y**2. + s2z**2.) < 1.)
         return test
 
-    def _draw(self, size=1):
+    def __contains__(self, params):
+        """Determines whether the given values are in each parameter's bounds
+        and satisfy the constraints.
+        """
+        isin = all([params in dist for dist in self.distributions.values()])
+        if not isin:
+            return False
+        # in the individual distributions, apply constrains
+        return self._constraints(params)
+
+    def _draw(self, size=1, **kwargs):
         """Draws random samples without applying physical constrains.
         """
         # draw masses
-        mass1 = self.mass1_distr.rvs(size=size)['mass1']
-        mass2 = self.mass2_distr.rvs(size=size)['mass2']
+        try:
+            mass1 = kwargs['mass1']
+        except KeyError:
+            mass1 = self.mass1_distr.rvs(size=size)['mass1']
+        try:
+            mass2 = kwargs['mass2']
+        except KeyError:
+            mass2 = self.mass2_distr.rvs(size=size)['mass2']
         # draw angles
-        phi_a = self.phia_distr.rvs(size=size)['phi_a']
-        phi_s = self.phis_distr.rvs(size=size)['phi_s']
+        try:
+            phi_a = kwargs['phi_a']
+        except KeyError:
+            phi_a = self.phia_distr.rvs(size=size)['phi_a']
+        try:
+            phi_s = kwargs['phi_s']
+        except KeyError:
+            phi_s = self.phis_distr.rvs(size=size)['phi_s']
         # draw chi_eff, chi_a
-        chi_eff = self.chieff_distr.rvs(size=size)['chi_eff']
-        chi_a = self.chia_distr.rvs(size=size)['chi_a']
+        try:
+            chi_eff = kwargs['chi_eff']
+        except KeyError:
+            chi_eff = self.chieff_distr.rvs(size=size)['chi_eff']
+        try:
+            chi_a = kwargs['chi_a']
+        except KeyError:
+            chi_a = self.chia_distr.rvs(size=size)['chi_a']
         # draw xis
-        xi1 = self.xi1_distr.rvs(size=size)['xi1']
-        xi2 = self.xi2_distr.rvs(size=size)['xi2']
+        try:
+            xi1 = kwargs['xi1']
+        except KeyError:
+            xi1 = self.xi1_distr.rvs(size=size)['xi1']
+        try:
+            xi2 = kwargs['xi2']
+        except KeyError:
+            xi2 = self.xi2_distr.rvs(size=size)['xi2']
         dtype = [(p, float) for p in self.params]
         arr = numpy.zeros(size, dtype=dtype)
         arr['mass1'] = mass1
@@ -1784,7 +1826,7 @@ class UniformChiPChiEff(object):
         arr['xi2'] = xi2
         return arr
 
-    def rvs(self, size=1):
+    def rvs(self, size=1, **kwargs):
         """Returns random values for all of the parameters.
         """
         dtype = [(p, float) for p in self.params]
@@ -1792,7 +1834,7 @@ class UniformChiPChiEff(object):
         remaining = size
         keepidx = 0
         while remaining:
-            draws = self._draw(size=remaining)
+            draws = self._draw(size=remaining, **kwargs)
             mask = self._constraints(draws)
             addpts = mask.sum()
             arr[keepidx:keepidx+addpts] = draws[mask]
@@ -1800,8 +1842,24 @@ class UniformChiPChiEff(object):
             remaining = size - keepidx
         return arr
 
-    def logpdf(**kwargs):
-        print 'write_me'
+    def logpdf(self, **kwargs):
+        """Returns the log of the pdf at the given values. The keyword
+        arguments must contain all of parameters in self's params.
+        Unrecognized arguments are ignored.
+        """
+        if kwargs not in self:
+            return -numpy.inf
+        return sum([self.distributions[p].logpdf(**kwargs)
+                    for p in self._params])
+
+    def pdf(self, **kwargs):
+        """Returns the pdf at the given values. The keyword arguments must
+        contain all of parameters in self's params.  Unrecognized arguments
+        are ignored.
+        """
+        return numpy.exp(self.logpdf(**kwargs))
+
+    __call__ = logpdf
 
 
 distribs = {
