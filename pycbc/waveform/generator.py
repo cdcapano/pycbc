@@ -28,7 +28,7 @@ This modules provides classes for generating waveforms.
 import functools
 import waveform
 import ringdown
-from pycbc import coordinates
+from pycbc import coordinates, conversions
 from pycbc.waveform import parameters
 from pycbc.waveform.utils import apply_fd_time_shift
 from pycbc.detector import Detector
