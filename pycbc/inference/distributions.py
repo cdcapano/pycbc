@@ -1921,6 +1921,7 @@ distribs = {
     UniformSquareRoot.name : UniformSquareRoot,
     Gaussian.name : Gaussian,
     FromFile.name : FromFile,
+    UniformChiPChiEff.name : UniformChiPChiEff,
 }
 
 def read_distributions_from_config(cp, section="prior"):
