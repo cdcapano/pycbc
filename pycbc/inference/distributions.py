@@ -1839,6 +1839,10 @@ class UniformChiPChiEff(object):
         arr['xi2'] = xi2
         return arr
 
+    def apply_boundary_conditions(self, **kwargs):
+        return kwargs
+
+
     def rvs(self, size=1, **kwargs):
         """Returns random values for all of the parameters.
         """
