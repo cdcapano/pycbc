@@ -240,27 +240,27 @@ phi_s = Parameter("phi_s",
                 description="Sum of the angles between the in-plane "
                             "spins of the two bodies.")
 spin_px = Parameter("spin_px",
-                dtype=float, label=r"$\chi_{\mathrm{pr}\,x}$",
+                dtype=float, label=r"$\chi_{1x}$",
                 description="The x component of the dimensionless spin of the "
                             "primary object.")
 spin_py = Parameter("spin_py",
-                dtype=float, label=r"$\chi_{\mathrm{pr}\,y}$",
+                dtype=float, label=r"$\chi_{1y}$",
                 description="The y component of the dimensionless spin of the "
                             "primary object.")
 spin_pz = Parameter("spin_pz",
-                dtype=float, label=r"$\chi_{\mathrm{pr}\,z}$",
+                dtype=float, label=r"$\chi_{1z}$",
                 description="The z component of the dimensionless spin of the "
                             "primary object.")
 spin_sx = Parameter("spin_sx",
-                dtype=float, label=r"$\chi_{\mathrm{sc}\,x}$",
+                dtype=float, label=r"$\chi_{2x}$",
                 description="The x component of the dimensionless spin of the "
                             "secondary object.")
 spin_sy = Parameter("spin_sy",
-                dtype=float, label=r"$\chi_{\mathrm{sc}\,y}$",
+                dtype=float, label=r"$\chi_{2y}$",
                 description="The y component of the dimensionless spin of the "
                             "secondary object.")
 spin_sz = Parameter("spin_sz",
-                dtype=float, label=r"$\chi_{\mathrm{sc}\,z}$",
+                dtype=float, label=r"$\chi_{2z}$",
                 description="The z component of the dimensionless spin of the "
                             "secondary object.")
 lambda1 = Parameter("lambda1",
@@ -280,11 +280,11 @@ dquad_mon2 = Parameter("dquad_mon2",
 spin1_a = Parameter("spin1_a",
                     dtype=float, label=r"$a_{1}$",
                     description="The dimensionless spin magnitude "
-                                "$|\vec{s}/m_{1}^2|$.")
+                                r"$|\vec{s}/m_{1}^2|$.")
 spin2_a = Parameter("spin2_a",
                     dtype=float, label=r"$a_{2}$",
                     description="The dimensionless spin magnitude "
-                                "$|\vec{s}/m_{2}^2|$.")
+                                r"$|\vec{s}/m_{2}^2|$.")
 spin1_azimuthal = Parameter(
                       "spin1_azimuthal",
                       dtype=float, label=r"$\theta_1^\mathrm{azimuthal}$",
