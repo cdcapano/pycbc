@@ -31,6 +31,7 @@ import copy
 import numpy
 import lal
 from pycbc.detector import Detector
+from pycbc import coordinates
 
 #
 # =============================================================================
@@ -381,9 +382,29 @@ def chi_p(mass1, mass2, spin1x, spin1y, spin2x, spin2y):
     spiny_p = primary_spin(mass1, mass2, spin1y, spin2y)
     spinx_s = secondary_spin(mass1, mass2, spin1x, spin2x)
     spiny_s = secondary_spin(mass1, mass2, spin1y, spin2y)
-    xi1 = secondary_xi(mass1, mass2, spinx_s, spiny_s)
-    xi2 = primary_xi(spinx_p, spiny_p)
+    xi1 = primary_xi(mass1, mass2, spin1x, spin1y, spin2x, spin2y)
+    xi2 = secondary_xi(mass1, mass2, spin1x, spin1y, spin2x, spin2y)
     return chi_p_from_xi1_xi2(xi1, xi2)
+
+def chi_eff_from_mass1_mass2_spherical_spin_coords(mass1, mass2, spin1_a,
+        spin1_azimuthal, spin1_polar, spin2_a, spin2_azimuthal, spin2_polar):
+    """Returns the effective precession spin from mass1, mass2, and the
+    spins of each object in spherical coordinates."""
+    _, _, spin1z = coordinates.spherical_to_cartesian(spin1_a,
+                   spin1_azimuthal, spin1_polar)
+    _, _, spin2z = coordinates.spherical_to_cartesian(spin2_a,
+                   spin2_azimuthal, spin2_polar)
+    return chi_eff(mass1, mass2, spin1z, spin2z)
+
+def chi_p_from_mass1_mass2_spherical_spin_coords(mass1, mass2, spin1_a,
+        spin1_azimuthal, spin1_polar, spin2_a, spin2_azimuthal, spin2_polar):
+    """Returns the effective precession spin from mass1, mass2, and the
+    spins of each object in spherical coordinates."""
+    spin1x, spin1y, _ = coordinates.spherical_to_cartesian(spin1_a,
+        spin1_azimuthal, spin1_polar)
+    spin2x, spin2y, _ = coordinates.spherical_to_cartesian(spin2_a,
+        spin2_azimuthal, spin2_polar)
+    return chi_p(mass1, mass2, spin1x, spin1y, spin2x, spin2y)
 
 def phi_a(spin1x, spin1y, spin2x, spin2y):
     phi1 = phi1_from_spin1x_spin1y(spin1x, spin1y)
@@ -423,16 +444,30 @@ def secondary_spin(mass1, mass2, spin1, spin2):
     ss[mask] = spin1[mask]
     return _formatreturn(ss)
 
-def primary_xi(spinx, spiny):
-    """Returns the effective precession spin argument for the larger mass."""
-    return chi_perp_from_spin1x_spin1y(spinx, spiny)
+def xi1_from_spin1x_spin1y(spin1x, spin1y):
+    """Returns the effective spin argument, assuming that the given spins are
+    that of the larger mass."""
+    return chi_perp_from_spin1x_spin1y(spin1x, spin1y)
 
-def secondary_xi(mass1, mass2, spinx, spiny):
-    """Returns the effective precession spin argument for the smaller mass."""
-    q = q_from_mass1_mass2(mass1, mass2)
+def xi2_from_q_spin2x_spin2y(q, spin2x, spin2y):
+    """Returns the effective spin argument, assuming that the given spins are
+    that of the smaller mass, and q >= 1."""
     a1 = 2 + 3 * q / 2
     a2 = 2 + 3 / (2 * q)
-    return a1 / (q**2 * a2) * chi_perp_from_spin1x_spin1y(spinx, spiny)
+    return a1 / (q**2 * a2) * chi_perp_from_spin1x_spin1y(spin2x, spin2y)
+
+def primary_xi(mass1, mass2, spin1x, spin1y, spin2x, spin2y):
+    """Returns the effective precession spin argument for the larger mass."""
+    spinx = primary_spin(mass1, mass2, spin1x, spin2x)
+    spiny = primary_spin(mass1, mass2, spin1y, spin2y)
+    return xi1_from_spin1x_spin1y(spinx, spiny)
+
+def secondary_xi(mass1, mass2, spin1x, spin1y, spin2x, spin2y):
+    """Returns the effective precession spin argument for the smaller mass."""
+    q = q_from_mass1_mass2(mass1, mass2)
+    spinx = secondary_spin(mass1, mass2, spin1x, spin2x)
+    spiny = secondary_spin(mass1, mass2, spin1y, spin2y)
+    return xi2_from_q_spin2x_spin2y(q, spin2x, spin2y)
 
 def chi_perp_from_spin1x_spin1y(spin1x, spin1y):
     """Returns the in-plane spin from spin1x and spin1y."""
@@ -570,6 +605,8 @@ __all__ = ['primary_mass', 'secondary_mass', 'mtotal_from_mass1_mass2',
            'tau3_from_mass1_mass2', 'mtotal_from_tau0_tau3',
            'eta_from_tau0_tau3', 'mass1_from_tau0_tau3',
            'mass2_from_tau0_tau3', 'chi_eff', 'chi_a', 'chi_p', 'primary_spin',
-           'secondary_spin', 'xi1', 'xi2', 'chi_perp_from_spin1x_spin2x',
+           'secondary_spin', 'primary_xi', 'secondary_xi', 'chi_perp_from_spin1x_spin1y',
+           'chi_eff_from_mass1_mass2_spherical_spin_coords',
+           'chi_p_from_mass1_mass2_spherical_spin_coords',
            'chirp_distance', 'det_tc'
           ]
