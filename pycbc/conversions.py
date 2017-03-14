@@ -608,5 +608,6 @@ __all__ = ['primary_mass', 'secondary_mass', 'mtotal_from_mass1_mass2',
            'secondary_spin', 'primary_xi', 'secondary_xi', 'chi_perp_from_spin1x_spin1y',
            'chi_eff_from_mass1_mass2_spherical_spin_coords',
            'chi_p_from_mass1_mass2_spherical_spin_coords',
+           'chi_p_from_xi1_xi2',
            'chirp_distance', 'det_tc'
           ]
