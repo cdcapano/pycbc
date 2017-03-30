@@ -236,6 +236,10 @@ class _BaseLikelihoodEvaluator(object):
         """
         return self._prior(params)
 
+    def logprior(self, params):
+        p = self._prior(params)
+        return self._formatreturn(p, prior=p)
+
     def loglikelihood(self, params):
         """Returns the natural log of the likelihood function.
         """
@@ -273,6 +277,10 @@ class _BaseLikelihoodEvaluator(object):
             A tuple of the prior and log likelihood ratio.
         """
         if self.return_meta:
+            if prior is None:
+                prior = numpy.nan
+            if loglr is None:
+                loglr = numpy.nan
             return val, (prior, loglr)
         else:
             return val

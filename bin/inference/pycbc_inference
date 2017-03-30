@@ -67,6 +67,9 @@ parser.add_argument("--psd-end-time", type=float, default=None,
 parser.add_argument("--likelihood-evaluator", required=True,
                     choices=inference.likelihood_evaluators.keys(),
                     help="Evaluator class to use to calculate the likelihood.")
+parser.add_argument("--likelihood-function", default=None,
+                    help="Set the likelihood function to use. If None, will "
+                         "use the default determined by the sampler.")
 parser.add_argument("--seed", type=int, default=0,
                     help="Seed to use for the random number generator that "
                          "initially distributes the walkers. Default is 0.")
@@ -264,6 +267,9 @@ with ctx:
     likelihood = inference.likelihood_evaluators[opts.likelihood_evaluator](
                         generator, stilde_dict, opts.low_frequency_cutoff,
                         psds=psd_dict, prior=prior)
+
+    if opts.likelihood_function is not None:
+        likelihood.set_callfunc(opts.likelihood_function)
 
     # create sampler that will run
     sampler = option_utils.sampler_from_cli(opts, likelihood)
