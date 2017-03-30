@@ -1255,7 +1255,7 @@ class Arbitrary(_BoundedDist):
         # initialize the bounds
         if bounds is None:
             bounds = {}
-        bounds.update({p: None} for p in kwargs if p not in bounds})
+        bounds.update({p: None for p in kwargs if p not in bounds})
         super(Arbitrary, self).__init__(**bounds)
         # check that all parameters specified in bounds have samples
         if set(self.params) != set(kwargs.keys()):
@@ -1362,6 +1362,7 @@ class Arbitrary(_BoundedDist):
             dtype = [(param, float)]
         else:
             dtype = [(p, float) for p in self.params]
+        size = int(size)
         arr = numpy.zeros(size, dtype=dtype)
         start = 0
         remaining = size
@@ -1370,7 +1371,7 @@ class Arbitrary(_BoundedDist):
             keep = numpy.array([{param: randoms[ii, jj]
                                for ii,param in enumerate(self.params)} in self
                                for jj in xrange(remaining)])
-            keepcnt = keep.sum()
+            keepcnt = int(keep.sum())
             end = start + keepcnt
             remaining -= keepcnt
             for order, param in enumerate(dtype):
@@ -1750,7 +1751,7 @@ class UniformSquareRoot(UniformRadius):
     dim = 0.5
 
 
-class UniformChiPChiEff(object):
+class UniformChiPChiEff(Arbitrary):
     r"""A distribution uniform in :math:`\chi_{\mathrm{eff}}` and
     :math:`\chi_p`.
 
@@ -1766,7 +1767,8 @@ class UniformChiPChiEff(object):
     _params = ['mass1', 'mass2', 'xi1', 'xi2', 'chi_eff', 'chi_a',
                'phi_a', 'phi_s']
 
-    def __init__(self, mass1=None, mass2=None, chi_eff=None, chi_a=None):
+    def __init__(self, mass1=None, mass2=None, chi_eff=None, chi_a=None,
+                 nsamples=10000):
 
         if isinstance(mass1, _BoundedDist):
             self.mass1_distr = mass1
@@ -1789,8 +1791,7 @@ class UniformChiPChiEff(object):
             if chi_a is None:
                 chi_a = (-1., 1.)
             self.chia_distr = Uniform(chi_a=chi_a)
-        # xis: we'll just set the bounds to be 0,1 for now; these will
-        # be updated on the fly when drawing values and computing pdfs
+        # xis
         self.xi1_distr = UniformSquareRoot(xi1=(0.,1.))
         self.xi2_distr = UniformSquareRoot(xi2=(0.,1.))
         # the angles
@@ -1804,10 +1805,15 @@ class UniformChiPChiEff(object):
                               'chi_a': self.chia_distr,
                               'phi_a': self.phia_distr,
                               'phi_s': self.phis_distr}
-
-    @property
-    def params(self):
-        return self._params
+        # create random variables for the kde
+        rvals = self.rvs(size=int(nsamples))
+        bounds = dict(b for distr in self.distributions.values()
+                        for b in distr.bounds.items())
+        super(UniformChiPChiEff, self).__init__(mass1=rvals['mass1'],
+            mass2=rvals['mass2'], xi1=rvals['xi1'], xi2=rvals['xi2'],
+            chi_eff=rvals['chi_eff'], chi_a=rvals['chi_a'],
+            phi_a=rvals['phi_a'], phi_s=rvals['phi_s'],
+            bounds=bounds)
 
     def _constraints(self, values):
         """Applies physical constraints to the given parameter values.
@@ -1912,6 +1918,7 @@ class UniformChiPChiEff(object):
     def rvs(self, size=1, **kwargs):
         """Returns random values for all of the parameters.
         """
+        size = int(size)
         dtype = [(p, float) for p in self.params]
         arr = numpy.zeros(size, dtype=dtype)
         remaining = size
@@ -1925,22 +1932,22 @@ class UniformChiPChiEff(object):
             remaining = size - keepidx
         return arr
 
-    def logpdf(self, **kwargs):
-        """Returns the log of the pdf at the given values. The keyword
-        arguments must contain all of parameters in self's params.
-        Unrecognized arguments are ignored.
-        """
-        if kwargs not in self:
-            return -numpy.inf
-        return sum([self.distributions[p].logpdf(**kwargs)
-                    for p in self._params])
+    #def logpdf(self, **kwargs):
+    #    """Returns the log of the pdf at the given values. The keyword
+    #    arguments must contain all of parameters in self's params.
+    #    Unrecognized arguments are ignored.
+    #    """
+    #    if kwargs not in self:
+    #        return -numpy.inf
+    #    return sum([self.distributions[p].logpdf(**kwargs)
+    #                for p in self._params])
 
-    def pdf(self, **kwargs):
-        """Returns the pdf at the given values. The keyword arguments must
-        contain all of parameters in self's params.  Unrecognized arguments
-        are ignored.
-        """
-        return numpy.exp(self.logpdf(**kwargs))
+    #def pdf(self, **kwargs):
+    #    """Returns the pdf at the given values. The keyword arguments must
+    #    contain all of parameters in self's params.  Unrecognized arguments
+    #    are ignored.
+    #    """
+    #    return numpy.exp(self.logpdf(**kwargs))
 
     @classmethod
     def from_config(cls, cp, section, variable_args):
@@ -1977,8 +1984,6 @@ class UniformChiPChiEff(object):
         chi_a = get_param_bounds_from_config(cp, section, tag, 'chi_a')
         return cls(mass1=mass1, mass2=mass2, chi_eff=chi_eff, chi_a=chi_a)
 
-    __call__ = logpdf
-
 
 distribs = {
     Uniform.name : Uniform,
@@ -1990,6 +1995,7 @@ distribs = {
     UniformRadius.name : UniformRadius,
     UniformSquareRoot.name : UniformSquareRoot,
     Gaussian.name : Gaussian,
+    Arbitrary.name : Arbitrary,
     FromFile.name : FromFile,
     UniformChiPChiEff.name : UniformChiPChiEff,
 }
