@@ -44,9 +44,9 @@ class WaveformTDWindow(TimeDomainWindow):
     of a waveform is calculated, then from that a time estimated.
 
     Unlike `TimeDomainWindow`, times for applying the left and right taper are
-    measured from the coalescence time of the waveform, which is assumed to be
-    at the end of the data segment. Times before the coalescence time are
-    negative; times after are positive.
+    measured from the coalescence time of the waveform, which is assumed to
+    occur at abs(the waveform's epoch/star time). Times before the coalescence
+    time are negative; times after are positive.
 
     Instances of this class may be called like a function, in which case
     `apply_window` is called. See that function for more details.
@@ -133,10 +133,13 @@ class WaveformTDWindow(TimeDomainWindow):
                                   ifo=None, copy=True):
         """Applies window assuming h is a FrequencySeries.
         """
+        # the number of seconds from the beginning of the (unshifted) segment
+        # that the coalesence time occurs
+        tcoa = abs(float(h.epoch))
         # confine break time to within the data; this allows the break time
         # to be specified as either the time before the coalescence or the time
         # after the coalescence
-        break_time = break_time % (1./h.delta_f)
+        break_time = break_time % tcoa
         # figure out where the waveform has support
         nzidx = numpy.nonzero(abs(h))[0]
         if len(nzidx) == 0:
@@ -149,7 +152,7 @@ class WaveformTDWindow(TimeDomainWindow):
             if kmin+2 > kmax:
                 # means there are only two frequencies with non-zero support,
                 # just assume the waveform spans the entire segment
-                left_time = -len(h)/h.delta_f
+                left_time = -tcoa
             else:
                 left_time = time_from_frequencyseries(h[kmin:kmin+2])[0]
         left_freq = self.left_taper_frequency
@@ -181,8 +184,7 @@ class WaveformTDWindow(TimeDomainWindow):
         if left_time is not None:
             # TimeDomainWindow measures time from the start of the segment,
             # so adjust
-            dur = 1./h.delta_f
-            left_time = dur + left_time - break_time
+            left_time = tcoa + left_time - break_time
         #
         #   right taper
         #
@@ -212,8 +214,7 @@ class WaveformTDWindow(TimeDomainWindow):
         if right_time is not None:
             # TimeDomainWindow measures time from the start of the segment,
             # so adjust
-            dur = 1./h.delta_f
-            right_time = dur + right_time - break_time
+            right_time = tcoa + right_time - break_time
         try:
             h = super(WaveformTDWindow, self).apply_window(h,
                       left_time=left_time, right_time=right_time,
@@ -230,15 +231,22 @@ class WaveformTDWindow(TimeDomainWindow):
                 self.right_taper_frequency is not None:
             # we'll need to compute t(f), so convert to frequency domain and
             # do everything there
-            h = h.to_frequencyseries()
+            if self.window_whitened:
+                df = self.psds[ifo].delta_f
+            else:
+                df = None
+            h = h.to_frequencyseries(delta_f=df)
             h = self._apply_to_frequencyseries(h, break_time=break_time,
                                                params=params, ifo=ifo,
                                                copy=False).to_timeseries()
         else:
+            # the number of seconds from the beginning of the (unshifted)
+            # segment that the coalesence time occurs
+            tcoa = abs(float(h.start_time))
             # confine break time to within the data; this allows the break
             # time to be specified as either the time before the coalescence
             # or the time after the coalescence
-            break_time = break_time % (len(h)*h.delta_t)
+            break_time = break_time % (tcoa)
             # left
             left_time = self.left_taper_time
             if left_time == 'start':
@@ -253,22 +261,22 @@ class WaveformTDWindow(TimeDomainWindow):
                         # still nothing, means the waveform is empty
                         raise NoWaveformError("waveform has no non-zero "
                                               "values")
-                    left_time = (len(h) - breakidx + nzidx[0])*h.delta_t
+                    left_time = tcoa + nzidx[0]*h.delta_t - break_time
                 else:
                     left_time = nzidx[0]*h.delta_t
                 # Note: left time is now measured from the start of the segment
                 # after the segment is rolled such that the break time starts
                 # at the beginning, as is needed for TimeDomainWindow
-            else:
+            elif left_time is not None:
                 # TimeDomainWindow measures time from the start of the segment,
                 # so adjust
-                left_time = len(h)*h.delta_t + left_time - break_time
+                left_time = tcoa + left_time - break_time
             # right
             right_time = self.right_taper_time
             if right_time is not None:
                 # TimeDomainWindow measures time from the start of the segment,
                 # so adjust
-                right_time = len(h)*h.delta_t + right_time - break_time
+                right_time = tcoa + right_time - break_time
             try:
                 h = super(WaveformTDWindow, self).apply_window(h,
                           left_time=left_time, right_time=right_time,
