@@ -443,9 +443,12 @@ class FDomainDetFrameGenerator(object):
         must be included in either the variable args or the frozen params. If
         None, the generate function will just return the plus polarization
         returned by the rFrameGeneratorClass shifted by any desired time shift.
-    epoch : {float, lal.LIGOTimeGPS
+    epoch : {float, lal.LIGOTimeGPS}
         The epoch start time to set the waveform to. A time shift = tc - epoch is
         applied to waveforms before returning.
+    window : WaveformTDWindow, optional
+        If provided, the given window will be applied to waveforms before
+        being returned.
     variable_args : {(), list or tuple}
         A list or tuple of strings giving the names and order of parameters
         that will be passed to the generate function.
@@ -482,6 +485,11 @@ class FDomainDetFrameGenerator(object):
         The GPS start time of the frequency series returned by the generate function.
         A time shift is applied to the waveform equal to tc-epoch. Update by using
         ``set_epoch``.
+    returns_whitened : {0, 1, 2}
+        Whether returned waveforms are unwhitened (0), whitened (1), or
+        over-whitened (2). The latter two will occur if a window was supplied
+        on initialization that (over-)whitens the waveforms before applying
+        the window.
     current_params : dict
         A dictionary of name, value pairs of the arguments that were last
         used by the generate function.
@@ -511,7 +519,7 @@ class FDomainDetFrameGenerator(object):
     location_args = set(['tc', 'ra', 'dec', 'polarization'])
 
     def __init__(self, rFrameGeneratorClass, epoch, detectors=None,
-            variable_args=(), **frozen_params):
+            window=None, variable_args=(), **frozen_params):
         # initialize frozen & current parameters:
         self.current_params = frozen_params.copy()
         self._static_args = frozen_params.copy()
@@ -545,6 +553,11 @@ class FDomainDetFrameGenerator(object):
         else:
             self.detectors = {'RF': None}
         self.detector_names = sorted(self.detectors.keys())
+        self.window = window
+        if window is not None:
+            self.returns_whitened = window.window_whitened
+        else:
+            self.returns_whitened = False
 
     def set_epoch(self, epoch):
         """Sets the epoch; epoch should be a float or a LIGOTimeGPS."""
@@ -577,9 +590,14 @@ class FDomainDetFrameGenerator(object):
             # happens at the end of the time series (as they are for f-domain),
             # so we add an additional shift to account for it
             tshift = 1./df - abs(hp._epoch)
+            break_time = 0. # for the window, if is supplied
         else:
             tshift = 0.
-        hp._epoch = hc._epoch = self._epoch
+            # we need to supply a break time for the window, if one will be
+            # applied. The data segment should be at least twice as long as
+            # the waveform, so we're safe setting the break time to be 1/4
+            # the length of the segment
+            break_time = 1./(4*hp.delta_f)
         h = {}
         if self.detector_names != ['RF']:
             for detname, det in self.detectors.items():
@@ -589,14 +607,25 @@ class FDomainDetFrameGenerator(object):
                             self.current_params['polarization'],
                             self.current_params['tc'])
                 thish = fp*hp + fc*hc
+                # apply window
+                if self.window is not None:
+                    thish = self.window(thish, break_time=break_time,
+                                        ifo=detname,
+                                        params=self.current_params, copy=False)
                 # apply the time shift
+                thish._epoch = self._epoch
                 tc = self.current_params['tc'] + \
                     det.time_delay_from_earth_center(self.current_params['ra'],
                          self.current_params['dec'], self.current_params['tc'])
                 h[detname] = apply_fd_time_shift(thish, tc+tshift, copy=False)
         else:
             # no detector response, just use the + polarization
+            # apply window
+            if self.window is not None:
+                hp = self.window(hp, break_time=break_time,
+                                 params=self.current_params, copy=False)
             if 'tc' in self.current_params:
+                hp._epoch = self._epoch
                 hp = apply_fd_time_shift(hp, self.current_params['tc']+tshift,
                                          copy=False)
             h['RF'] = hp
