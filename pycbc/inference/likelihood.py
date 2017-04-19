@@ -27,6 +27,7 @@ for parameter estimation.
 """
 
 from pycbc import filter
+from pycbc.window import UNWHITENED, WHITENED, OVERWHITENED
 from pycbc.waveform import NoWaveformError
 from pycbc.types import Array
 import numpy
@@ -488,15 +489,12 @@ class GaussianLikelihood(_BaseLikelihoodEvaluator):
         # we'll store the weight to apply to the inner product
         if psds is None:
             w = Array(numpy.sqrt(norm)*numpy.ones(N))
-            # FIXME: use the following when we've switched to 2.7
-            #self._weight = {det: w for det in data} 
-            self._weight = dict([(det, w) for det in data])
+            self._weight = {det: w for det in data} 
         else:
             # temporarily suppress numpy divide by 0 warning
             numpysettings = numpy.seterr(divide='ignore')
-            # FIXME: use the following when we've switched to 2.7
-            #self._weight = {det: Array(numpy.sqrt(norm/psds[det])) for det in data}
-            self._weight = dict([(det, Array(numpy.sqrt(norm/psds[det]))) for det in data])
+            self._weight = {det: Array(numpy.sqrt(norm/psds[det]))
+                            for det in data}
             numpy.seterr(**numpysettings)
         # whiten the data
         for det in self._data:
@@ -505,7 +503,21 @@ class GaussianLikelihood(_BaseLikelihoodEvaluator):
         self.set_lognl(-0.5*sum([
             d[kmin:kmax].inner(d[kmin:kmax]).real
             for d in self._data.values()]))
-        # set default call function to logplor
+        # if the waveform generator returns (over-)whitened waveforms, adjust
+        # the weight
+        if waveform_generator.returns_whitened == WHITENED:
+            # remove the whitening from the weight
+            for det in self._weight:
+                asd = numpy.sqrt(psds[det])
+                self._weight[det] *= asd
+        elif waveform_generator.returns_whitened == OVERWHITENED:
+            # in this case, we want the weight to be the asd, since multiplying
+            # the overwhitened waveform by the asd will result in it being
+            # white. Since the weight currently is divided by the asd, this
+            # means multiplying the weight by the psd
+            for det in self._weight:
+                self._weight[det] *= psds[det]
+        # set default call function to logplr
         self.set_callfunc('logplr')
 
     @property
