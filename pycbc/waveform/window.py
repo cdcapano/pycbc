@@ -51,6 +51,16 @@ class WaveformTDWindow(TimeDomainWindow):
     Instances of this class may be called like a function, in which case
     `apply_window` is called. See that function for more details.
 
+    .. warning::
+        Using a taper frequency can be unreliable on time domain waveforms if
+        an initial tapering is not applied first. This is because the
+        estimation of time as a function of frequency is done in the frequency
+        domain; to do this for time-domain waveforms, the waveforms are
+        converted to the frequency domain first. If the waveform turns on or
+        off abruptly, this will result in noise in the frequency domain that
+        messes up the estimation of time as a function of frequency, which can
+        result in the tapers being applied at the wrong place.
+
     Parameters
     ----------
     left_taper_time : {None, float, "start"}
