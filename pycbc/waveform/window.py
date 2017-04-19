@@ -25,10 +25,12 @@
 This modules provides classes and functions for windowing waveforms.
 """
 
-from pycbc.waveform import NoWaveformError
+import numpy
+from pycbc.waveform.waveform import NoWaveformError
+from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.window import TimeDomainWindow, WindowBoundsError
 from pycbc import pnutils
-from pycbc.types import TimeSeries
+from pycbc.types import TimeSeries, FrequencySeries
 
 class WaveformTDWindow(TimeDomainWindow):
     """Windows waveforms at specified times and/or frequencies.
@@ -41,37 +43,39 @@ class WaveformTDWindow(TimeDomainWindow):
     function is provided, a frequency to apply the taper for the parameters
     of a waveform is calculated, then from that a time estimated.
 
-    Unlike `TimeDomainWindow`, times for applying the left and right taper
-    are measured from the coalescence time of the waveform. Times before
-    the coalescence time are negative; times after are positive.
+    Unlike `TimeDomainWindow`, times for applying the left and right taper are
+    measured from the coalescence time of the waveform, which is assumed to be
+    at the end of the data segment. Times before the coalescence time are
+    negative; times after are positive.
 
     Instances of this class may be called like a function, in which case
     `apply_window` is called. See that function for more details.
 
     Parameters
     ----------
-    left_taper_time : float, optional
-        The time in seconds relative to the coalescence time at which to
-        start the left taper. If provided, the same time will be used for
-        all waveforms.
+    left_taper_time : {None, float, "start"}
+        If a float, the time in seconds relative to the coalescence time at
+        which to start the left taper. In this case, the same time will be used
+        for all waveforms. Alternatively, the string "start" may be passed.
+        In that case, the start of the waveform (estimated by looking for the
+        first non-zero value) will be used for the start of the left taper.
     right_taper_time : float, optional
         The time in seconds relative to the coalescence time at which to
         end the right taper. If provided, the same time will be used for
-        all waveforms.
-    left_taper_frequency : float, optional
-        The frequency, in Hz, of the waveform at which time to start the
-        left taper. To convert from frequency to time, the stationary phase
-        approximation is used. If provided, the same frequency will be
-        used for all waveforms.
-    right_taper_frequency : float, optional
+        all waveforms. Note that unlike `left_taper_time`, "start" is not an
+        option (ending the right taper at the start of the waveform would just
+        result in a NoWaveformError).
+    left_taper_frequency : {None, float, str}
+        If a float, the frequency, in Hz, of the waveform at which time to
+        start the left taper. In this case, the same frequency will be used
+        for all waveforms. Alternatively, a string may be provided that gives
+        the name of a function to use for computing a frequency. This can
+        be any string recognized by `pnutils.named_frequency_cutoffs`. If
+        set, the waveform's parameters need to be provided when calling
+        `apply_window`.  To convert from frequency to time, the stationary
+        phase approximation is used. 
+    right_taper_frequency : {None, float, str}
         Same as `left_taper_frequency`, but for the right side.
-    left_taper_freqfunc : str, optional
-        Specify a function name to use to compute a frequency at which to
-        apply the left taper. Can be any string recognized by
-        `pnutils.named_frequency_cutoffs`. If set, the waveform's
-        parameters need to be provided when calling `apply_window`.
-    right_taper_freqfunc : str, optional
-        Same as `left_taper_freqfunc`, but for the right side.
     \**kwargs :
         All other keyword arguments are passed to `TimeDomainWindow`. See
         that class for details.
@@ -85,45 +89,193 @@ class WaveformTDWindow(TimeDomainWindow):
     """
     def __init__(self, left_taper_time=None, right_taper_time=None,
                  left_taper_frequency=None, right_taper_frequency=None,
-                 left_taper_freqfunc=None, right_taper_freqfunc=None,
                  **kwargs):
         # initialize the window
         super(WaveformTDWindow, self).__init__(**kwargs)
         # add the location settings
-        if left_taper == 'lal' and (left_taper_time is not None or
-                                    left_taper_frequency is not None or
-                                    left_taper_freqfunc is not None):
+        left_loc_provided = (left_taper_time is not None or
+                             left_taper_frequency is not None)
+        if self.left_taper == 'lal' and left_loc_provided:
             raise ValueError("The lal taper function does not take a "
                              "start time or frequency")
-        elif left_taper is not None and (left_taper_time is None and
-                                         left_taper_frequency is None and
-                                         left_taper_freqfunc is None):
+        elif self.left_taper is not None and not left_loc_provided:
             raise ValueError("Non-lal taper functions require either a taper "
                              "time, taper frequency, or frequency function")
         self.left_taper_time = left_taper_time
         self.left_taper_frequency = left_taper_frequency
-        self.left_taper_freqfunc = left_taper_freqfunc
-        if right_taper == 'lal':
-            if right_taper_duration is not None:
-                raise ValueError("The lal taper function does not take a "
-                                 "duration")
-            if left_taper_time is not None or \
-                    left_taper_frequency is not None or \
-                    left_taper_freqfunc is not None:
+        # if left_taper_frequency is in pnutils.named_frequency_cutoffs, assume
+        # it is a function
+        try:
+            self.left_taper_freqfunc = pnutils.named_frequency_cutoffs[
+                left_taper_frequency]
+        except KeyError:
+            self.left_taper_freqfunc = None
+        # right
+        right_loc_provided = (right_taper_time is not None or
+                              right_taper_frequency is not None)
+        if self.right_taper == 'lal' and right_loc_provided:
                 raise ValueError("The lal taper function does not take a "
                                  "end time or frequency")
-        elif right_taper is not None and right_taper_duration is None:
-            raise ValueError("Non-lal taper functions require a duration")
-        elif right_taper is not None and (right_taper_time is None and
-                                          right_taper_frequency is None and
-                                          right_taper_freqfunc is None):
+        elif self.right_taper is not None and not right_loc_provided:
             raise ValueError("Non-lal taper functions require either a taper "
                              "time, taper frequency, or frequency function")
-        self.right_taper = right_taper
-        self.right_taper_duration = right_taper_duration
         self.right_taper_time = right_taper_time
         self.right_taper_frequency = right_taper_frequency
-        self.right_taper_freqfunc = right_taper_freqfunc
+        # if right_taper_frequency is in pnutils.named_frequency_cutoffs,
+        # assume it is a function
+        try:
+            self.right_taper_freqfunc = pnutils.named_frequency_cutoffs[
+                right_taper_frequency]
+        except KeyError:
+            self.right_taper_freqfunc = None
+
+    def _apply_to_frequencyseries(self, h, break_time=0., params=None,
+                                  ifo=None, copy=True):
+        """Applies window assuming h is a FrequencySeries.
+        """
+        # confine break time to within the data; this allows the break time
+        # to be specified as either the time before the coalescence or the time
+        # after the coalescence
+        break_time = break_time % (1./h.delta_f)
+        # figure out where the waveform has support
+        nzidx = numpy.nonzero(abs(h))[0]
+        if len(nzidx) == 0:
+            raise NoWaveformError("waveform has no non-zero values")
+        kmin, kmax = nzidx[0], nzidx[-1]
+        # figure out times
+        left_time = self.left_taper_time
+        if left_time == 'start':
+            # we'll estimate the time of the first non-zero frequency
+            if kmin+2 > kmax:
+                # means there are only two frequencies with non-zero support,
+                # just assume the waveform spans the entire segment
+                left_time = -len(h)/h.delta_f
+            else:
+                left_time = time_from_frequencyseries(h[kmin:kmin+2])[0]
+        left_freq = self.left_taper_frequency
+        if self.left_taper_freqfunc is not None:
+            if params is None:
+                raise ValueError("must provide waveform parameters for the "
+                                 "frequency function to use for the left")
+            left_freq = self.left_taper_freqfunc(params)
+        #
+        #   left taper
+        #
+        if left_freq is not None:
+            # we only need to analyze h right around the desired frequency
+            k = int(left_freq / h.delta_f)
+            if k >= kmax:
+                # left taper starts after the waveform ends
+                raise NoWaveformError("left taper starts after the end of the "
+                                      "waveform")
+            elif k < kmin:
+                # left taper starts before the waveform begins; so nothing to
+                # apply
+                t = None
+            else:
+                t = time_from_frequencyseries(h[k:k+2])[0]
+            if left_time is None:
+                left_time = t
+            elif t is not None:
+                left_time = max(t, left_time)
+        if left_time is not None:
+            # TimeDomainWindow measures time from the start of the segment,
+            # so adjust
+            dur = 1./h.delta_f
+            left_time = dur + left_time - break_time
+        #
+        #   right taper
+        #
+        right_time = self.right_taper_time
+        right_freq = self.right_taper_frequency
+        if self.right_taper_freqfunc is not None:
+            if params is None:
+                raise ValueError("must provide waveform parameters for the "
+                                 "frequency function to use for the right")
+            right_freq = self.right_taper_freqfunc(params)
+        if right_freq is not None:
+            # we only need to analyze h right around the desired frequency
+            k = int(right_freq / h.delta_f)
+            if k < kmin:
+                # right taper starts before the waveform starts
+                raise NoWaveformError("right taper ends before the start of "
+                                      "the waveform")
+            elif k >= kmax:
+                # right taper ends after the waveform ends, so nothing to apply
+                t = None
+            else:
+                t = time_from_frequencyseries(h[k:k+2])[0]
+            if right_time is None:
+                right_time = t
+            elif t is not None:
+                right_time = min(t, right_time)
+        if right_time is not None:
+            # TimeDomainWindow measures time from the start of the segment,
+            # so adjust
+            dur = 1./h.delta_f
+            right_time = dur + right_time - break_time
+        try:
+            h = super(WaveformTDWindow, self).apply_window(h,
+                      left_time=left_time, right_time=right_time,
+                      break_time=break_time, ifo=ifo, copy=copy)
+        except WindowBoundsError as e:
+            raise NoWaveformError(e)
+        return h
+
+    def _apply_to_timeseries(self, h, break_time=0., params=None,
+                             ifo=None, copy=True):
+        """Applies window assuming h is a TimeSeries.
+        """
+        if self.left_taper_frequency is not None or \
+                self.right_taper_frequency is not None:
+            # we'll need to compute t(f), so convert to frequency domain and
+            # do everything there
+            h = h.to_frequencyseries()
+            h = self._apply_to_frequencyseries(h, break_time=break_time,
+                                               params=params, ifo=ifo,
+                                               copy=False).to_timeseries()
+        else:
+            # confine break time to within the data; this allows the break
+            # time to be specified as either the time before the coalescence
+            # or the time after the coalescence
+            break_time = break_time % (len(h)*h.delta_t)
+            # left
+            left_time = self.left_taper_time
+            if left_time == 'start':
+                # estimate the start of the waveform
+                breakidx = int(break_time / h.delta_t)
+                nzidx = numpy.nonzero(h[breakidx:])[0]
+                if len(nzidx) == 0:
+                    # nothing from the break idx to the end, try the rest of
+                    # the waveform
+                    nzidx = numpy.nonzero(h[:breakidx])[0]
+                    if len(nzidx) == 0:
+                        # still nothing, means the waveform is empty
+                        raise NoWaveformError("waveform has no non-zero "
+                                              "values")
+                    left_time = (len(h) - breakidx + nzidx[0])*h.delta_t
+                else:
+                    left_time = nzidx[0]*h.delta_t
+                # Note: left time is now measured from the start of the segment
+                # after the segment is rolled such that the break time starts
+                # at the beginning, as is needed for TimeDomainWindow
+            else:
+                # TimeDomainWindow measures time from the start of the segment,
+                # so adjust
+                left_time = len(h)*h.delta_t + left_time - break_time
+            # right
+            right_time = self.right_taper_time
+            if right_time is not None:
+                # TimeDomainWindow measures time from the start of the segment,
+                # so adjust
+                right_time = len(h)*h.delta_t + right_time - break_time
+            try:
+                h = super(WaveformTDWindow, self).apply_window(h,
+                          left_time=left_time, right_time=right_time,
+                          break_time=break_time, ifo=ifo, copy=copy)
+            except WindowBoundsError as e:
+                raise NoWaveformError(e)
+        return h
 
     def apply_window(self, h, break_time=0., params=None, ifo=None, copy=True):
         """Applies the window to the given waveform.
@@ -154,79 +306,17 @@ class WaveformTDWindow(TimeDomainWindow):
             Whether to copy the data before applying the window/whitening. If
             False, the taper will be applied in place. Default is True.
         """
-        # figure out times
-        left_time = self.left_taper_time
-        left_freq = self.left_taper_frequency
-        if self.left_taper_freqfunc is not None:
-            if params is None:
-                raise ValueError("must provide waveform parameters for the "
-                                 "frequency function to use for the left")
-            left_freq = pnutils.named_frequency_cutoffs[
-                self.left_taper_freqfunc](params)
-        convert_to_ts = False
-        #
-        #   left taper
-        #
-        if left_freq is not None:
-            # need frequencyseries version to get f(t)
-            if isinstance(h, TimeSeries):
-                h = h.to_frequencyseries()
-                convert_to_ts = True
-            # we only need to analyze h right around the desired frequency
-            indx = int(left_freq / h.delta_f)
-            t = time_from_frequencyseries(h[indx:indx+2])[0]
-            if left_time is None:
-                left_time = t
-            else:
-                left_time = max(t, left_time)
-        if left_time is not None:
-            # TimeDomainWindow measures time from the start of the segment,
-            # so adjust
-            if isinstance(h, TimeSeries):
-                dur = len(h)*h.delta_t
-            else:
-                dur = 1./h.delta_f
-            left_time = dur + left_time + break_time
-        #
-        #   right taper
-        #
-        right_time = self.right_taper_time
-        right_freq = self.right_taper_frequency
-        if self.right_taper_freqfunc is not None:
-            if params is None:
-                raise ValueError("must provide waveform parameters for the "
-                                 "frequency function to use for the right")
-            right_freq = pnutils.named_frequency_cutoffs[
-                self.right_taper_freqfunc](params)
-        if right_freq is not None:
-            # need frequencyseries version to get f(t)
-            if isinstance(h, TimeSeries):
-                h = h.to_frequencyseries()
-                convert_to_ts = True
-            # we only need to analyze h right around the desired frequency
-            indx = int(right_freq / h.delta_f)
-            t = time_from_frequencyseries(h[indx:indx+2])[0]
-            if right_time is None:
-                right_time = t
-            else:
-                right_time = min(t, right_time)
-        if right_time is not None:
-            # TimeDomainWindow measures time from the start of the segment,
-            # so adjust
-            if isinstance(h, TimeSeries):
-                dur = len(h)*h.delta_t
-            else:
-                dur = 1./h.delta_f
-            right_time = dur + left_time + break_time
-        try:
-            h = super(WaveformTDWindow, self).apply_window(h,
-                      left_time=left_time, right_time=right_time,
-                      break_time=break_time, ifo=ifo, copy=copy)
-        except WindowBoundsError as e:
-            raise NoWaveformError(e)
-        if convert_to_ts:
-            h = h.to_timeseries()
-        return h
+        if isinstance(h, TimeSeries):
+            return self._apply_to_timeseries(h, break_time=break_time,
+                                             params=params, ifo=ifo, copy=copy)
+        elif isinstance(h, FrequencySeries):
+            return self._apply_to_frequencyseries(h, break_time=break_time,
+                                                  params=params, ifo=ifo,
+                                                  copy=copy)
+        else:
+            raise TypeError("h must be either TimeSeries or FrequencySeries")
+    
+    __call__ = apply_window
 
 
 __all__ = ['WaveformTDWindow']
