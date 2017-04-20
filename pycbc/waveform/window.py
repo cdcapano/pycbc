@@ -262,11 +262,11 @@ class WaveformTDWindow(TimeDomainWindow):
             if left_time == 'start':
                 # estimate the start of the waveform
                 breakidx = int(break_time / h.delta_t)
-                nzidx = numpy.nonzero(h[breakidx:])[0]
+                nzidx = numpy.nonzero(h[breakidx:].numpy())[0]
                 if len(nzidx) == 0:
                     # nothing from the break idx to the end, try the rest of
                     # the waveform
-                    nzidx = numpy.nonzero(h[:breakidx])[0]
+                    nzidx = numpy.nonzero(h[:breakidx].numpy())[0]
                     if len(nzidx) == 0:
                         # still nothing, means the waveform is empty
                         raise NoWaveformError("waveform has no non-zero "
