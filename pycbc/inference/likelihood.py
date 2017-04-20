@@ -505,6 +505,22 @@ class GaussianLikelihood(_BaseLikelihoodEvaluator):
             for d in self._data.values()]))
         # if the waveform generator returns (over-)whitened waveforms, adjust
         # the weight
+        # first check that the psds used are the same
+        if waveform_generator.returns_whitened:
+            if psds is None:
+                raise ValueError("waveform generator returns (over-)whitened "
+                                 "waveforms, but no psd was provided here")
+            for det, psd in psds.items():
+                try:
+                    whpsd = waveform_generator.window.psds[det]
+                except KeyError:
+                    raise ValueError("waveform generator's window "
+                                     "(over-)whitens, but is missing a psd "
+                                     "for detector {}".format(det))
+                if not psd.almost_equal_elem(whpsd, 1e-5):
+                    raise ValueError("{} psd used by waveform generator's "
+                                     "window to whiten is not the same as "
+                                     "given {} psd".format(det, det))
         if waveform_generator.returns_whitened == WHITENED:
             # remove the whitening from the weight
             for det in self._weight:
