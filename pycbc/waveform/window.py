@@ -151,7 +151,7 @@ class WaveformTDWindow(TimeDomainWindow):
         # after the coalescence
         break_time = break_time % tcoa
         # figure out where the waveform has support
-        nzidx = numpy.nonzero(abs(h))[0]
+        nzidx = numpy.nonzero(abs(h).numpy())[0]
         if len(nzidx) == 0:
             raise NoWaveformError("waveform has no non-zero values")
         kmin, kmax = nzidx[0], nzidx[-1]
