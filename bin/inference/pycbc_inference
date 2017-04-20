@@ -34,7 +34,7 @@ from pycbc import scheme
 from pycbc import strain
 from pycbc import types
 from pycbc.io.inference_hdf import InferenceFile
-from pycbc.waveform import generator
+from pycbc import waveform
 from pycbc.inference import option_utils
 
 # command line usage
@@ -152,20 +152,25 @@ with ctx:
     # select generator that will generate waveform for a single IFO
     # for likelihood evaluator
     logging.info("Setting up sampler")
-    generator_function = generator.select_waveform_generator(
+    generator_function = waveform.select_waveform_generator(
                                                     static_args["approximant"])
 
+    # parse any window
+    waveform_window = option_utils.waveform_window_from_config(cp,
+        section='window', psds=psd_dict)
+
     # construct class that will generate waveforms
-    generated_waveform = generator.FDomainDetFrameGenerator(
+    waveform_generator = waveform.FDomainDetFrameGenerator(
                        generator_function, epoch=stilde_dict.values()[0].epoch,
                        variable_args=variable_args, detectors=opts.instruments,
+                       window=waveform_window,
                        delta_f=stilde_dict.values()[0].delta_f,
                        delta_t=strain_dict.values()[0].delta_t,
                        **static_args)
 
     # construct class that will return the natural logarithm of likelihood
     likelihood = inference.likelihood_evaluators[opts.likelihood_evaluator](
-                        generated_waveform, stilde_dict,
+                        waveform_generator, stilde_dict,
                         low_frequency_cutoff_dict.values()[0],
                         psds=psd_dict, prior=prior)
 

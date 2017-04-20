@@ -28,6 +28,7 @@ from pycbc.psd import from_cli_multi_ifos as psd_from_cli_multi_ifos
 from pycbc.strain import from_cli_multi_ifos as strain_from_cli_multi_ifos
 from pycbc.gate import gates_from_cli, psd_gates_from_cli, apply_gates_to_td, \
                        apply_gates_to_fd
+from pycbc.waveform import WaveformTDWindow
 
 
 #-----------------------------------------------------------------------------
@@ -130,6 +131,32 @@ def read_args_from_config(cp, section_group=None):
 
     return variable_args, static_args
 
+def waveform_window_from_config(cp, section='window', psds=None):
+    """Given an open config file, loads a window to use for waveform
+    generation, if the section exists.
+
+    Parameters
+    ----------
+    cp : WorkflowConfigParser
+        An open config parser to read from.
+    section : str, optional
+        The name of the section to look in for the window. Default is 'window'.
+    psds : dict, optional
+        A dictionary of `detector name -> psd`. Needed if `window-whitened` is
+        in the window section and is set to 1 or 2. Default is None.
+
+    Returns
+    -------
+    window : waveform.WaveformTDWindow or None
+        If the `section` is in the config file, an instance of a
+        `waveform.WaveformTDWindow` to use for windowing waveforms. Otherwise,
+        None.
+    """
+    if cp.has_section(section):
+        window = WaveformTDWindow.from_config(cp, section, psds=psds)
+    else:
+        window = None
+    return window
 
 #-----------------------------------------------------------------------------
 #
