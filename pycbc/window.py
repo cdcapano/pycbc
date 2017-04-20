@@ -322,11 +322,11 @@ class TimeDomainWindow(object):
             raise ValueError("window_whitened set to {}".format(
                              self.window_whitened))
         kmax = len(htilde)
-        # we can't whiten the waveform if it has frequencies outside of what
-        # the psd has
+        # assume the psd is inf at frequencies outside of what it is specified
         if kmax > len(wh):
-            raise ValueError("htilde goes to higher frequency than the psd")
-        htilde *= wh[:kmax]
+            htilde[len(wh):] *= 0.
+            kmax = len(wh)
+        htilde[:kmax] *= wh[:kmax]
         return htilde
 
     def get_left_window(self, delta_t):
