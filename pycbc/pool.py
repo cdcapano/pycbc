@@ -60,7 +60,7 @@ class BroadcastPool(multiprocessing.pool.Pool):
             The arguments for Pool.map
         """
         global _numdone
-        results = self.map(lockstep_fcn, [(len(self), fcn, args)] * len(self))
+        results = self.map(_lockstep_fcn, [(len(self), fcn, args)] * len(self))
         _numdone.value = 0
         return results
 
