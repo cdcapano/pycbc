@@ -116,9 +116,7 @@ opts = parser.parse_args()
 # verify options are sane
 fft.verify_fft_options(opts, parser)
 pycbc.opt.verify_optimization_options(opts, parser)
-#psd.verify_psd_options(opts, parser)
 scheme.verify_processing_options(opts, parser)
-#strain.verify_strain_options(opts, parser)
 pycbc.weave.verify_weave_options(opts, parser)
 
 # check for the output file
@@ -137,10 +135,16 @@ logging.info("Using seed %i", opts.seed)
 ctx = scheme.from_cli(opts)
 fft.from_cli(opts)
 
+# check if we're only evaluating the prior
+estimate_prior = opts.likelihood_evaulator == \
+                 inference.likelihood.EstimatePrior.name
+
 # get the data and psd
-logging.info("Loading data")
-strain_dict, stilde_dict, psd_dict = option_utils.data_from_cli(opts)
-low_frequency_cutoff_dict = option_utils.low_frequency_cutoff_from_cli(opts)
+if not estimate_prior:
+    logging.info("Loading data")
+    strain_dict, stilde_dict, psd_dict = option_utils.data_from_cli(opts)
+    low_frequency_cutoff_dict = option_utils.low_frequency_cutoff_from_cli(
+        opts)
 
 with ctx:
 
@@ -171,19 +175,27 @@ with ctx:
     # select generator that will generate waveform for a single IFO
     # for likelihood evaluator
     logging.info("Setting up sampler")
-    generator_function = generator.select_waveform_generator(
+    if estimate_prior:
+        likelihood = \
+            inference.likelihood_evaluators[opts.likelihood_evaluator](prior,
+                        sampling_parameters=sampling_parameters,
+                        replace_parameters=replace_parameters,
+                        sampling_transforms=sampling_transforms)
+    else:
+        generator_function = generator.select_waveform_generator(
                                                     static_args["approximant"])
 
-    # construct class that will generate waveforms
-    generated_waveform = generator.FDomainDetFrameGenerator(
+        # construct class that will generate waveforms
+        generated_waveform = generator.FDomainDetFrameGenerator(
                        generator_function, epoch=stilde_dict.values()[0].epoch,
                        variable_args=variable_args, detectors=opts.instruments,
                        delta_f=stilde_dict.values()[0].delta_f,
                        delta_t=strain_dict.values()[0].delta_t,
                        **static_args)
 
-    # construct class that will return the natural logarithm of likelihood
-    likelihood = inference.likelihood_evaluators[opts.likelihood_evaluator](
+        # construct class that will return the natural logarithm of likelihood
+        likelihood = \
+            inference.likelihood_evaluators[opts.likelihood_evaluator](
                         generated_waveform, stilde_dict,
                         low_frequency_cutoff_dict.values()[0],
                         psds=psd_dict, prior=prior,
