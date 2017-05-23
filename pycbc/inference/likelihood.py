@@ -226,6 +226,7 @@ class _BaseLikelihoodEvaluator(object):
                     "generator do not match")
             self._prior = prior
         self._variable_args = self._waveform_generator.variable_args
+        self._static_args = self._waveform_generator.static_args
         # initialize the log nl to 0
         self._lognl = None
         self.return_meta = return_meta
@@ -254,9 +255,19 @@ class _BaseLikelihoodEvaluator(object):
         return self._waveform_generator
 
     @property
+    def detector_names(self):
+        """Returns the names of the detectors that were used."""
+        return self._data.keys()
+
+    @property
     def variable_args(self):
         """Returns the variable arguments."""
         return self._variable_args
+
+    @property
+    def static_args(self):
+        """Returns the static arguments."""
+        return self._static_args
 
     @property
     def sampling_args(self):
@@ -814,6 +825,7 @@ class EstimatePrior(GaussianLikelihood):
         self._data = {}
         self._prior = prior
         self._variable_args = self._prior.variable_args
+        self._static_args = {}
         # initialize the log nl to 0
         self._lognl = None
         self.set_lognl(0.)

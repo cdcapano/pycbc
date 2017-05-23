@@ -63,7 +63,7 @@ class _BaseSampler(object):
     @property
     def ifos(self):
         """Returns the ifos that were sampled over."""
-        return self.likelihood_evaluator.waveform_generator.detector_names
+        return self.likelihood_evaluator.detector_names
 
     @property
     def variable_args(self):
@@ -166,7 +166,7 @@ class _BaseSampler(object):
         fp.attrs['sampling_args'] = list(self.sampling_args)
         fp.attrs["niterations"] = self.niterations
         fp.attrs["lognl"] = self.likelihood_evaluator.lognl
-        sargs = self.likelihood_evaluator.waveform_generator.static_args
+        sargs = self.likelihood_evaluator.static_args
         fp.attrs["static_args"] = sargs.keys()
         for arg, val in sargs.items():
             fp.attrs[arg] = val

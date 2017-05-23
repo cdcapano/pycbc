@@ -284,7 +284,7 @@ def add_low_frequency_cutoff_opt(parser):
     # FIXME: this just uses the same frequency cutoff for every instrument for
     # now. We should allow for different frequency cutoffs to be used; that
     # will require (minor) changes to the Likelihood class
-    parser.add_argument("--low-frequency-cutoff", type=float, required=True,
+    parser.add_argument("--low-frequency-cutoff", type=float,
                         help="Low frequency cutoff for each IFO.")
 
 
