@@ -800,7 +800,54 @@ class GaussianLikelihood(_BaseLikelihoodEvaluator):
         return self._formatreturn(logplr + self._lognl, prior=pr, loglr=lr,
                                   logjacobian=lj)
 
-likelihood_evaluators = {GaussianLikelihood.name: GaussianLikelihood}
+
+class EstimatePrior(GaussianLikelihood):
+    r"""Just returns the log prior at the given sample points, regardless
+    of what the call function is set to.
+    """
+    name = 'estimate_prior'
+
+    def __init__(self, prior, sampling_parameters=None,
+                 replace_parameters=None, sampling_transforms=None,
+                 return_meta=True):
+        self._waveform_generator = None
+        self._data = {}
+        self._prior = prior
+        self._variable_args = self._prior.variable_args
+        # initialize the log nl to 0
+        self._lognl = None
+        self.set_lognl(0.)
+        # set default call function to prior
+        self.set_callfunc('prior')
+        self.return_meta = return_meta
+        # store sampling parameters and transforms
+        if sampling_parameters is not None:
+            if replace_parameters is None or \
+                    len(replace_parameters) != len(sampling_parameters):
+                raise ValueError("number of sampling parameters must be the "
+                                 "same as the number of replace parameters")
+            if sampling_transforms is None:
+                raise ValueError("must provide sampling transforms for the "
+                                 "sampling parameters")
+            # pull out the replaced parameters
+            self._sampling_args = [arg for arg in self._variable_args \
+                                       if arg not in replace_parameters]
+            # add the samplign parameters
+            self._sampling_args += sampling_parameters
+            self._sampling_transforms = sampling_transforms
+        else:
+            self._sampling_args = self._variable_args
+            self._sampling_transforms = None
+
+    def loglr(**params):
+        """Just returns 0.
+        """
+        return 0.
+
+
+likelihood_evaluators = {GaussianLikelihood.name: GaussianLikelihood,
+                         EstimatePrior.name: EstimatePrior}
 
 __all__ = ['_BaseLikelihoodEvaluator', 'GaussianLikelihood',
+           'EstimatePrior',
            'likelihood_evaluators']
