@@ -217,6 +217,12 @@ with ctx:
     elif len(cp.get_subsections("initial")):
         initial_dists = distributions.read_distributions_from_config(
                                                          cp, section="initial")
+        initial_varargs = set().union(*[set(d.params) for d in initial_dists])
+        for dist in dists:
+            if set(dist.params).isdisjoint(initial_varargs):
+                initial_dists.append(dist)
+            else:
+                logging.info("replacing dist {} with initial".format(dist))
         initial = inference.PriorEvaluator(variable_args, *initial_dists)
         p0 = None
     else:
