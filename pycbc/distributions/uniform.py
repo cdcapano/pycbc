@@ -18,6 +18,8 @@ This modules provides classes for evaluating uniform distributions.
 
 import numpy
 from pycbc.distributions import bounded
+from pycbc.distributions.boundaries import Bounds
+from pycbc import conversions
 
 class Uniform(bounded.BoundedDist):
     """
@@ -187,4 +189,135 @@ class Uniform(bounded.BoundedDist):
                      bounds_required=True)
 
 
-__all__ = ['Uniform']
+class UniformMasses(Uniform):
+    name = 'uniform_masses'
+    def __init__(self, mass1=None, mass2=None, mchirp_bounds=None,
+                 q_bounds=None, seed=None):
+        super(UniformMasses, self).__init__(mass1=mass1, mass2=mass2)
+        if mchirp_bounds is not None:
+            self.mchirp_bounds = Bounds(mchirp_bounds[0], mchirp_bounds[1])
+        else:
+            self.mchirp_bounds = None
+        if q_bounds is not None:
+            self.q_bounds = Bounds(q_bounds[0], q_bounds[1])
+        else:
+            self.q_bounds = None
+        rstate = numpy.random.get_state()
+        # set the seed
+        if seed is None:
+            seed = 18293
+        numpy.random.seed(seed)
+        nsamples = int(1e6)
+        rvals = super(UniformMasses, self).rvs(size=nsamples)
+        # reset the random state back to what it was
+        numpy.random.set_state(rstate)
+        keep = self._apply_constraints(rvals)
+        adjust = float(keep.sum())/nsamples
+        self._norm /= adjust
+        self._lognorm -= numpy.log(adjust)
+
+    def __contains__(self, params):
+        out = self._apply_constraints(params) & \
+            super(UniformMasses, self).__contains__(params)
+        if out.size == 1:
+            out = out[0]
+        return out
+
+    def _apply_constraints(self, values):
+        """Applies physical constraints to the given parameter values.
+
+        Parameters
+        ----------
+        values : {arr or dict}
+            A dictionary or structured array giving the values.
+
+        Returns
+        -------
+        bool
+            Whether or not the values satisfy physical
+        """
+        mass1 = conversions._ensurearray(values['mass1'])
+        mass2 = conversions._ensurearray(values['mass2'])
+        test = numpy.ones(mass1.size, dtype=bool)
+        if self.mchirp_bounds is not None:
+            try:
+                mchirp = conversions._ensurearray(values['mchirp'])
+            except:
+                mchirp = conversions.mchirp_from_mass1_mass2(mass1, mass2)
+            test &= self.mchirp_bounds.__contains__(mchirp)
+        if self.q_bounds is not None:
+            try:
+                q = conversions._ensurearray(values['q'])
+            except:
+                q = conversions.q_from_mass1_mass2(mass1, mass2)
+            test &= self.q_bounds.__contains__(q)
+        return test
+
+    def rvs(self, size=1, param=None):
+        """Gives a set of random values drawn from this distribution.
+
+        Parameters
+        ----------
+        size : {1, int}
+            The number of values to generate; default is 1.
+        param : {None, string}
+            If provided, will just return values for the given parameter.
+            Otherwise, returns random values for each parameter.
+
+        Returns
+        -------
+        structured array
+            The random values in a numpy structured array. If a param was
+            specified, the array will only have an element corresponding to the
+            given parameter. Otherwise, the array will have an element for each
+            parameter in self's params.
+        """
+        size = int(size)
+        dtype = [(p, float) for p in self.params]
+        arr = numpy.zeros(size, dtype=dtype)
+        remaining = size
+        keepidx = 0
+        while remaining:
+            draws = super(UniformMasses, self).rvs(size=remaining)
+            mask = self._apply_constraints(draws)
+            addpts = mask.sum()
+            arr[keepidx:keepidx+addpts] = draws[mask]
+            keepidx += addpts
+            remaining = size - keepidx
+        return arr
+
+    @classmethod
+    def from_config(cls, cp, section, variable_args):
+        """Returns a distribution based on a configuration file. The parameters
+        for the distribution are retrieved from the section titled
+        "[`section`-`variable_args`]" in the config file.
+
+        Parameters
+        ----------
+        cp : pycbc.workflow.WorkflowConfigParser
+            A parsed configuration file that contains the distribution
+            options.
+        section : str
+            Name of the section in the configuration file.
+        variable_args : str
+            The names of the parameters for this distribution, separated by
+            `prior.VARARGS_DELIM`. These must appear in the "tag" part
+            of the section header.
+
+        Returns
+        -------
+        Uniform
+            A distribution instance from the pycbc.inference.prior module.
+        """
+        mchirp_bounds = bounded.get_param_bounds_from_config(cp, section,
+            variable_args, 'mchirp')
+        q_bounds = bounded.get_param_bounds_from_config(cp, section,
+            variable_args, 'q')
+        additional_opts = {'mchirp_bounds': mchirp_bounds, 'q_bounds': q_bounds}
+        skip_opts = ['min-mchirp', 'max-mchirp', 'min-q', 'max-q']
+        return bounded.bounded_from_config(cls, cp, section, variable_args,
+            bounds_required=True, additional_opts=additional_opts,
+            skip_opts=skip_opts)
+
+
+__all__ = ['Uniform', 'UniformMasses']
