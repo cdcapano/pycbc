@@ -24,6 +24,7 @@ from pycbc.distributions.power_law import UniformPowerLaw
 from pycbc.distributions.arbitrary import Arbitrary
 from pycbc.distributions.bounded import get_param_bounds_from_config, \
     VARARGS_DELIM, BoundedDist
+from pycbc.distributions.boundaries import Bounds
 
 class IndependentChiPChiEff(Arbitrary):
     r"""A distribution such that :math:`\chi_{\mathrm{eff}}` and
@@ -69,12 +70,21 @@ class IndependentChiPChiEff(Arbitrary):
                'phi_a', 'phi_s']
 
     def __init__(self, mass1=None, mass2=None, chi_eff=None, chi_a=None,
-                 xi_bounds=None, nsamples=None, seed=None):
+                 xi_bounds=None, nsamples=None, seed=None,
+                 mchirp_bounds=None, q_bounds=None):
 
         if isinstance(mass1, BoundedDist):
             self.mass1_distr = mass1
         else:
             self.mass1_distr = Uniform(mass1=mass1)
+        if mchirp_bounds is not None:
+            self.mchirp_bounds = Bounds(mchirp_bounds[0], mchirp_bounds[1])
+        else:
+            self.mchirp_bounds = None
+        if q_bounds is not None:
+            self.q_bounds = Bounds(q_bounds[0], q_bounds[1])
+        else:
+            self.q_bounds = None
         if isinstance(mass2, BoundedDist):
             self.mass2_distr = mass2
         else:
@@ -164,6 +174,18 @@ class IndependentChiPChiEff(Arbitrary):
             chi_eff, chi_a)
         test = ((s1x**2. + s1y**2. + s1z**2.) < 1.) & \
                ((s2x**2. + s2y**2. + s2z**2.) < 1.)
+        if self.mchirp_bounds is not None:
+            try:
+                mchirp = conversions._ensurearray(values['mchirp'])
+            except:
+                mchirp = conversions.mchirp_from_mass1_mass2(mass1, mass2)
+            test &= self.mchirp_bounds.__contains__(mchirp)
+        if self.q_bounds is not None:
+            try:
+                q = conversions._ensurearray(values['q'])
+            except:
+                q = conversions.q_from_mass1_mass2(mass1, mass2)
+            test &= self.q_bounds.__contains__(q)
         return test
 
     def __contains__(self, params):
@@ -283,11 +305,14 @@ class IndependentChiPChiEff(Arbitrary):
         chi_eff = get_param_bounds_from_config(cp, section, tag, 'chi_eff')
         chi_a = get_param_bounds_from_config(cp, section, tag, 'chi_a')
         xi_bounds = get_param_bounds_from_config(cp, section, tag, 'xi_bounds')
+        mchirp_bounds = get_param_bounds_from_config(cp, section, tag, 'mchirp')
+        q_bounds = get_param_bounds_from_config(cp, section, tag, 'q')
         if cp.has_option('-'.join([section, tag]), 'nsamples'):
             nsamples = int(cp.get('-'.join([section, tag]), 'nsamples'))
         else:
             nsamples = None
         return cls(mass1=mass1, mass2=mass2, chi_eff=chi_eff, chi_a=chi_a,
-                   xi_bounds=xi_bounds, nsamples=nsamples)
+                   xi_bounds=xi_bounds, nsamples=nsamples,
+                   mchirp_bounds=mchirp_bounds, q_bounds=q_bounds)
 
 
