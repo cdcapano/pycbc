@@ -33,6 +33,7 @@ matplotlib.use('agg')
 from matplotlib import pyplot
 from multiprocessing import Pool
 import pycbc.results
+from pycbc import transforms
 from pycbc.inference import option_utils
 from pycbc.io.inference_hdf import InferenceFile
 from pycbc.results.scatter_histograms import create_multidim_plot, \
@@ -171,9 +172,17 @@ else:
     raise ValueError("At least one of frame-number or frame-step must be "
                      "provided.")
 
-samples = fp.read_samples(parameters, thin_start=thin_start,
+# check if need extra parameters for a non-sampling parameter
+file_parameters, ts = transforms.get_common_cbc_transforms(
+                                         parameters, fp.variable_args)
+samples = fp.read_samples(file_parameters, thin_start=thin_start,
                           thin_end=thin_end, thin_interval=thinint,
                           iteration=itermask, flatten=False)
+# add parameters not included in file
+try:
+    samples = transforms.apply_transforms(samples, ts)
+except:
+    pass
 
 # Get z-values
 if opts.z_arg is not None:

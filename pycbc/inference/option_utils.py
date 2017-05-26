@@ -504,7 +504,10 @@ def results_from_cli(opts, load_samples=True, walkers=None):
             thin_end=opts.thin_end, iteration=opts.iteration,
             samples_group=opts.parameters_group)
         # add parameters not included in file
-        samples = transforms.apply_transforms(samples, ts)
+        try:
+            samples = transforms.apply_transforms(samples, ts)
+        except:
+            pass
     else:
         samples = None
 
