@@ -27,6 +27,7 @@ from pycbc.distributions.spins import IndependentChiPChiEff
 
 # a dict of all available distributions
 distribs = {
+    UniformMasses.name : UniformMasses,
     IndependentChiPChiEff.name : IndependentChiPChiEff,
     Arbitrary.name : Arbitrary,
     FromFile.name : FromFile,
