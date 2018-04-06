@@ -40,6 +40,7 @@ import pycbc
 from spa_tmplt import spa_tmplt, spa_tmplt_norm, spa_tmplt_end, \
                       spa_tmplt_precondition, spa_amplitude_factor, \
                       spa_length_in_time
+from . import phenomhm 
 
 class NoWaveformError(Exception):
     """This should be raised if generating a waveform would just result in all
@@ -819,6 +820,9 @@ _filter_time_lengths[apx_name] = _filter_time_lengths["SpinTaylorF2"]
 from . nltides import nonlinear_tidal_spa
 cpu_fd["TaylorF2NL"] = nonlinear_tidal_spa
 
+cpu_fd.update(phenomhm.phenomhm_approximants)
+
+# We can do interpolation for waveforms that have a time length
 for apx in copy.copy(_filter_time_lengths):
     fd_apx = cpu_fd.keys()
     td_apx = cpu_td.keys()
