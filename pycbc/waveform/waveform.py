@@ -42,7 +42,7 @@ from .spa_tmplt import spa_tmplt, spa_tmplt_norm, spa_tmplt_end, \
                       spa_tmplt_precondition, spa_amplitude_factor, \
                       spa_length_in_time
 from six.moves import range as xrange
-
+from . import phenomhm 
 
 class NoWaveformError(Exception):
     """This should be raised if generating a waveform would just result in all
@@ -948,6 +948,9 @@ if 'PYCBC_WAVEFORM' in os.environ:
                        cpu_td=cpu_td,
                        filter_time_lengths=_filter_time_lengths)
 
+cpu_fd.update(phenomhm.phenomhm_approximants)
+
+# We can do interpolation for waveforms that have a time length
 for apx in copy.copy(_filter_time_lengths):
     fd_apx = list(cpu_fd.keys())
     td_apx = list(cpu_td.keys())
