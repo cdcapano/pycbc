@@ -753,7 +753,7 @@ class FilterBank(TemplateBank):
                 cached_mem, self.table[t_num], approximant=approximant,
                 f_lower=low_frequency_cutoff, f_final=max_freq, delta_f=delta_f,
                 distance=1./DYN_RANGE_FAC, delta_t=1./(2.*max_freq),
-                generate_modes=self.generate_modes)
+                generate_modes=self.generate_modes, modes_out=self.modes_out)
         return htilde
 
     def __getitem__(self, index):
