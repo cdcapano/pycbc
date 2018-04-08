@@ -1,0 +1,379 @@
+#!/usr/bin/env python
+
+# Copyright (C) 2018 Collin Capano
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+import numpy
+from pycbc import types
+from pycbc.waveform import phenom_hm, apply_fd_time_shift
+from pycbc import filter
+from pycbc import psd as pypsd
+
+
+def construct_waveform_basis(waveforms, invasd=None, low_frequency_cutoff=None,
+                             normalize=True):
+    """Constructs a basis out of the given list of waveforms.
+
+    This uses a QR decomposition to construct the basis.
+
+    Parameters
+    ----------
+    waveforms : list of FrequencySeries
+        The waveforms to orthogonalize.
+    invasd : FrequencySeries, optional
+        Whiten the waveforms using the given inverse ASD before
+        orthogonalizing.
+    low_frequency_cutoff : float, optional
+        Only orthogonalize above the given frequency. If provided, the returned
+        basis will be zero at frequencies below this.
+    normalize : bool, optional
+        Normalize the bases before returning. Default is True.
+    """
+    nwfs = len(waveforms)
+    # get the maximum length of all of the waveforms, to ensure we get a big
+    # enough array
+    wf_lens = [len(h) for h in waveforms]
+    df = waveforms[0].delta_f
+    # sainity checks
+    if any([h.delta_f != df for h in waveforms]):
+        raise ValueError("delta_f mismatch between waveforms")
+    if invasd is not None:
+        if max(wf_lens) > len(invasd):
+            raise ValueError("one or more waveforms is longer than the "
+                             "inverse ASD")
+        if invasd.delta_f != df:
+            raise ValueError("delta_f mismatch with inverse ASD")
+    if low_frequency_cutoff is not None:
+        kmin = int(low_frequency_cutoff / df)
+    else:
+        kmin = 0
+    # create the waveform array to orthogonalize
+    wf_array = numpy.zeros((max(wf_lens), nwfs), dtype=waveforms[0].dtype)
+    for h,kmax in zip(waveforms, wf_lens):
+        wf_array[:kmax,ii] = h.numpy()
+        # whiten
+        if invasd is not None:
+            wf_array[:kmax,ii] *= invasd.numpy()[:kmax]
+        wf_array[:kmin,ii] *= 0.
+    # get bases as a list of FrequencySeries
+    q, _ = numpy.linalg.qr(wf_array)
+    bases = [FrequencySeries(ek, delta_f=df, epoch=h.epoch)
+             for ek,h in zip(q.T, waveforms)]
+    if normalize:
+        for ek in bases:
+            ek /= filter.sigma(ek, low_frequency_cutoff=filter_fmin)
+    return bases
+
+
+def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
+                low_frequency_cutoff=None, high_frequency_cutoff=None,
+                corrmem=None):
+    """Calculates the basis chi squared for the given trigger SNRs/times.
+
+    Parameters
+    ----------
+    whstilde : FrequencySeries
+        The **whitened** data.
+    cplx_snr : array of complex float
+        A list of triggers' complex SNR of the full template with the data.
+    trigger_times : array of float
+        A list of the trigger times. Must be the same length as ``cplx_snr``.
+    sigma : float
+        The normalization used in calculation of the complex SNR; i.e., the
+        overlap of the full template with itself.
+    basis : list of FrequencySeries
+        The list of basis waveforms to use. These are assumed to be whitened
+        and orthonormal.
+    aks : list of complex floats
+        The template's coefficients for each basis.
+    low_frequency_cutoff : float, optional
+        The starting frequency to use for the overlap calculations. If None,
+        will start at the beginning of the basis/data.
+    high_frequency_cutoff : float, optional
+        The ending frequency to use for the overlap calculations. If None,
+        will go to the end of the basis.
+    corremem : list of FrequencySeries, optional
+        List of FrequencySeries to write the correlations between the bases and
+        data to. Must be the same length as basis. If None, will create.
+
+    Returns
+    -------
+    array of float
+        The basis chi squared for each trigger time.
+    """
+    # compute the correlations between the basis and the data
+    if corrmem is None:
+        corrmem = [types.FrequencySeries(types.zeros(len(ek), dtype=ek.dtype),
+                                         delta_f=ek.delta_f)
+                   for ek in basis]
+    for ek,corr in zip(basis, corrmem):
+        if corr.delta_f != whstilde.delta_f:
+            raise ValueError("data has a different delta_f than the basis")
+        N = (min(len(whstilde), len(ek)) - 1) * 2
+        kmin, kmax = filter.get_cutoff_indices(low_frequency_cutoff,
+                                               high_frequency_cutoff,
+                                               whstilde.delta_f, N)
+        filter.correlate(ek[kmin:kmax], whstilde[kmin:kmax], corr[kmin:kmax])
+        # set the epoch of the corr mem to be the same as the data, so we get
+        # the write time shifts
+        corr.start_time = whstilde.start_time
+        corr.kmin = kmin
+        corr.kmax = kmax
+    # cycle over the triggers, shifting the correlation vectors appropriately
+    chisq = numpy.zeros(len(cplx_snr),
+                        dtype=types.real_same_precision_as(whstilde))
+    for ii in range(len(cplx_snr)):
+        rho = cplx_snr[ii]
+        trigtime = trigger_times[ii]
+        for corr,ak in zip(corrmem, aks):
+            # rotate the correlation to the appropriate time
+            shifted = apply_fd_time_shift(corr, trigtime, kmin=corr.kmin)
+            ek_s = shifted[corr.kmin:corr.kmax].sum()
+            chisq[ii] += abs(ek_s - rho*ak/sigma)**2.
+    return chisq
+
+
+def basis_chisq_timeseries(whstilde, cplx_snr, sigma, basis, aks,
+                           low_frequency_cutoff=None,
+                           high_frequency_cutoff=None):
+    """Calculates a time series of basis chi squared.
+
+    Parameters
+    ----------
+    whstilde : FrequencySeries
+        The **whitened** data.
+    cplx_snr : complex TimeSeries
+        A time series of the full template's complex SNR.
+    sigma : float
+        The normalization used in calculation of the complex SNR; i.e., the
+        overlap of the full template with itself.
+    basis : list of FrequencySeries
+        The list of basis waveforms to use. These are assumed to be whitened
+        and orthonormal.
+    aks : list of complex floats
+        The template's coefficients for each basis.
+    low_frequency_cutoff : float, optional
+        The starting frequency to use for the overlap calculations. If None,
+        will start at the beginning of the basis/data.
+    high_frequency_cutoff : float, optional
+        The ending frequency to use for the overlap calculations. If None,
+        will go to the end of the basis.
+
+    Returns
+    -------
+    TimeSeries
+        A time series of the basis chi squared.
+    """
+    chisq = None
+    for ek,ak in zip(basis, aks):
+        akhat = ak / sigma
+        # get the overlap of the basis with the data
+        ek_s = filter.matched_filter(ek, whstilde,
+            low_frequency_cutoff=low_frequency_cutoff,
+            high_frequency_cutoff=high_frequency_cutoff)
+        diff = abs(ek_s - cplx_snr*akhat)**2.
+        if chisq is None:
+            chisq = diff
+        else:
+            chisq += diff
+    return chisq
+
+
+class SingleDetBasisChisq(object):
+    """Class that handles precomutation and memory management for running
+    a basis chisq.
+    """
+
+    def __init__(self, snr_threshold=None):
+        self.basis = None
+        self.coeffs = None
+        self.ndim = None
+        self.dof = None
+        self.snr_threshold = snr_threshold
+        self.do = snr_threshold is not None
+        self._invasd = {}
+        self._corrmem = {}
+
+    @staticmethod
+    def get_basis(template, psd=None):
+        """Retrieve basis and coefficients from the given template.
+        """
+        # we'll use the ID of the PSD to cache things
+        if psd is None:
+            key = None
+        else:
+            key = id(psd)
+        return template.cached_basis[key]
+
+    def update_basis(self, template, psd=None)
+        """Updates the current basis/coefficients using the given template.
+        """
+        basis, coeffs = self.get_basis(template, psd=psd)
+        self.basis = basis
+        self.coeffs = coeffs
+        self.ndim = len(basis)
+        self.dof = 2*self.ndim - 2
+        return basis, coeffs
+
+    def return_timeseries(self, ntrigs, dlen):
+        """Determines if chi squared time series should be calculated.
+
+        Parameters
+        ----------
+        ntrigs : int
+            The number of triggers that an SNR is needed for.
+        dlen : int
+            The length of the data (in the frequency domain).
+
+        Returns
+        -------
+        bool
+            True if a full time series should be calculated; False if it's
+            better to do a series of point estimates.
+        """
+        # if an FFT is done, then we need to do ~N log N operations for each
+        # basis
+        n_fft = dlen * numpy.log2(dlen) * self.ndim
+        # if a point estimates are done then, for each trigger, we need to do
+        # ~N*ndim operations to get the overlap of the basis with the data
+        # + ~N operations to rotate the data in time for each trigger
+        n_point = ntrigs*(dlen * self.ndim + dlen)
+
+    def invasd(self, psd):
+        """Gets the inverse ASD from the given the PSD.
+        """
+        try:
+            invasd = self._invasd[key]
+        except KeyError:
+            # means PSD has changed, clear the dict and re-calculate
+            self._invasd.clear()
+            invasd = pypsd.invert_psd(psd)**0.5
+            self._invasd[key] = invasd
+        return invasd
+
+    def corrmem(self, stilde):
+        """Creates/retrieves vectors for writing correlations.
+
+        Vectors are cached based on the length of stilde.
+        """
+        N = len(stilde)
+        try:
+            corrmem = self._corrmem[N]
+        except KeyError:
+            # clear the dictionary for a new list
+            self._corrmem.clear()
+            corrmem = []
+        # add/subtract any more needed vectors
+        ncorrs = len(corrmem)
+        if ncorrs < self.ndim:
+            corrmem += [types.FrequencySeries(
+                            types.zeros(N, dtype=stilde.dtype),
+                            delta_f=stilde.delta_f)
+                for _ in range(self.ndim-ndim)]
+            self._corrmem[N] = corrmem
+        elif self.ndim < ncorrs:
+            corrmem = corrmem[:self.ndim]
+            self._corrmem[N] = corrmem
+        return corrmem
+
+    def values(self, template, stilde, psd, cplx_snr, trigger_idx,
+               data_whitening=None):
+        """Calculates the HM chisq for the given points.
+        """
+        if not self.do:
+            return None, None
+        trigger_snrs = cplx_snr.numpy()[trigger_idx]
+        if self.snr_threshold is not None:
+            keep = abs(trigger_snrs) >= self.snr_threshold
+            trigger_snrs = trigger_snrs[keep]
+            trigger_idx = trigger_idx[keep]
+
+        basis, coeffs = self.update_basis(template, psd)
+        if data_whitening is None:
+            # need to whiten the data
+            whstilde = stilde * self.invasd(psd)
+        elif data_whitening == 'whitened':
+            # don't need to do anything
+            whstilde = stilde
+        elif data_whitening == 'overwhitened':
+            whstilde = stilde * psd**0.5
+        else:
+            raise ValueError("unrecognized data_whitening argument {}".format(
+                             data_whitening))
+
+        # need the trigger times... 2*nyquist is the sample rate = 1/dt
+        dt = 1./(2*(len(stilde)-1))
+        trigger_times = trigger_idx * dt + stilde.start_time 
+
+        sigma = template.sigmasq(psd)**0.5
+
+        chisq = basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis,
+                            coeffs, low_frequency_cutoff=template.f_lower,
+                            corrmem=self.corrmem(stilde))
+
+        return chisq, numpy.repeat(self.dof, len(chisq))
+
+
+class SingleDetHMChisq(SingleDetBasisChisq):
+    """Class that handles precomutation and memory management for running
+    the higher-mode chisq.
+    """
+    returns = {'hm_chisq': numpy.float32, 'hm_chisq_dof': int}
+
+
+    def __init__(self, snr_threshold=None):
+        super(self, SingleDetHMChisq).__init__(snr_threshold=snr_threshold)
+
+    def update_basis(self, template, psd=None):
+        """Calculates/retrieves basis for the given template.
+        """
+        try:
+            # first try to return a cached basis
+            return super(self, SingleDetHMChisq).update_basis(template, psd)
+        except AttributeError:
+            # template does not have the attribute: means that a basis hasn't
+            # been calculated, so create the attribute and calculate
+            template.cached_basis = {}
+        except KeyError:
+            # means the PSD has changed; delete the old basis and create a
+            # new one
+            template.cached_basis.clear()
+        # Generate the mode basis
+        waveforms = template.modes.values()
+        invasd = self.invasd(psd)
+        basis = construct_waveform_basis(waveforms, invasd, template.f_lower)
+        # calculate the expected values
+        coeffs = [numpy.complex(filter.overlap_cplx(ek, template,
+                                low_frequency_cutoff=template.f_lower,
+                                normalized=False))
+                  for ek in basis]
+
+        template.cached_basis[key] = (basis, coeffs)
+        return super(self, SingleDetHMChisq).update_basis(template, psd=psd)
+
+    @staticmethod
+    def insert_option_group(parser):
+        """Adds the options needed to set up the HM Chisq."""
+        group = parser.add_argument_group("HM Chisq")
+        group.add_argument("--hmchisq-snr-threshold", type=float, default=None,
+                            help="SNR threshold to use for applying the HM "
+                                 "chisq. If not provided, the HM Chisq test "
+                                 "will not be performed.")
+
+    @classmethod
+    def from_cli(cls, opts):
+        """Initializes the HM Chisq using the given options."""
+        return cls(snr_threshold=opts.hmchisq_snr_threshold)
