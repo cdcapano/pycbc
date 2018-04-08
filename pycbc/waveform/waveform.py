@@ -948,6 +948,9 @@ if 'PYCBC_WAVEFORM' in os.environ:
                        cpu_td=cpu_td,
                        filter_time_lengths=_filter_time_lengths)
 
+# Approximants with higher modes
+hm_approximants = {"IMRPhenomHM_modes": phenomhm.all_modes}
+
 cpu_fd.update(phenomhm.phenomhm_approximants)
 
 # We can do interpolation for waveforms that have a time length
@@ -989,6 +992,10 @@ def get_waveform_filter(out, template=None, **kwargs):
     except KeyError:
         generate_modes = None
     if generate_modes is not None:
+        # check that we can
+        if input_params['approximant'] not in hm_approximants:
+            raise ValueError("cannot generate individual modes for approximant"
+                             " {}".format(input_params['approximant']))
         modes = {}
         try:
             modes_out = input_params['modes_out']
