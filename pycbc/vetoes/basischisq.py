@@ -18,7 +18,7 @@
 
 import numpy
 from pycbc import types
-from pycbc.waveform import phenom_hm, apply_fd_time_shift
+from pycbc.waveform import apply_fd_time_shift
 from pycbc import filter
 from pycbc import psd as pypsd
 
@@ -218,7 +218,7 @@ class SingleDetBasisChisq(object):
             key = id(psd)
         return template.cached_basis[key]
 
-    def update_basis(self, template, psd=None)
+    def update_basis(self, template, psd=None):
         """Updates the current basis/coefficients using the given template.
         """
         basis, coeffs = self.get_basis(template, psd=psd)
