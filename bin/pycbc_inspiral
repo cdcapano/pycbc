@@ -23,6 +23,7 @@ import pycbc
 import pycbc.version
 from pycbc import vetoes, psd, waveform, strain, scheme, fft, DYN_RANGE_FAC, events
 from pycbc.vetoes.sgchisq import SingleDetSGChisq
+from pycbc.vetoes.basischisq import SingleDetHMChisq
 from pycbc.filter import MatchedFilterControl, make_frequency_series, qtransform
 from pycbc.types import TimeSeries, FrequencySeries, zeros, float32, complex64
 import pycbc.version
@@ -207,6 +208,7 @@ fft.insert_fft_option_group(parser)
 pycbc.opt.insert_optimization_option_group(parser)
 pycbc.inject.insert_injfilterrejector_option_group(parser)
 SingleDetSGChisq.insert_option_group(parser)
+SingleDetHMChisq.insert_option_group(parser)
 opt = parser.parse_args()
 
 # Check that the values returned for the options make sense
@@ -371,6 +373,25 @@ with ctx:
 
     sg_chisq = SingleDetSGChisq.from_cli(opt, bank, opt.chisq_bins)
 
+    hm_chisq = SingleDetHMChisq.from_cli(opt)
+    # create scratch space for modes
+    if hm_chisq.do:
+        approxs = numpy.unique(bank.table.approximants)
+        for apprx in approxs:
+            # check that we can
+            try:
+                modes = waveform.hm_approximants[apprx]
+            except KeyError:
+                raise ValueError("cannot generate individual modes for "
+                                 "approximant {}".format(apprx))
+            modemem = {mode: template_mem.copy() for mode in modes.values()}
+            modesmem_cache[apprx] = modemem
+        # whiten data
+        wh_segments = [seg * psd**0.5 for seg in segments]
+    else:
+        wh_segments = [None]*len(segments)
+        modesmem_cache = {}
+
     ntemplates = len(bank)
     nfilters = 0
 
@@ -390,6 +411,14 @@ with ctx:
         t_num += tnum_start
         tmplt_generated = False
 
+        # Turn on individual modes generation if calculating HM Chisq
+        if hm_chisq.do:
+            apprx = bank.table.approximant[ii]
+            bank.modes_out = modesmem_cache[apprx]
+            bank.generate_modes = bank.modes_out.keys()
+        else:
+            bank.generate_modes = None
+       
         for s_num, stilde in enumerate(segments):
             # Filter check checks the 'inj_filter_rejector' options to
             # determine whether
@@ -438,6 +467,11 @@ with ctx:
                                           out_vals['chisq'],
                                           out_vals['chisq_dof'],
                                           idx+stilde.analyze.start)
+
+            out_vals['hm_chisq'], out_valus['hm_chisq_dof'] = \
+                hm_chisq.values(template, wh_segments[s_num], stilde.psd, snr,
+                                idx+stilde.analyze.start,
+                                data_whitening='whitened')
 
             out_vals['cont_chisq'] = \
                   autochisq.values(snr, idx+stilde.analyze.start, template,
