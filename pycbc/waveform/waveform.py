@@ -820,6 +820,9 @@ _filter_time_lengths[apx_name] = _filter_time_lengths["SpinTaylorF2"]
 from . nltides import nonlinear_tidal_spa
 cpu_fd["TaylorF2NL"] = nonlinear_tidal_spa
 
+# Approximants with higher modes
+hm_approximants = {"IMRPhenomHM_modes": phenomhm.all_modes}
+
 cpu_fd.update(phenomhm.phenomhm_approximants)
 
 # We can do interpolation for waveforms that have a time length
@@ -861,6 +864,10 @@ def get_waveform_filter(out, template=None, **kwargs):
     except KeyError:
         generate_modes = None
     if generate_modes is not None:
+        # check that we can
+        if input_params['approximant'] not in hm_approximants:
+            raise ValueError("cannot generate individual modes for approximant"
+                             " {}".format(input_params['approximant']))
         modes = {}
         try:
             modes_out = input_params['modes_out']
