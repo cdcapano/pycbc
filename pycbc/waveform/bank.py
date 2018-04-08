@@ -659,6 +659,7 @@ class FilterBank(TemplateBank):
                  enable_compressed_waveforms=True,
                  low_frequency_cutoff=None,
                  waveform_decompression_method=None,
+                 generate_modes=None, modes_out=None,
                  **kwds):
         self.out = out
         self.dtype = dtype
@@ -671,6 +672,8 @@ class FilterBank(TemplateBank):
         self.max_template_length = max_template_length
         self.enable_compressed_waveforms = enable_compressed_waveforms
         self.waveform_decompression_method = waveform_decompression_method
+        self.generate_modes = generate_modes
+        self.modes_out = modes_out
 
         super(FilterBank, self).__init__(filename, approximant=approximant,
             parameters=parameters, **kwds)
@@ -749,7 +752,8 @@ class FilterBank(TemplateBank):
             htilde = pycbc.waveform.get_waveform_filter(
                 cached_mem, self.table[t_num], approximant=approximant,
                 f_lower=low_frequency_cutoff, f_final=max_freq, delta_f=delta_f,
-                distance=1./DYN_RANGE_FAC, delta_t=1./(2.*max_freq))
+                distance=1./DYN_RANGE_FAC, delta_t=1./(2.*max_freq),
+                generate_modes=self.generate_modes)
         return htilde
 
     def __getitem__(self, index):
@@ -758,6 +762,12 @@ class FilterBank(TemplateBank):
             tempout = zeros(self.filter_length, dtype=self.dtype)
         else:
             tempout = self.out
+
+        if self.generate_modes is not None:
+            modes_out = self.modes_out
+            if modes_out is None:
+                modes_out = {mode: tempout.copy()
+                             for mode in self.generate_modes}
 
         approximant = self.approximant(index)
         f_end = self.end_frequency(index)
@@ -785,6 +795,7 @@ class FilterBank(TemplateBank):
                 tempout[0:self.filter_length], self.table[index],
                 approximant=approximant, f_lower=f_low, f_final=f_end,
                 delta_f=self.delta_f, delta_t=self.delta_t, distance=distance,
+                generate_modes=self.generate_modes, modes_out=modes_out,
                 **self.extra_args)
 
         # If available, record the total duration (which may

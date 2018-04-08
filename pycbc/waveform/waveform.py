@@ -984,6 +984,34 @@ def get_waveform_filter(out, template=None, **kwargs):
 
     input_params = props(template, **kwargs)
 
+    try:
+        generate_modes = input_params['generate_modes']
+    except KeyError:
+        generate_modes = None
+    if generate_modes is not None:
+        modes = {}
+        try:
+            modes_out = input_params['modes_out']
+        except KeyError:
+            # memory space for modes doesn't exist, so create it
+            modes_out = {lm: out.copy() for lm in generate_modes}
+        # copy the kwargs, but with generate modes disabled
+        mode_kwargs = kwargs.copy()
+        mode_kwargs.pop('generate_modes')
+        # zero-out 'out' for summing up the modes
+        out.clear()
+        for mode in generate_modes:
+            mode_kwargs['modes'] = [mode]
+            hlm = modes_out[mode]
+            hlm.clear()
+            get_waveform_filter(hlm, template=template, **mode_kwargs)
+            modes[mode] = hlm
+            # create the full waveform
+            out[:len(hlm)] += hlm[:]
+        # attach the modes to the full waveform
+        out.modes = modes
+        return out
+
     if input_params['approximant'] in filter_approximants(_scheme.mgr.state):
         wav_gen = filter_wav[type(_scheme.mgr.state)]
         htilde = wav_gen[input_params['approximant']](out=out, **input_params)
