@@ -313,3 +313,22 @@ def bandlimited_interpolate(series, delta_f):
 
     return interpolated_series
 
+
+def invert_psd(psd):
+    """Inverts the given PSD.
+
+    Parameters
+    ----------
+    psd : FrequencySeries
+        The PSD to invert.
+
+    Returns
+    -------
+    FrequencySeries
+        The inverse PSD.
+    """
+    pdata = psd.copy().numpy()
+    # set 0s to infinity so they will be 0 in the inverse
+    zidx = pdata == 0.
+    pdata[zidx] = numpy.inf
+    return FrequencySeries(1./pdata, delta_f=psd.delta_f, epoch=psd.epoch)
