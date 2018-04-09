@@ -335,14 +335,14 @@ class SingleDetHMChisq(SingleDetBasisChisq):
 
 
     def __init__(self, snr_threshold=None):
-        super(self, SingleDetHMChisq).__init__(snr_threshold=snr_threshold)
+        super(SingleDetHMChisq, self).__init__(snr_threshold=snr_threshold)
 
     def update_basis(self, template, psd=None):
         """Calculates/retrieves basis for the given template.
         """
         try:
             # first try to return a cached basis
-            return super(self, SingleDetHMChisq).update_basis(template, psd)
+            return super(SingleDetHMChisq, self).update_basis(template, psd)
         except AttributeError:
             # template does not have the attribute: means that a basis hasn't
             # been calculated, so create the attribute and calculate
@@ -362,7 +362,7 @@ class SingleDetHMChisq(SingleDetBasisChisq):
                   for ek in basis]
 
         template.cached_basis[key] = (basis, coeffs)
-        return super(self, SingleDetHMChisq).update_basis(template, psd=psd)
+        return super(SingleDetHMChisq, self).update_basis(template, psd=psd)
 
     @staticmethod
     def insert_option_group(parser):
