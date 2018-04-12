@@ -1011,13 +1011,17 @@ def get_waveform_filter(out, template=None, **kwargs):
             mode_kwargs['modes'] = [mode]
             hlm = modes_out[mode]
             hlm.clear()
-            get_waveform_filter(hlm, template=template, **mode_kwargs)
-            modes[mode] = hlm
+            hp = get_waveform_filter(hlm, template=template, **mode_kwargs)
+            modes[mode] = FrequencySeries(hlm, delta_f=hp.delta_f, copy=False)
+            kmax = min(n, len(hlm))
             # create the full waveform
-            out[:len(hlm)] += hlm[:]
+            out[:kmax] += hlm[:kmax]
+        htilde = FrequencySeries(out, delta_f=hp.delta_f, copy=False)
+        htilde.length_in_time = hp.length_in_time
+        htilde.chirp_length = hp.chirp_length
         # attach the modes to the full waveform
-        out.modes = modes
-        return out
+        htilde.modes = modes
+        return htilde
 
     if input_params['approximant'] in filter_approximants(_scheme.mgr.state):
         wav_gen = filter_wav[type(_scheme.mgr.state)]
@@ -1245,4 +1249,5 @@ __all__ = ["get_td_waveform", "get_fd_waveform", "get_fd_waveform_sequence",
            "print_sgburst_approximants", "sgburst_approximants",
            "td_waveform_to_fd_waveform", "get_two_pol_waveform_filter",
            "NoWaveformError", "FailedWaveformError", "get_td_waveform_from_fd",
+           'hm_approximants',
            'cpu_fd', 'cpu_td', 'fd_sequence', '_filter_time_lengths']

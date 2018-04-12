@@ -43,26 +43,26 @@ def get_phenomhm(**input_params):
         The rest of the keyword args should be the same as given to
         ``get_fd_waveform``.
     """
-    m1 = input_params['mass1'] * lal.MSUN_SI
-    m2 = input_params['mass2'] * lal.MSUN_SI
-    spin1x = input_params['spin1x']
-    spin1y = input_params['spin1y']
-    spin1z = input_params['spin1z']
-    spin2x = input_params['spin2x']
-    spin2y = input_params['spin2y']
-    spin2z = input_params['spin2z']
-    f_ref = input_params['f_ref']
-    f_lower = input_params['f_lower']
-    f_final = input_params['f_final']
-    delta_f = input_params['delta_f']
-    distance = input_params['distance'] * 1e6 * lal.PC_SI
-    inclination = input_params['inclination']
+    m1 = float(input_params['mass1'] * lal.MSUN_SI)
+    m2 = float(input_params['mass2'] * lal.MSUN_SI)
+    spin1x = float(input_params['spin1x'])
+    spin1y = float(input_params['spin1y'])
+    spin1z = float(input_params['spin1z'])
+    spin2x = float(input_params['spin2x'])
+    spin2y = float(input_params['spin2y'])
+    spin2z = float(input_params['spin2z'])
+    f_ref = float(input_params['f_ref'])
+    f_lower = float(input_params['f_lower'])
+    f_final = float(input_params['f_final'])
+    delta_f = float(input_params['delta_f'])
+    distance = float(input_params['distance'] * 1e6 * lal.PC_SI)
+    inclination = float(input_params['inclination'])
     # check for precessing spins (not supported)
     if numpy.nonzero([spin1x, spin1y, spin2x, spin2y])[0].any():
         raise ValueError("non-zero x/y spins provided, but this is "
                          "aligned-spin approximant")
     try:
-        phi_ref = input_params['phi_ref']
+        phi_ref = float(input_params['phi_ref'])
     except KeyError:
         phi_ref = 0.
     try:
@@ -76,7 +76,7 @@ def get_phenomhm(**input_params):
     if modes is not None:
         ma = lalsim.SimInspiralCreateModeArray()
         for l,m in modes:
-            lalsim.SimInspiralModeArrayActivateMode(ma, l, m)
+            lalsim.SimInspiralModeArrayActivateMode(ma, int(l), int(m))
         params = lal.CreateDict()
         lalsim.SimInspiralWaveformParamsInsertModeArray(params, ma)
     else:
@@ -91,6 +91,8 @@ def get_phenomhm(**input_params):
     hplus = None
     hcross = None
     for l,m in modes:
+        l = int(l)
+        m = int(m)
         h = lalsim.SphHarmFrequencySeriesGetMode(hlms, l, m)
         ylm = lal.SpinWeightedSphericalHarmonic(inclination, 0., -2, l, m)
         ylnm = numpy.conj(lal.SpinWeightedSphericalHarmonic(

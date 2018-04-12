@@ -377,7 +377,8 @@ with ctx:
     hm_chisq = SingleDetHMChisq.from_cli(opt)
     # create scratch space for modes
     if hm_chisq.do:
-        approxs = numpy.unique(bank.table.approximants)
+        approxs = numpy.unique(bank.table.approximant)
+        modesmem_cache = {}
         for apprx in approxs:
             # check that we can
             try:
@@ -385,10 +386,10 @@ with ctx:
             except KeyError:
                 raise ValueError("cannot generate individual modes for "
                                  "approximant {}".format(apprx))
-            modemem = {mode: template_mem.copy() for mode in modes.values()}
+            modemem = {mode: template_mem.copy() for mode in modes}
             modesmem_cache[apprx] = modemem
         # whiten data
-        wh_segments = [seg * psd**0.5 for seg in segments]
+        wh_segments = [seg * seg.psd**0.5 for seg in segments]
     else:
         wh_segments = [None]*len(segments)
         modesmem_cache = {}
@@ -414,7 +415,7 @@ with ctx:
 
         # Turn on individual modes generation if calculating HM Chisq
         if hm_chisq.do:
-            apprx = bank.table.approximant[ii]
+            apprx = bank.table.approximant[t_num]
             bank.modes_out = modesmem_cache[apprx]
             bank.generate_modes = bank.modes_out.keys()
         else:

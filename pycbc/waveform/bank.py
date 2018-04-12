@@ -809,10 +809,11 @@ class FilterBank(TemplateBank):
 
         self.table[index].template_duration = template_duration
 
-        htilde = htilde.astype(self.dtype)
+        # FIXME
+        htilde._data = htilde._data.astype(self.dtype)
         htilde.f_lower = f_low
         htilde.min_f_lower = self.min_f_lower
-        htilde.end_idx = int(f_end / htilde.delta_f)
+        htilde.end_idx = int(f_end / self.delta_f)
         htilde.params = self.table[index]
         htilde.chirp_length = template_duration
         htilde.length_in_time = ttotal
