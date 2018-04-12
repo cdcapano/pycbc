@@ -18,6 +18,7 @@
 
 import numpy
 from pycbc import types
+from pycbc.types import FrequencySeries
 from pycbc.waveform import apply_fd_time_shift
 from pycbc import filter
 from pycbc import psd as pypsd
@@ -51,19 +52,17 @@ def construct_waveform_basis(waveforms, invasd=None, low_frequency_cutoff=None,
     if any([h.delta_f != df for h in waveforms]):
         raise ValueError("delta_f mismatch between waveforms")
     if invasd is not None:
-        if max(wf_lens) > len(invasd):
-            raise ValueError("one or more waveforms is longer than the "
-                             "inverse ASD")
         if invasd.delta_f != df:
             raise ValueError("delta_f mismatch with inverse ASD")
+        wf_lens = [min(len(invasd), l) for l in wf_lens]
     if low_frequency_cutoff is not None:
         kmin = int(low_frequency_cutoff / df)
     else:
         kmin = 0
     # create the waveform array to orthogonalize
     wf_array = numpy.zeros((max(wf_lens), nwfs), dtype=waveforms[0].dtype)
-    for h,kmax in zip(waveforms, wf_lens):
-        wf_array[:kmax,ii] = h.numpy()
+    for ii,(h,kmax) in enumerate(zip(waveforms, wf_lens)):
+        wf_array[:kmax,ii] = h.numpy()[:kmax]
         # whiten
         if invasd is not None:
             wf_array[:kmax,ii] *= invasd.numpy()[:kmax]
@@ -74,7 +73,7 @@ def construct_waveform_basis(waveforms, invasd=None, low_frequency_cutoff=None,
              for ek,h in zip(q.T, waveforms)]
     if normalize:
         for ek in bases:
-            ek /= filter.sigma(ek, low_frequency_cutoff=filter_fmin)
+            ek /= filter.sigma(ek, low_frequency_cutoff=low_frequency_cutoff)
     return bases
 
 
@@ -128,7 +127,7 @@ def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
                                                whstilde.delta_f, N)
         filter.correlate(ek[kmin:kmax], whstilde[kmin:kmax], corr[kmin:kmax])
         # set the epoch of the corr mem to be the same as the data, so we get
-        # the write time shifts
+        # the right time shifts
         corr.start_time = whstilde.start_time
         corr.kmin = kmin
         corr.kmax = kmax
@@ -255,6 +254,9 @@ class SingleDetBasisChisq(object):
     def invasd(self, psd):
         """Gets the inverse ASD from the given the PSD.
         """
+        if psd is None:
+            return None
+        key = id(psd)
         try:
             invasd = self._invasd[key]
         except KeyError:
@@ -282,7 +284,7 @@ class SingleDetBasisChisq(object):
             corrmem += [types.FrequencySeries(
                             types.zeros(N, dtype=stilde.dtype),
                             delta_f=stilde.delta_f)
-                for _ in range(self.ndim-ndim)]
+                for _ in range(self.ndim-ncorrs)]
             self._corrmem[N] = corrmem
         elif self.ndim < ncorrs:
             corrmem = corrmem[:self.ndim]
@@ -320,8 +322,9 @@ class SingleDetBasisChisq(object):
 
         sigma = template.sigmasq(psd)**0.5
 
-        chisq = basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis,
-                            coeffs, low_frequency_cutoff=template.f_lower,
+        chisq = basis_chisq(whstilde, trigger_snrs, trigger_times, sigma,
+                            basis, coeffs,
+                            low_frequency_cutoff=template.f_lower,
                             corrmem=self.corrmem(stilde))
 
         return chisq, numpy.repeat(self.dof, len(chisq))
@@ -340,6 +343,10 @@ class SingleDetHMChisq(SingleDetBasisChisq):
     def update_basis(self, template, psd=None):
         """Calculates/retrieves basis for the given template.
         """
+        if psd is not None:
+            key = id(psd)
+        else:
+            key = None
         try:
             # first try to return a cached basis
             return super(SingleDetHMChisq, self).update_basis(template, psd)
