@@ -544,6 +544,14 @@ class SingleDetTriggers(object):
         return np.array(self.trigs['sg_chisq'])[self.mask]
 
     @property
+    def hmchisq(self):
+        return np.array(self.trigs['hm_chisq'])[self.mask]
+
+    @property
+    def combined_chisq(self):
+        return np.array(self.trigs['combined_chisq'])[self.mask]
+
+    @property
     def u_vals(self):
         return np.array(self.trigs['u_vals'])[self.mask]
 
@@ -553,12 +561,39 @@ class SingleDetTriggers(object):
             / (np.array(self.trigs['chisq_dof'])[self.mask] * 2 - 2)
 
     @property
+    def rhmchisq(self):
+        return np.array(self.trigs['hm_chisq'])[self.mask] \
+            / np.array(self.trigs['hm_chisq_dof'])[self.mask]
+
+    @property
+    def rcombined_chisq(self):
+        return np.array(self.trigs['combined_chisq'])[self.mask] \
+            / np.array(self.trigs['combined_chisq_dof'])[self.mask]
+
+    @property
     def newsnr(self):
         return events.newsnr(self.snr, self.rchisq)
 
     @property
     def newsnr_sgveto(self):
         return events.newsnr_sgveto(self.snr, self.rchisq, self.sgchisq)
+
+    @property
+    def newsnr_hmchisq(self):
+        return events.newsnr_sgveto(self.snr, self.rhmchisq)
+
+    @property
+    def newsnr_hmchisq_sgveto(self):
+        return events.newsnr_sgveto(self.snr, self.rhmchisq, self.sgchisq)
+
+    @property
+    def newsnr_combined_chisq(self):
+        return events.newsnr_sgveto(self.snr, self.rcombined_chisq)
+
+    @property
+    def newsnr_combined_chisq_sgveto(self):
+        return events.newsnr_sgveto(self.snr, self.rcombined_chisq,
+            self.sgchisq)
 
     def get_column(self, cname):
         if hasattr(self, cname):
@@ -787,6 +822,7 @@ class ForegroundTriggers(object):
         ligolw_utils.write_filename(outdoc, file_name)
 
 chisq_choices = ['traditional', 'cont', 'bank', 'max_cont_trad', 'sg',
+                 'hm', 'combined',
                  'max_bank_cont', 'max_bank_trad', 'max_bank_cont_trad']
 
 def get_chisq_from_file_choice(hdfile, chisq_choice):
@@ -810,6 +846,14 @@ def get_chisq_from_file_choice(hdfile, chisq_choice):
         bank_chisq /= bank_chisq_dof
     if chisq_choice == 'sg':
         chisq = f['sg_chisq'][:]
+    elif chisq_choice == 'hm':
+        chisq = f['hm_chisq'][:]
+        dof = f['hm_chisq_dof'][:]
+        chisq /= dof
+    elif chisq_choice == 'combined':
+        chisq = f['combined_chisq'][:]
+        dof = f['combined_chisq_dof'][:]
+        chisq /= dof
     elif chisq_choice == 'traditional':
         chisq = trad_chisq
     elif chisq_choice == 'cont':
