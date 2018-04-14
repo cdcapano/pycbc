@@ -43,11 +43,17 @@ def construct_waveform_basis(waveforms, invasd=None, low_frequency_cutoff=None,
     normalize : bool, optional
         Normalize the bases before returning. Default is True.
     """
+    df = waveforms[0].delta_f
+    if low_frequency_cutoff is not None:
+        kmin = int(low_frequency_cutoff / df)
+    else:
+        kmin = 0
+    # exclude any waveforms that are zero in the integration region
+    waveforms = [h for h in waveforms if (h.numpy()[kmin:] != 0.).any()]
     nwfs = len(waveforms)
     # get the maximum length of all of the waveforms, to ensure we get a big
     # enough array
     wf_lens = [len(h) for h in waveforms]
-    df = waveforms[0].delta_f
     # sainity checks
     if any([h.delta_f != df for h in waveforms]):
         raise ValueError("delta_f mismatch between waveforms")
@@ -55,22 +61,23 @@ def construct_waveform_basis(waveforms, invasd=None, low_frequency_cutoff=None,
         if invasd.delta_f != df:
             raise ValueError("delta_f mismatch with inverse ASD")
         wf_lens = [min(len(invasd), l) for l in wf_lens]
-    if low_frequency_cutoff is not None:
-        kmin = int(low_frequency_cutoff / df)
+    # only create a basis if we have more than one waveform
+    if nwfs > 1:
+        # create the waveform array to orthogonalize
+        wf_array = numpy.zeros((max(wf_lens), nwfs), dtype=waveforms[0].dtype)
+        for ii,(h,kmax) in enumerate(zip(waveforms, wf_lens)):
+            wf_array[:kmax,ii] = h.numpy()[:kmax]
+            # whiten
+            if invasd is not None:
+                wf_array[:kmax,ii] *= invasd.numpy()[:kmax]
+            wf_array[:kmin,ii] *= 0.
+        # get bases as a list of FrequencySeries
+        q, _ = numpy.linalg.qr(wf_array)
+        bases = [FrequencySeries(ek, delta_f=df, epoch=h.epoch)
+                 for ek,h in zip(q.T, waveforms)]
+    # otherwise, just return a copy of the input
     else:
-        kmin = 0
-    # create the waveform array to orthogonalize
-    wf_array = numpy.zeros((max(wf_lens), nwfs), dtype=waveforms[0].dtype)
-    for ii,(h,kmax) in enumerate(zip(waveforms, wf_lens)):
-        wf_array[:kmax,ii] = h.numpy()[:kmax]
-        # whiten
-        if invasd is not None:
-            wf_array[:kmax,ii] *= invasd.numpy()[:kmax]
-        wf_array[:kmin,ii] *= 0.
-    # get bases as a list of FrequencySeries
-    q, _ = numpy.linalg.qr(wf_array)
-    bases = [FrequencySeries(ek, delta_f=df, epoch=h.epoch)
-             for ek,h in zip(q.T, waveforms)]
+        bases = [waveforms[0].copy()]
     if normalize:
         for ek in bases:
             ek /= filter.sigma(ek, low_frequency_cutoff=low_frequency_cutoff)
@@ -118,6 +125,7 @@ def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
         corrmem = [types.FrequencySeries(types.zeros(len(ek), dtype=ek.dtype),
                                          delta_f=ek.delta_f)
                    for ek in basis]
+    n_used = 0
     for ek,corr in zip(basis, corrmem):
         if corr.delta_f != whstilde.delta_f:
             raise ValueError("data has a different delta_f than the basis")
@@ -131,6 +139,7 @@ def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
         corr.start_time = whstilde.start_time
         corr.kmin = kmin
         corr.kmax = kmax
+        corr *= 4. * whstilde.delta_f
     # cycle over the triggers, shifting the correlation vectors appropriately
     chisq = numpy.zeros(len(cplx_snr),
                         dtype=types.real_same_precision_as(whstilde))
@@ -291,13 +300,12 @@ class SingleDetBasisChisq(object):
             self._corrmem[N] = corrmem
         return corrmem
 
-    def values(self, template, stilde, psd, cplx_snr, trigger_idx,
+    def values(self, template, stilde, psd, trigger_snrs, trigger_idx,
                data_whitening=None):
         """Calculates the HM chisq for the given points.
         """
         if not self.do:
             return None, None
-        trigger_snrs = cplx_snr.numpy()[trigger_idx]
         if self.snr_threshold is not None:
             keep = abs(trigger_snrs) >= self.snr_threshold
             trigger_snrs = trigger_snrs[keep]
@@ -326,7 +334,11 @@ class SingleDetBasisChisq(object):
                             basis, coeffs,
                             low_frequency_cutoff=template.f_lower,
                             corrmem=self.corrmem(stilde))
-
+        # add back 1s for triggers that were below threshold
+        if self.snr_threshold is not None and len(keep) != len(chisq):
+            out = numpy.ones(len(keep), dtype=chisq.dtype)
+            out[keep] = chisq
+            chisq = out
         return chisq, numpy.repeat(self.dof, len(chisq))
 
 
