@@ -471,7 +471,8 @@ with ctx:
                                           idx+stilde.analyze.start)
 
             out_vals['hm_chisq'], out_vals['hm_chisq_dof'] = \
-                hm_chisq.values(template, wh_segments[s_num], stilde.psd, snr,
+                hm_chisq.values(template, wh_segments[s_num], stilde.psd,
+                                norm*snrv,
                                 idx+stilde.analyze.start,
                                 data_whitening='whitened')
 
