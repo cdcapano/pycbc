@@ -22,6 +22,7 @@ from pycbc.types import FrequencySeries
 from pycbc.waveform import apply_fd_time_shift
 from pycbc import filter
 from pycbc import psd as pypsd
+from pycbc.vetoes.chisq import SingleDetPowerChisq
 
 
 def construct_waveform_basis(waveforms, invasd=None, low_frequency_cutoff=None,
@@ -204,6 +205,7 @@ class SingleDetBasisChisq(object):
     """Class that handles precomutation and memory management for running
     a basis chisq.
     """
+    _basis_cache = 'cached_basis'
 
     def __init__(self, snr_threshold=None):
         self.basis = None
@@ -215,8 +217,7 @@ class SingleDetBasisChisq(object):
         self._invasd = {}
         self._corrmem = {}
 
-    @staticmethod
-    def get_basis(template, psd=None):
+    def get_basis(self, template, psd=None):
         """Retrieve basis and coefficients from the given template.
         """
         # we'll use the ID of the PSD to cache things
@@ -224,7 +225,7 @@ class SingleDetBasisChisq(object):
             key = None
         else:
             key = id(psd)
-        return template.cached_basis[key]
+        return getattr(template, self._basis_cache)[key]
 
     def update_basis(self, template, psd=None):
         """Updates the current basis/coefficients using the given template.
@@ -346,11 +347,14 @@ class SingleDetHMChisq(SingleDetBasisChisq):
     """Class that handles precomutation and memory management for running
     the higher-mode chisq.
     """
+    _basis_cache = 'cached_hmbasis'
     returns = {'hm_chisq': numpy.float32, 'hm_chisq_dof': int}
 
-
-    def __init__(self, snr_threshold=None):
-        super(SingleDetHMChisq, self).__init__(snr_threshold=snr_threshold)
+    def construct_waveform_basis(self, template, psd):
+        """Constructs a basis from the template's modes."""
+        invasd = self.invasd(psd)
+        waveforms = template.modes.values()
+        return construct_waveform_basis(waveforms, invasd, template.f_lower)
 
     def update_basis(self, template, psd=None):
         """Calculates/retrieves basis for the given template.
@@ -365,22 +369,20 @@ class SingleDetHMChisq(SingleDetBasisChisq):
         except AttributeError:
             # template does not have the attribute: means that a basis hasn't
             # been calculated, so create the attribute and calculate
-            template.cached_basis = {}
+            setattr(template, self._basis_cache, {})
         except KeyError:
             # means the PSD has changed; delete the old basis and create a
             # new one
-            template.cached_basis.clear()
+            getattr(template, self._basis_cache).clear()
         # Generate the mode basis
-        waveforms = template.modes.values()
-        invasd = self.invasd(psd)
-        basis = construct_waveform_basis(waveforms, invasd, template.f_lower)
+        basis = self.construct_waveform_basis(template, psd)
         # calculate the expected values
         coeffs = [numpy.complex(filter.overlap_cplx(ek, template,
                                 low_frequency_cutoff=template.f_lower,
                                 normalized=False))
                   for ek in basis]
 
-        template.cached_basis[key] = (basis, coeffs)
+        getattr(template, self._basis_cache)[key] = (basis, coeffs)
         return super(SingleDetHMChisq, self).update_basis(template, psd=psd)
 
     @staticmethod
@@ -396,3 +398,60 @@ class SingleDetHMChisq(SingleDetBasisChisq):
     def from_cli(cls, opts):
         """Initializes the HM Chisq using the given options."""
         return cls(snr_threshold=opts.hmchisq_snr_threshold)
+
+
+class SingleDetCombinedChisq(SingleDetHMChisq):
+    """Class that handles precomutation and memory management for running
+    the higher-mode chisq combined with the power chisq.
+    """
+    _basis_cache = 'cached_cbasis'
+    returns = {'combined_chisq': numpy.float32, 'combined_chisq_dof': int}
+
+    def __init__(self, power_chisq_bins=0, snr_threshold=None):
+        super(SingleDetCombinedChisq, self).__init__(
+            snr_threshold=snr_threshold)
+        # use an instance of SingleDetPowerChisq in order to get cache power
+        # chisq bins
+        self._powerchisq = SingleDetPowerChisq(power_chisq_bins,
+            snr_threshold)
+
+    def construct_waveform_basis(self, template, psd):
+        """Constructs a basis from the power chisq bins and the template's
+        modes.
+        """
+        # get the power chisq bins
+        pchisq_bins = self._powerchisq.cached_chisq_bins(template, psd)
+        # construct the waveforms
+        waveforms = []
+        for ii,kstart in enumerate(pchisq_bins[:-1]):
+            kend = pchisq_bins[ii+1]
+            h = template.copy()
+            h[:kstart] *= 0.
+            h[kend:] *= 0.
+            waveforms.append(h)
+        # get the modes, excluding any that are 0 in the integration region
+        kmin = pchisq_bins[0]
+        modes = [h for h in template.modes.values()
+                 if (h.numpy()[kmin:] != 0.).any()]
+        # only use modes if we have more than one
+        if len(modes) > 1:
+            waveforms += modes
+        invasd = self.invasd(psd)
+        return construct_waveform_basis(waveforms, invasd, template.f_lower)
+
+    @staticmethod
+    def insert_option_group(parser):
+        """Adds the options needed to set up the Combined Chisq."""
+        group = parser.add_argument_group("Combined Chisq")
+        group.add_argument("--combined-chisq-snr-threshold", type=float,
+                            default=None,
+                            help="SNR threshold to use for applying the "
+                                 "combined chisq. If not provided, the "
+                                 "combined chisq test will not be performed.")
+
+    @classmethod
+    def from_cli(cls, opts):
+        """Initializes the Combined Chisq using the given options."""
+        return cls(power_chisq_bins=opts.chisq_bins,
+            snr_threshold=opts.combined_chisq_snr_threshold)
+
