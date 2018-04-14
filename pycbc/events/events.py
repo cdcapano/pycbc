@@ -490,6 +490,10 @@ class EventManager(object):
                 f['hm_chisq'] = self.events['hm_chisq']
                 f['hm_chisq_dof'] = self.events['hm_chisq_dof']
 
+            if 'combined_chisq' in self.events.dtype.names:
+                f['combined_chisq'] = self.events['combined_chisq']
+                f['combined_chisq_dof'] = self.events['combined_chisq_dof']
+
             if self.opt.psdvar_short_segment is not None:
                 f['psd_var_val'] = self.events['psd_var_val']
 
