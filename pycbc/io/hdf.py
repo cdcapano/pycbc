@@ -638,6 +638,14 @@ class SingleDetTriggers(object):
         return self.get_column('sg_chisq')
 
     @property
+    def hmchisq(self):
+        return np.array(self.trigs['hm_chisq'])[self.mask]
+
+    @property
+    def combined_chisq(self):
+        return np.array(self.trigs['combined_chisq'])[self.mask]
+
+    @property
     def u_vals(self):
         return self.get_column('u_vals')
 
@@ -649,6 +657,16 @@ class SingleDetTriggers(object):
     @property
     def psd_var_val(self):
         return self.get_column('psd_var_val')
+
+    @property
+    def rhmchisq(self):
+        return np.array(self.trigs['hm_chisq'])[self.mask] \
+            / np.array(self.trigs['hm_chisq_dof'])[self.mask]
+
+    @property
+    def rcombined_chisq(self):
+        return np.array(self.trigs['combined_chisq'])[self.mask] \
+            / np.array(self.trigs['combined_chisq_dof'])[self.mask]
 
     @property
     def newsnr(self):
@@ -670,6 +688,23 @@ class SingleDetTriggers(object):
 
     def get_ranking(self, rank_name, **kwargs):
         return ranking.get_sngls_ranking_from_trigs(self, rank_name, **kwargs)
+
+    @property
+    def newsnr_hmchisq(self):
+        return events.newsnr_sgveto(self.snr, self.rhmchisq)
+
+    @property
+    def newsnr_hmchisq_sgveto(self):
+        return events.newsnr_sgveto(self.snr, self.rhmchisq, self.sgchisq)
+
+    @property
+    def newsnr_combined_chisq(self):
+        return events.newsnr_sgveto(self.snr, self.rcombined_chisq)
+
+    @property
+    def newsnr_combined_chisq_sgveto(self):
+        return events.newsnr_sgveto(self.snr, self.rcombined_chisq,
+            self.sgchisq)
 
     def get_column(self, cname):
         # Fiducial value that seems to work, not extensively tuned.
@@ -1118,6 +1153,7 @@ class ReadByTemplate(object):
 
 
 chisq_choices = ['traditional', 'cont', 'bank', 'max_cont_trad', 'sg',
+                 'hm', 'combined',
                  'max_bank_cont', 'max_bank_trad', 'max_bank_cont_trad']
 
 def get_chisq_from_file_choice(hdfile, chisq_choice):
@@ -1141,6 +1177,14 @@ def get_chisq_from_file_choice(hdfile, chisq_choice):
         bank_chisq /= bank_chisq_dof
     if chisq_choice == 'sg':
         chisq = f['sg_chisq'][:]
+    elif chisq_choice == 'hm':
+        chisq = f['hm_chisq'][:]
+        dof = f['hm_chisq_dof'][:]
+        chisq /= dof
+    elif chisq_choice == 'combined':
+        chisq = f['combined_chisq'][:]
+        dof = f['combined_chisq_dof'][:]
+        chisq /= dof
     elif chisq_choice == 'traditional':
         chisq = trad_chisq
     elif chisq_choice == 'cont':
