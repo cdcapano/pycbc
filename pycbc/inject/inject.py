@@ -404,7 +404,11 @@ class _XMLInjectionSet(object):
         else:
             f_l = f_lower
 
-        name, phase_order = legacy_approximant_name(inj.waveform)
+        if inj.waveform.endswith('_FD'):
+            name = inj.waveform
+            phase_order = -1
+        else:
+            name, phase_order = legacy_approximant_name(inj.waveform)
 
         # compute the waveform time series
         hp, hc = get_td_waveform(
