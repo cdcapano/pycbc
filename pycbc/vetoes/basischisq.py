@@ -19,7 +19,7 @@
 import numpy
 from pycbc import types
 from pycbc.types import FrequencySeries
-from pycbc.waveform import apply_fd_time_shift
+from pycbc.waveform import apply_fseries_time_shift
 from pycbc import filter
 from pycbc import psd as pypsd
 from pycbc.vetoes.chisq import SingleDetPowerChisq
@@ -126,7 +126,6 @@ def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
         corrmem = [types.FrequencySeries(types.zeros(len(ek), dtype=ek.dtype),
                                          delta_f=ek.delta_f)
                    for ek in basis]
-    n_used = 0
     for ek,corr in zip(basis, corrmem):
         if corr.delta_f != whstilde.delta_f:
             raise ValueError("data has a different delta_f than the basis")
@@ -137,7 +136,6 @@ def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
         filter.correlate(ek[kmin:kmax], whstilde[kmin:kmax], corr[kmin:kmax])
         # set the epoch of the corr mem to be the same as the data, so we get
         # the right time shifts
-        corr.start_time = whstilde.start_time
         corr.kmin = kmin
         corr.kmax = kmax
         corr *= 4. * whstilde.delta_f
@@ -149,7 +147,10 @@ def basis_chisq(whstilde, cplx_snr, trigger_times, sigma, basis, aks,
         trigtime = trigger_times[ii]
         for corr,ak in zip(corrmem, aks):
             # rotate the correlation to the appropriate time
-            shifted = apply_fd_time_shift(corr, trigtime, kmin=corr.kmin)
+            # note: we have to shift backward because the template is
+            # conjugated in the corr vector
+            dt = -float(trigtime - whstilde.start_time)
+            shifted = apply_fseries_time_shift(corr, dt, kmin=corr.kmin)
             ek_s = shifted[corr.kmin:corr.kmax].sum()
             chisq[ii] += abs(ek_s - rho*ak/sigma)**2.
     return chisq
@@ -325,10 +326,7 @@ class SingleDetBasisChisq(object):
             raise ValueError("unrecognized data_whitening argument {}".format(
                              data_whitening))
 
-        # need the trigger times... 2*nyquist is the sample rate = 1/dt
-        dt = 1./(2*(len(stilde)-1))
-        trigger_times = trigger_idx * dt + stilde.start_time 
-
+        trigger_times = trigger_idx * stilde.delta_t + stilde.start_time 
         sigma = template.sigmasq(psd)**0.5
 
         chisq = basis_chisq(whstilde, trigger_snrs, trigger_times, sigma,
