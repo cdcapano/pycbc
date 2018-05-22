@@ -600,11 +600,11 @@ def get_fd_waveform_from_td(**params):
     """
 
     # determine the duration to use
-    full_duration = duration = get_waveform_filter_length_in_time(**params)
+    full_duration = duration = max(0.1, get_waveform_filter_length_in_time(**params))
     nparams = params.copy()
 
     while full_duration < duration * 1.5:
-        full_duration = get_waveform_filter_length_in_time(**nparams)
+        full_duration = max(0, get_waveform_filter_length_in_time(**nparams))
         nparams['f_lower'] -= 1
 
     if 'f_fref' not in nparams:
