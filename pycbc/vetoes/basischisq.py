@@ -374,8 +374,15 @@ class SingleDetHMChisq(SingleDetBasisChisq):
             getattr(template, self._basis_cache).clear()
         # Generate the mode basis
         basis = self.construct_waveform_basis(template, psd)
+        # whiten the template
+        invasd = self.invasd(psd)
+        kmin = int(template.f_lower / template.delta_f) 
+        kmax = min(len(invasd), len(template))
+        whtemplate = template.copy()
+        whtemplate[kmin:kmax] *= invasd[kmin:kmax]
+        whtemplate[:kmin] *= 0.
         # calculate the expected values
-        coeffs = [numpy.complex(filter.overlap_cplx(ek, template,
+        coeffs = [numpy.complex(filter.overlap_cplx(ek, whtemplate,
                                 low_frequency_cutoff=template.f_lower,
                                 normalized=False))
                   for ek in basis]
