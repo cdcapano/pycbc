@@ -1,5 +1,5 @@
 from pycbc.waveform import get_td_waveform
-from pycbc.filter import match, overlap
+from pycbc.filter import match, overlap, matched_filter
 from pycbc.psd import aLIGOZeroDetHighPower
 
 # Buffer size in seconds. This is presumed to be
@@ -7,6 +7,7 @@ from pycbc.psd import aLIGOZeroDetHighPower
 time_buffer = 4
 
 f_low = 30
+f_hi = 31
 sample_rate = 4096
 
 # Length of corresponding time series and frequency series
@@ -47,4 +48,3 @@ m, i = match(hp, sp, psd=psd, low_frequency_cutoff=f_low)
 o = overlap(hp, sp, psd=psd, low_frequency_cutoff=f_low)
 print("Overlap %s" % o)
 print("Maximized Overlap %s" % m)
-
