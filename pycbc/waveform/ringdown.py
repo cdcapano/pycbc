@@ -29,6 +29,7 @@ import re, numpy, lal
 from pycbc.types import TimeSeries, FrequencySeries, float64, complex128, zeros
 from pycbc.waveform.waveform import get_obj_attrs
 from pycbc.conversions import get_lm_f0tau_allmodes
+from pycbc.waveform.utils import spher_harms
 
 qnm_required_args = ['f_0', 'tau', 'amp', 'phi']
 mass_spin_required_args = ['final_mass','final_spin', 'lmns', 'inclination']
@@ -336,21 +337,6 @@ def fd_output_vector(freqs, damping_times, delta_f=None, f_final=None):
     outcross = FrequencySeries(zeros(kmax, dtype=complex128), delta_f=delta_f)
 
     return outplus, outcross
-
-# Spherical harmonics and Kerr factor #########################################
-
-def spher_harms(l, m, inclination):
-    """Return spherical harmonic polarizations
-    """
-
-    # FIXME: we are using spin -2 weighted spherical harmonics for now,
-    # when possible switch to spheroidal harmonics.
-    Y_lm = lal.SpinWeightedSphericalHarmonic(inclination, 0., -2, l, m).real
-    Y_lminusm = lal.SpinWeightedSphericalHarmonic(inclination, 0., -2, l, -m).real
-    Y_plus = Y_lm + (-1)**l * Y_lminusm
-    Y_cross = Y_lm - (-1)**l * Y_lminusm
-
-    return Y_plus, Y_cross
 
 def Kerr_factor(final_mass, distance):
     """Return the factor final_mass/distance (in dimensionless units) for Kerr
