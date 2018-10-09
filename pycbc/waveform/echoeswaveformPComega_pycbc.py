@@ -18,8 +18,9 @@ def truncfunc(t, t0, t_merger, omega_of_t):
     return theta
 
 
-def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude, gamma,
-               inclination=0., timestep=None):
+def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
+               gamma, inclination=0., t_merger=None, sampletimesarray=None,
+               include_imr=False):
     """Takes waveform timeseries' of plus and cross polarisation, 
     produces echoes of the waveform and returns the original 
     waveform timeseries' with the echoes appended. 
@@ -52,18 +53,12 @@ def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude, 
         Waveform timeseries' for plus and cross polarisation with echoes 
         appended.    
     """
-    
-    if timestep is None:
-        timestep = hp.delta_t
-    
-    hp_numpy = hp.numpy()
-    hc_numpy = hc.numpy()
-
-    template = (hp_numpy + 1j*hc_numpy)
-    
-    # Finding the merger time as time of maximum strain amplitude.
-    sampletimesarray = hp.sample_times
-    t_merger = sampletimesarray[np.argmax(np.absolute(template))]
+    timestep = hp.delta_t
+    if t_merger is None:
+        t_merger = float((hp**2 + hc**2).numpy().argmax() * hp.delta_t +
+                         hp.start_time)
+    if sampletimesarray is None:
+        sampletimesarray = hp.sample_times.numpy()
     
     # Counting leading zeros. Calculate angular frequency for trimmed waveform.
     # For leading/trailing zeros, use first/last frequency found. Use
@@ -96,69 +91,52 @@ def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude, 
 #    
     #Producing the tapered waveform from the original one for the echoes:
     length = len(hp)
-    tapercoeff = truncfunc(
-                        sampletimesarray.numpy(), 
-                        t0trunc, 
-                        t_merger, 
-                        omega
-                    )
+    tapercoeff = truncfunc(sampletimesarray, t0trunc, t_merger, omega.numpy())
     threshold = 0.01
-    first_idx = np.nonzero(tapercoeff>threshold)[0][0]
-#	    print(first_idx)
+    first_idx = np.nonzero(tapercoeff > threshold)[0][0]
     
-    hp_numpy = (hp_numpy * tapercoeff)
-    hc_numpy = (hc_numpy * tapercoeff)
-    
-    last_idx = max(np.nonzero(hp_numpy>threshold * max(hp_numpy))[0][-1],
-                np.nonzero(hc_numpy>threshold * max(hc_numpy))[0][-1]) + 1
-#    print(last_idx)
+    hp_numpy = (hp.numpy() * tapercoeff)
+    hc_numpy = (hc.numpy() * tapercoeff)
+
+    last_idx = max(np.nonzero(hp_numpy > threshold * hp_numpy.max())[0][-1],
+                   np.nonzero(hc_numpy > threshold * hc_numpy.max())[0][-1])
+    last_idx += 1
     hp_numpy = hp_numpy[first_idx:last_idx]
     hc_numpy = hc_numpy[first_idx:last_idx]
-    #Appending first echo after t_echo.
-    hparray = np.zeros(
-                    len(hp) 
-                    + int(np.ceil((t_echo + n_echoes * del_t_echo) * 1.0/timestep))
-                    )
-    
-    hcarray = np.zeros(
-                    len(hc) 
-                    + int(np.ceil((t_echo + n_echoes * del_t_echo) * 1.0/timestep))
-                    )
 
-    # uncomment below to add in original event    
-    #hparray[:length] += hp.numpy()
-    #hcarray[:length] += hc.numpy()
+    #Appending first echo after t_echo.
+    pad = int(np.ceil((t_echo + n_echoes * del_t_echo) * 1.0/timestep))
+    hparray = np.zeros(len(hp) + pad)
+    hcarray = np.zeros(len(hc) + pad)
+
     t_echo_steps = int(round(t_echo * 1.0/timestep)) + first_idx
-    
-    hparray[
-        t_echo_steps:(t_echo_steps+len(hp_numpy))
-        ] += hp_numpy * amplitude * -1.0
-        
-    hcarray[
-        t_echo_steps:(t_echo_steps+len(hc_numpy))
-        ] += hc_numpy * amplitude * -1.0
+    hparray[t_echo_steps:t_echo_steps+hp_numpy.size] = hp_numpy * -amplitude
+    hcarray[t_echo_steps:t_echo_steps+hc_numpy.size] = hc_numpy * -amplitude
 
     #Appending further echoes. 
-
     for j in range(1, int(n_echoes)):
+        del_t_echo_steps = \
+            int(round((t_echo + del_t_echo * j) * 1.0/timestep)) + first_idx
+        damping_factor = amplitude * gamma**(j) * ((-1.0)**(j+1))
+        # apply to hp
+        echo_slice = slice(del_t_echo_steps, del_t_echo_steps + hp_numpy.size)
+        hparray[echo_slice] += hp_numpy
+        hparray[echo_slice] *= damping_factor
+        # apply to hc
+        echo_slice = slice(del_t_echo_steps, del_t_echo_steps + hc_numpy.size)
+        hcarray[echo_slice] += hc_numpy
+        hcarray[echo_slice] *= damping_factor
 
-        del_t_echo_steps = (int(round((t_echo + del_t_echo * j) * 1.0/timestep)) 
-                            + first_idx)
-        
-        hparray[
-                del_t_echo_steps:(del_t_echo_steps+len(hp_numpy))
-                ] += hp_numpy * amplitude * gamma**(j) * ((-1.0)**(j+1))
-        
-        hcarray[
-                del_t_echo_steps:(del_t_echo_steps+len(hc_numpy))
-                ] += hc_numpy * amplitude * gamma**(j) * ((-1.0)**(j+1))
+    # add the original waveform, if desired
+    if include_imr:
+        hparray[:length] += hp.numpy()
+        hcarray[:length] += hc.numpy()
 
     hp = pycbc.types.TimeSeries(hparray, delta_t=timestep, epoch=hp.start_time)
     hc = pycbc.types.TimeSeries(hcarray, delta_t=timestep, epoch=hc.start_time)
 
     # apply the inclination angle: since we assume this was generated with
     # zero inclination, we have to remove that
-
     yp0, _ = utils.spher_harms(2, 2, 0.)
     yp, yc = utils.spher_harms(2, 2, inclination)
     hp *= yp / yp0
