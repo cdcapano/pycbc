@@ -754,9 +754,23 @@ def get_td_echoes_waveform(template=None, **kwargs):
     n_echoes = input_params["n_echoes"]
     amplitude = input_params["amplitude"]
     gamma = input_params["gamma"]
+    try:
+        t_merger = input_params["t_merger"]
+    except KeyError:
+        t_merger = None
+    try:
+        sampletimesarray = input_params["sampletimesarray"]
+    except KeyError:
+        sampletimesarray = None
+    try:
+        include_imr = input_params['include_imr']
+    except KeyError:
+        include_imr = False
     return add_echoes(hp, hc, omega, t0trunc, t_echo,
                       del_t_echo, n_echoes, amplitude, gamma,
-                      inclination=inclination, timestep=None)
+                      inclination=inclination, t_merger=t_merger,
+                      sampletimesarray=sampletimesarray,
+                      include_imr=include_imr)
 
 # add echoes to cpu_td
 echoes_apprx = 'TDechoes1'

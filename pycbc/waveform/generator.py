@@ -327,7 +327,12 @@ class TDomainEchoesGenerator(BaseGenerator):
             omega = omega_temp
         omega.resize(len(hp))
         frozen_params["omega"] = omega
-        
+        # figure out the merger time
+        t_merger = float((hp**2 + hc**2).numpy().argmax() * hp.delta_t +
+                         hp.start_time)
+        frozen_params['t_merger'] = t_merger
+        # sample times
+        frozen_params['sampletimesarray'] = hp.sample_times.numpy()
         super(TDomainEchoesGenerator, self).__init__(
             waveform.get_td_echoes_waveform, variable_args=variable_args,
             **frozen_params)
