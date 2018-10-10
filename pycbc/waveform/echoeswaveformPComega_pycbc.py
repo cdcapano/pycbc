@@ -91,16 +91,18 @@ def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
 #    
     #Producing the tapered waveform from the original one for the echoes:
     length = len(hp)
+    # convert to numpy arrays and slice off just the non-zero parts
     tapercoeff = truncfunc(sampletimesarray, t0trunc, t_merger, omega.numpy())
-    threshold = 0.01
-    first_idx = np.nonzero(tapercoeff > threshold)[0][0]
-    
-    hp_numpy = (hp.numpy() * tapercoeff)
-    hc_numpy = (hc.numpy() * tapercoeff)
-
-    last_idx = max(np.nonzero(hp_numpy > threshold * hp_numpy.max())[0][-1],
-                   np.nonzero(hc_numpy > threshold * hc_numpy.max())[0][-1])
-    last_idx += 1
+    hp_numpy = hp.numpy() * tapercoeff
+    hc_numpy = hc.numpy() * tapercoeff
+    # we'll only keep the bits that are effectively non-zero; we'll consider
+    # this to be the place where the waveform has fallen to threshold * peak
+    # amplitude
+    ampsq = hp_numpy**2 + hc_numpy**2
+    threshold = 1e-4
+    nzidx = np.where(ampsq > threshold**2 * ampsq.max())[0]
+    first_idx = nzidx[0]
+    last_idx = nzidx[-1] + 1  # so we include the last point
     hp_numpy = hp_numpy[first_idx:last_idx]
     hc_numpy = hc_numpy[first_idx:last_idx]
 
