@@ -120,12 +120,10 @@ def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
         damping_factor = amplitude * gamma**(j) * ((-1.0)**(j+1))
         # apply to hp
         echo_slice = slice(del_t_echo_steps, del_t_echo_steps + hp_numpy.size)
-        hparray[echo_slice] += hp_numpy
-        hparray[echo_slice] *= damping_factor
+        hparray[echo_slice] += hp_numpy * damping_factor
         # apply to hc
         echo_slice = slice(del_t_echo_steps, del_t_echo_steps + hc_numpy.size)
-        hcarray[echo_slice] += hc_numpy
-        hcarray[echo_slice] *= damping_factor
+        hcarray[echo_slice] += hc_numpy * damping_factor
 
     # add the original waveform, if desired
     if include_imr:
