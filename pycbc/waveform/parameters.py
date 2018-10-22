@@ -378,6 +378,9 @@ chirp_distance = Parameter("chirp_distance",
 coa_phase = Parameter("coa_phase",
                 dtype=float, default=0., label=r"$\phi_c$",
                 description="Coalesence phase of the binary (in rad).")
+phase_shift = Parameter("phase_shift",
+                dtype=float, default=0., label=r"$\Delta \phi$",
+                description="Constant phase offset (in rad).")
 inclination = Parameter("inclination",
                 dtype=float, default=0., label=r"$\iota$",
                 description="Inclination (rad), defined as the angle between "
@@ -467,7 +470,8 @@ location_params = ParameterList([tc, ra, dec, polarization])
 # frame. Note: we include distance here, as it is typically used for generating
 # waveforms.
 orientation_params = ParameterList\
-    ([distance, coa_phase, inclination, long_asc_nodes, mean_per_ano])
+    ([distance, coa_phase, phase_shift, inclination, long_asc_nodes,
+      mean_per_ano])
 
 # the extrinsic parameters of a waveform
 extrinsic_params = orientation_params + location_params
