@@ -469,6 +469,41 @@ def apply_fd_time_shift(htilde, shifttime, kmin=0, fseries=None, copy=True):
         htilde *= shift
     return htilde
 
+def apply_phase_shift(h, phase_shift, copy=True):
+    """Applies a constant phase shift to a waveform.
+
+    Parameters
+    ----------
+    h : FrequencySeries or TimeSeries
+        The waveform to apply the shift to. If a TimeSeries, will be converted
+        to frequency domain, the shift will be applied, then the waveform
+        will be converted back.
+    phase_shift : float
+        The value to apply.
+    copy : bool, optional
+        Copy the vector before applying. Only applies if ``h`` is a
+        FrequencySeries. Default is True.
+
+    Returns
+    -------
+    FrequencySeries or TimeSeries
+        The waveform with the shift applied. Return type is the same as ``h``.
+    """
+    # check tha tthe phase shift isn't just zero
+    if phase_shift == 0.:
+        if copy:
+            h = h.copy()
+        return h
+    istimeseries = isinstance(h, TimeSeries)
+    if istimeseries:
+        h = h.to_frequencyseries()
+    elif copy:
+        h = h.copy()
+    h *= numpy.exp(1j * phase_shift)
+    if istimeseries:
+        h = h.to_timeseries()
+    return h
+
 def td_taper(out, start, end, beta=8, side='left'):
     """Applies a taper to the given TimeSeries.
 

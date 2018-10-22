@@ -453,7 +453,14 @@ def get_td_waveform(template=None, **kwargs):
     if input_params['approximant'] not in wav_gen:
         raise ValueError("Approximant %s not available" %
                             (input_params['approximant']))
-    return wav_gen[input_params['approximant']](**input_params)
+    try:
+        phase_shift = input_params['phase_shift']
+    except KeyError:
+        phase_shift = 0.
+    hp, hc = wav_gen[input_params['approximant']](**input_params)
+    hp = wfutils.apply_phase_shift(hp, phase_shift, copy=False)
+    hc = wfutils.apply_phase_shift(hc, phase_shift, copy=False)
+    return hp, hc
 
 get_td_waveform.__doc__ = get_td_waveform.__doc__.format(
     params=parameters.td_waveform_params.docstr(prefix="    ",
@@ -495,8 +502,14 @@ def get_fd_waveform(template=None, **kwargs):
                 raise NoWaveformError("cannot generate waveform: f_lower >= f_final")
     except KeyError:
         pass
-
-    return wav_gen[input_params['approximant']](**input_params)
+    try:
+        phase_shift = input_params['phase_shift']
+    except KeyError:
+        phase_shift = 0.
+    hp, hc = wav_gen[input_params['approximant']](**input_params)
+    hp = wfutils.apply_phase_shift(hp, phase_shift, copy=False)
+    hc = wfutils.apply_phase_shift(hc, phase_shift, copy=False)
+    return hp, hc
 
 get_fd_waveform.__doc__ = get_fd_waveform.__doc__.format(
     params=parameters.fd_waveform_params.docstr(prefix="    ",
