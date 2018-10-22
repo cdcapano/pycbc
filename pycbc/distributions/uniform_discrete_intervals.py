@@ -22,60 +22,46 @@ class UniformIntervals(bounded.BoundedDist):
                              ', '.join(missing)))
         self._stride.update(dict([[p, 0.]
             for p in params if p not in self._stride]))
+        numpy.seterr(divide='ignore')
+        self._lognorm = -sum([numpy.log(abs(bnd[1]-bnd[0]))
+                                    for bnd in self._bounds.values()])
+        self._norm = numpy.exp(self._lognorm)
+        numpy.seterr(divide='warn')
 
-#        numpy.seterr(divide='ignore')
-#        self._lognorm = -sum([numpy.log(abs(bnd[1]-bnd[0]))
-#                                    for bnd in self._bounds.values()])
-#        self._norm = numpy.exp(self._lognorm)
-#        numpy.seterr(divide='warn')
 
 ### FIXME this needs to be reset if multiple calls to rvs will keep shrinking it
     @property
-    def norm(self):
-        self._norm = self._size
-        return self._norm
+    def norm(self, size=1):
+        return size * self._norm
 
     @property
-    def lognorm(self):
-        return numpy.log(norm())
+    def lognorm(self, size=1):
+        return numpy.log(norm(size=size))
 
     @property
     def stride(self):
         return self._stride
 
-    def set_size(self, size=1):
-        self._size = size
-
-    def _pdf(self, **kwargs):
+    def _pdf(self, size=1, param=None, **kwargs):
         """Returns the pdf at the given values. The keyword arguments must
         contain all of parameters in self's params. Unrecognized arguments are
         ignored.
         """
-        raise NotImplementedError("The pdf for this distribution is not well defined")
-#        for p in self.params:
-#            width = self._bounds[p][0] + self._bounds[p][1]
-#            print "width of bounds", width
-#            print "width of bounds + stride", width + self._stride[p]
-#            print "input value", kwargs[p]
-#            cond = kwargs[p] % (width + self._stride[p])
-#            print "cond", cond
-#            print cond > width
-#            if cond > width :
-#                return 0.
-#
-#        return self._norm
+        for i in range(len(self._bounds.values())):
+            if (kwargs % (self._bounds[self.params[i]][1] + self.stride[self.params[i]])) not in self:
+                return 0.
+
+        return self._norm
 
     def _logpdf(self, size=1, **kwargs):
         """Returns the log of the pdf at the given values. The keyword
         arguments must contain all of parameters in self's params. Unrecognized
         arguments are ignored.
         """
-        raise NotImplementedError("The log pdf for this distribution is not well defined")
-#        if kwargs in self:
-#            return numpy.log(self._pdf(size=size))
-#        else:
-#            return -numpy.inf
-
+        if kwargs in self:
+            return numpy.log(self._pdf(size=size))
+        else:
+            return -numpy.inf
 
     def rvs(self, size=1, param=None):
         """Gives a set of random values drawn from this distribution.
@@ -106,7 +92,7 @@ class UniformIntervals(bounded.BoundedDist):
             a = self.bounds[p][0] + self.stride[p] * x
             arr[p] = numpy.random.uniform(a, b) 
 
-        self.set_size(size)
+        self._size = size
         return arr
 
     @classmethod
