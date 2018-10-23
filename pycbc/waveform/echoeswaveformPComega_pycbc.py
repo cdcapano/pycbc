@@ -18,9 +18,31 @@ def truncfunc(t, t0, t_merger, omega_of_t):
     return theta
 
 
-def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
+def get_omega(hp, hc):
+    """Gets omega(t) for the given waveforms.
+    """
+    omega = 2. * np.pi * utils.frequency_from_polarizations(hp.trim_zeros(),
+                                                            hc.trim_zeros())
+    first_zero_index_hp = 0
+    first_zero_index_hc = 0
+    if hp[0] == 0 and hc[0] == 0:
+        omega_temp = np.zeros(len(hp))
+        while hp[first_zero_index_hp] == 0:
+            first_zero_index_hp += 1
+        while hc[first_zero_index_hc] == 0:
+            first_zero_index_hc += 1
+        if first_zero_index_hp != first_zero_index_hc:
+            print('Polarisations have unequal number of leading zeros.')
+        omega_temp[:max(first_zero_index_hp, first_zero_index_hc)] = \
+            omega[max(first_zero_index_hp, first_zero_index_hc)]
+        omega = omega_temp
+    omega.resize(len(hp))
+    return omega
+
+
+def add_echoes(hp, hc, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
                gamma, inclination=0., t_merger=None, sampletimesarray=None,
-               include_imr=False):
+               omega=None, include_imr=False):
     """Takes waveform timeseries' of plus and cross polarisation, 
     produces echoes of the waveform and returns the original 
     waveform timeseries' with the echoes appended. 
@@ -55,40 +77,12 @@ def add_echoes(hp, hc, omega, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
     """
     timestep = hp.delta_t
     if t_merger is None:
-        t_merger = float((hp**2 + hc**2).numpy().argmax() * hp.delta_t +
+        t_merger = float((hp**2 + hc**2).np().argmax() * hp.delta_t +
                          hp.start_time)
     if sampletimesarray is None:
-        sampletimesarray = hp.sample_times.numpy()
-    
-    # Counting leading zeros. Calculate angular frequency for trimmed waveform.
-    # For leading/trailing zeros, use first/last frequency found. Use
-    # np.nonzero instead?
-    
-#    omega = 2. * np.pi * utils.frequency_from_polarizations(hp.trim_zeros(), 
-#                                                        hc.trim_zeros())
-#    
-#    omega_temp = np.zeros(len(template))
-#    first_zero_index_hp = 0
-#    first_zero_index_hc = 0
-#    
-#    if hp[0] == 0 and hc[0] == 0:
-#        print('Active')
-#        
-#        while hp[first_zero_index_hp] == 0:
-#            first_zero_index_hp += 1
-#        
-#        while hc[first_zero_index_hc] == 0:
-#            first_zero_index_hc += 1
-#        
-#        if first_zero_index_hp != first_zero_index_hc:
-#            print('Polarisations have unequal number of leading zeroes.')
-#        
-#        omega_temp[:max(first_zero_index_hp,first_zero_index_hc)] = \
-#            omega[max(first_zero_index_hp,first_zero_index_hc)]
-#        omega = omega_temp
-#    
-#    omega.resize(len(template))
-#    
+        sampletimesarray = hp.sample_times.np()
+    if omega is None:
+        omega = get_omega(hp, hc)
     #Producing the tapered waveform from the original one for the echoes:
     length = len(hp)
     # convert to numpy arrays and slice off just the non-zero parts
