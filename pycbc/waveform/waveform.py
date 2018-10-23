@@ -760,6 +760,7 @@ def get_td_echoes_waveform(template=None, **kwargs):
         imrargs = input_params.copy()
         imrargs['approximant'] = apprx
         hp, hc = get_td_waveform(**imrargs)
+        omega = None
     # get the echo parameters
     t0trunc = input_params["t0trunc"]
     t_echo = input_params["t_echo"]
@@ -779,10 +780,10 @@ def get_td_echoes_waveform(template=None, **kwargs):
         include_imr = input_params['include_imr']
     except KeyError:
         include_imr = False
-    return add_echoes(hp, hc, omega, t0trunc, t_echo,
+    return add_echoes(hp, hc, t0trunc, t_echo,
                       del_t_echo, n_echoes, amplitude, gamma,
                       inclination=inclination, t_merger=t_merger,
-                      sampletimesarray=sampletimesarray,
+                      sampletimesarray=sampletimesarray, omega=omega,
                       include_imr=include_imr)
 
 # add echoes to cpu_td
