@@ -1,4 +1,4 @@
-import numpy as np
+import numpy
 import h5py
 import time as timemodule
 import pycbc
@@ -14,19 +14,19 @@ def truncfunc(t, t0, t_merger, omega_of_t):
     """A tapering function used to smoothly introduce the echo waveforms
     from the original waveform."""
 
-    theta = 0.5 * (1 + np.tanh(0.5 * omega_of_t * (t - t_merger - t0)))
+    theta = 0.5 * (1 + numpy.tanh(0.5 * omega_of_t * (t - t_merger - t0)))
     return theta
 
 
 def get_omega(hp, hc):
     """Gets omega(t) for the given waveforms.
     """
-    omega = 2. * np.pi * utils.frequency_from_polarizations(hp.trim_zeros(),
+    omega = 2. * numpy.pi * utils.frequency_from_polarizations(hp.trim_zeros(),
                                                             hc.trim_zeros())
     first_zero_index_hp = 0
     first_zero_index_hc = 0
     if hp[0] == 0 and hc[0] == 0:
-        omega_temp = np.zeros(len(hp))
+        omega_temp = numpy.zeros(len(hp))
         while hp[first_zero_index_hp] == 0:
             first_zero_index_hp += 1
         while hc[first_zero_index_hc] == 0:
@@ -77,10 +77,10 @@ def add_echoes(hp, hc, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
     """
     timestep = hp.delta_t
     if t_merger is None:
-        t_merger = float((hp**2 + hc**2).np().argmax() * hp.delta_t +
+        t_merger = float((hp**2 + hc**2).numpy().argmax() * hp.delta_t +
                          hp.start_time)
     if sampletimesarray is None:
-        sampletimesarray = hp.sample_times.np()
+        sampletimesarray = hp.sample_times.numpy()
     if omega is None:
         omega = get_omega(hp, hc)
     #Producing the tapered waveform from the original one for the echoes:
@@ -94,16 +94,16 @@ def add_echoes(hp, hc, t0trunc, t_echo, del_t_echo, n_echoes, amplitude,
     # amplitude
     ampsq = hp_numpy**2 + hc_numpy**2
     threshold = 1e-4
-    nzidx = np.where(ampsq > threshold**2 * ampsq.max())[0]
+    nzidx = numpy.where(ampsq > threshold**2 * ampsq.max())[0]
     first_idx = nzidx[0]
     last_idx = nzidx[-1] + 1  # so we include the last point
     hp_numpy = hp_numpy[first_idx:last_idx]
     hc_numpy = hc_numpy[first_idx:last_idx]
 
     #Appending first echo after t_echo.
-    pad = int(np.ceil((t_echo + n_echoes * del_t_echo) * 1.0/timestep))
-    hparray = np.zeros(len(hp) + pad)
-    hcarray = np.zeros(len(hc) + pad)
+    pad = int(numpy.ceil((t_echo + n_echoes * del_t_echo) * 1.0/timestep))
+    hparray = numpy.zeros(len(hp) + pad)
+    hcarray = numpy.zeros(len(hc) + pad)
 
     t_echo_steps = int(round(t_echo * 1.0/timestep)) + first_idx
     hparray[t_echo_steps:t_echo_steps+hp_numpy.size] = hp_numpy * -amplitude
