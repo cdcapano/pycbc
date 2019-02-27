@@ -17,14 +17,17 @@
 """
 
 import numpy
+
+from pycbc.opt import LimitedSizeDict
+
 from .base_data import BaseDataModel
 
 
 class TimeDomainGaussian(BaseDataModel):
     name = 'tdgaussian'
 
-    def __init__(self, variable_params, data, psds,
-                 high_frequency_cutoff=None, static_params=None, **kwargs):
+    def __init__(self, variable_params, data, psds, static_params=None,
+                 **kwargs):
         # set up the boiler-plate attributes
         super(GaussianNoise, self).__init__(variable_params, data,
                                             static_params=static_params,
@@ -38,8 +41,9 @@ class TimeDomainGaussian(BaseDataModel):
         if not all(dlens == dlens[0]):
             raise ValueError("all data must be of the same length")
         # get the autocorrelation function from the psd
+        self.cachesize = 10
         self.autocorrs = {}
-        self._cov = {}
+        self._fullcov = {}
         for det, psd in psds.items():
             rss = psd.timeseries()/2.
             N = len(rss)
@@ -51,10 +55,25 @@ class TimeDomainGaussian(BaseDataModel):
             for ii in range(N):
                 for jj in range(N):
                     cov[ii, jj] = rss[ii-jj]
-            self._cov[det] = cov
-        self._invcov = {}
-        self._lastgate = {}
-        self._dd = {}
+            self._fullcov[det] = cov
+        self._cov = {det: LimitedSizeDict(size_limit=self.cachesize)
+                     for det in data}
+        self._invcov = {det: LimitedSizeDict(size_limit=self.cachesize)
+                        for det in data}
+        self._logdet = {det: LimitedSizeDict(size_limit=self.cachesize)
+                             for det in data}
+        self._dd = {det: LimitedSizeDict(size_limit=self.cachesize)
+                    for det in data}
+
+    @property
+    def _extra_stats(self):
+        """Adds ``loglr``, plus ``cplx_loglr`` and ``optimal_snrsq`` in each
+        detector."""
+        return ['lognl'] + \
+               ['{}_lognl'.format(det) for det in self._data] + \
+               ['{}_optimal_snrsq'.format(det) for det in self._data] + \
+               ['{}_logdetcov'.format(det) for det in self._data] + \
+               ['{}_datalen'.format(det) for det in self._data] 
 
     def cov(self, detector, gstart=None, gstop=None):
         """Returns the covariance matrix.
@@ -68,7 +87,13 @@ class TimeDomainGaussian(BaseDataModel):
         gstop : int, optional
             Gate the covariance matrix up to the given index.
         """
-        cov = self._cof[detector]
+        if gstart is None and gstop is None:
+            # just return the full covariance matrix
+            return self._fullcov[detector]
+        try:
+            return self._cov[detector][gstart, gstop]
+        except KeyError:
+            pass
         if gstart is not None or gstop is not None:
             if gstart and not gstop:
                 # easy
@@ -84,31 +109,41 @@ class TimeDomainGaussian(BaseDataModel):
                 q4 = cov[gstop:, gstop:]
                 # stack
                 cov = numpy.block([[q1, q2], [q3, q4]])
+        # cache for next time
+        self._cov[detector][gstart, gstop] = cov
         return cov
+
+    def logdet(self, detector, gstart=None, gstop=None):
+        """The log of the determinant of the covariance matrix."""
+        try:
+            return self._logdet[detector][gstart, gstop]
+        except KeyError:
+            pass
+        cov = self.cov(detector, gstart=gstart, gstop=gstop
+        sign, det = numpy.linalg.slogdet(cov)
+        if sign == 0:
+            raise ValueError("singular covariance matrix")
+        elif sign == -1:
+            raise ValueError("determinant of covariance matrix is negative")
+        self._logdet[detector][gstart, gstop] = det
+        return det
 
     def invcov(self, detector, gstart=None, gstop=None):
         """Inverts the covariance matrix."""
-        # use the last one if the gate is the same
         try:
-            lastgate = self._lastgate[detector]
+            # try to return from cache
+            return self._invcov[detector][gstart, gstop]
         except KeyError:
-            lastgate = None
-        if (gstart, gstop) == self._lastgate:
-            try:
-                return self._invcov[detector]
-            except KeyError:
-                # means there's no gate, and we haven't done this yet
-                pass
+            pass
         cov = self.cov(detector, gstart, gstop)
         invcov = numpy.linalg.inv(cov)
         # cache for next time
-        self._invcov[detector] = invcov
-        self._lastgate[detector] = (gstart, gstop)
+        self._invcov[detector][gstart, gstop] = invcov
         return invcov
 
     def _lognl(self, detector, data, invcov, gstart=None, gstop=None):
         try:
-            return self._dd[detector, gstart, gstop]
+            return self._dd[detector][gstart, gstop]
         except KeyError:
             dd = numpy.matmul(data, numpy.matmul(invcov, data))
             self._dd[detector, gstart, gstop] = dd
@@ -129,6 +164,7 @@ class TimeDomainGaussian(BaseDataModel):
         except NoWaveformError:
             return 0.
         logl = 0.
+        lognl = 0.
         for det, h in wfs.items():
             if t_gate_start is not None:
                 # figure out the time to start the gate in the detector frame
@@ -150,7 +186,16 @@ class TimeDomainGaussian(BaseDataModel):
             hd = numpy.matmul(d, ovwh)
             hh = numpy.matmul(h, ovwh)
             dd = self._lognl(detector, data, invcov, gstart, gstop)
-            logl += hd - 0.5*hh - 0.5*dd
+            logdet = self.logdet(detector, gstart, gstop)
+            m = len(d)
+            denom = 0.5*(logdet + m*numpy.log(2*numpy.pi))
+            logl += hd - 0.5*hh - 0.5*dd - denom
+            lognl += dd
+            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
+            setattr(self._current_stats, '{}_lognl'.format(det), dd)
+            setattr(self._current_stats, '{}_logdetcov'.format(det), logdet)
+            setattr(self._current_stats, '{}_datalen'.format(det), m)
+        self._current_stats.lognl = lognl
         return logl
 
 
