@@ -202,6 +202,12 @@ class LimitedSizeDict(OrderedDict):
         OrderedDict.__init__(self, *args, **kwds)
         self._check_size_limit()
 
+    def __getitem__(self, item):
+        """Promotes most recently retrieved item to top of the stack."""
+        val = self.pop(item)
+        self[item] = val
+        return val
+
     def __setitem__(self, key, value):
         OrderedDict.__setitem__(self, key, value)
         self._check_size_limit()
