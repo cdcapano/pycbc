@@ -18,7 +18,10 @@
 
 import numpy
 
+from pycbc.types import TimeSeries
+from pycbc.waveform import generator
 from pycbc.opt import LimitedSizeDict
+from pycbc.waveform import NoWaveformError
 
 from .base_data import BaseDataModel
 
@@ -27,11 +30,11 @@ class TimeDomainGaussian(BaseDataModel):
     name = 'tdgaussian'
 
     def __init__(self, variable_params, data, psds, static_params=None,
+                 analysis_start_time=None, analysis_end_time=None,
                  **kwargs):
         # set up the boiler-plate attributes
-        super(GaussianNoise, self).__init__(variable_params, data,
-                                            static_params=static_params,
-                                            **kwargs)
+        super(TimeDomainGaussian, self).__init__(
+            variable_params, data, static_params=static_params, **kwargs)
         # create the waveform generator
         self._waveform_generator = create_waveform_generator(
             self.variable_params, self.data, recalibration=self.recalibration,
@@ -40,21 +43,39 @@ class TimeDomainGaussian(BaseDataModel):
         dlens = numpy.array([len(d) for d in self.data.values()])
         if not all(dlens == dlens[0]):
             raise ValueError("all data must be of the same length")
+        if analysis_start_time is None:
+            analysis_start_time = d.start_time
+        if analysis_end_time is None:
+            analysis_end_time = d.end_time
+        self.data = {det: d.time_slice(analysis_start_time, analysis_end_time)
+                     for det, d in self.data.items()}
         # get the autocorrelation function from the psd
         self.cachesize = 10
         self.autocorrs = {}
         self._fullcov = {}
+        self.current_waveforms = {}
         for det, psd in psds.items():
-            rss = psd.timeseries()/2.
-            N = len(rss)
-            if N != len(self.data[det]):
-                raise ValueError("psd/data length mismatch")
+            rss = psd.astype(numpy.complex).to_timeseries()/2.
+            Nrss = len(rss)
+            N = len(self.data[det])
+            if False:#Nrss > N:
+                # throw out the middle bit
+                cropped = TimeSeries(numpy.zeros(N), delta_t=rss.delta_t,
+                                     epoch=rss.start_time)
+                cropped[:N/2] = rss[:N/2]
+                cropped[N/2:] = rss[Nrss-N/2:]
+                rss = cropped
+            elif Nrss < N:
+                raise ValueError("1/psd.delta_f < data length")
             self.autocorrs[det] = rss
             # create the covariance matrix
             cov = numpy.zeros((N, N), dtype=float)
+            rss = rss.numpy()
             for ii in range(N):
-                for jj in range(N):
-                    cov[ii, jj] = rss[ii-jj]
+                #cov[ii,:] = rss
+                cov[ii, :N/2] = rss[:N/2]
+                cov[ii, N/2:] = rss[-N/2:]
+                rss = numpy.roll(rss, 1)
             self._fullcov[det] = cov
         self._cov = {det: LimitedSizeDict(size_limit=self.cachesize)
                      for det in data}
@@ -141,10 +162,11 @@ class TimeDomainGaussian(BaseDataModel):
         self._invcov[detector][gstart, gstop] = invcov
         return invcov
 
-    def _lognl(self, detector, data, invcov, gstart=None, gstop=None):
+    def _lognl(self, detector, invcov, gstart=None, gstop=None):
         try:
             return self._dd[detector][gstart, gstop]
         except KeyError:
+            data = self.data[detector]
             dd = numpy.matmul(data, numpy.matmul(invcov, data))
             self._dd[detector, gstart, gstop] = dd
             return dd
@@ -162,10 +184,14 @@ class TimeDomainGaussian(BaseDataModel):
         try:
             wfs = self._waveform_generator.generate(**params)
         except NoWaveformError:
+            self.current_waveforms.clear()
             return 0.
         logl = 0.
         lognl = 0.
         for det, h in wfs.items():
+            d = self.data[det]
+            h = h.time_slice(d.start_time, d.end_time)
+            self.current_waveforms[det] = h
             if t_gate_start is not None:
                 # figure out the time to start the gate in the detector frame
                 det_gate_start = t_gate_start + (h.det_tc - h.start_time )
@@ -180,25 +206,28 @@ class TimeDomainGaussian(BaseDataModel):
                 gstop = None
             keep = slice(gstart, gstop)
             h = h[keep]
-            d = self.data[det][keep]
+            d = d[keep]
             invcov = self.invcov(det, gstart, gstop)
             ovwh = numpy.matmul(invcov, h)
             hd = numpy.matmul(d, ovwh)
             hh = numpy.matmul(h, ovwh)
-            dd = self._lognl(detector, data, invcov, gstart, gstop)
-            logdet = self.logdet(detector, gstart, gstop)
+            dd = self._lognl(det, invcov, gstart, gstop)
+            logdet = self.logdet(det, gstart, gstop)
             m = len(d)
             denom = 0.5*(logdet + m*numpy.log(2*numpy.pi))
-            logl += hd - 0.5*hh - 0.5*dd - denom
-            lognl += dd
+            thislognl = -0.5*dd - denom
+            logl += hd - 0.5*hh + thislognl
+            lognl += thislognl
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det),
                     0.5*hh)
-            setattr(self._current_stats, '{}_lognl'.format(det), 0.5*dd)
+            setattr(self._current_stats, '{}_lognl'.format(det), thislognl)
             setattr(self._current_stats, '{}_logdetcov'.format(det), logdet)
             setattr(self._current_stats, '{}_datalen'.format(det), m)
-        self._current_stats.lognl = 0.5*lognl
+        self._current_stats.lognl = lognl
         return logl
 
+    def _loglr(self):
+        return self.loglikelihood - self._current_stats.lognl
 
 #
 # =============================================================================
@@ -240,7 +269,8 @@ def create_waveform_generator(variable_params, data,
         approximant = static_params['approximant']
     except KeyError:
         raise ValueError("no approximant provided in the static args")
-    generator_function = generator.select_waveform_generator(approximant)
+    generator_function = generator.select_waveform_generator(approximant,
+                                                             prefer='td')
     # get data parameters; we'll just use one of the data to get the
     # values, then check that all the others are the same
     delta_f = None
