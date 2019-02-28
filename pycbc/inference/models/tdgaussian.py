@@ -51,7 +51,7 @@ class TimeDomainGaussian(BaseDataModel):
                 raise ValueError("psd/data length mismatch")
             self.autocorrs[det] = rss
             # create the covariance matrix
-            cov = numpy.zeros((N, N)), dtype=float)
+            cov = numpy.zeros((N, N), dtype=float)
             for ii in range(N):
                 for jj in range(N):
                     cov[ii, jj] = rss[ii-jj]
@@ -119,7 +119,7 @@ class TimeDomainGaussian(BaseDataModel):
             return self._logdet[detector][gstart, gstop]
         except KeyError:
             pass
-        cov = self.cov(detector, gstart=gstart, gstop=gstop
+        cov = self.cov(detector, gstart=gstart, gstop=gstop)
         sign, det = numpy.linalg.slogdet(cov)
         if sign == 0:
             raise ValueError("singular covariance matrix")
