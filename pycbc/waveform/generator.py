@@ -30,7 +30,7 @@ from . import waveform
 from . import ringdown
 from pycbc import filter
 from pycbc import transforms
-from pycbc.types import TimeSeries
+from pycbc.types import (TimeSeries, FrequencySeries)
 from pycbc.waveform import parameters
 from pycbc.waveform.utils import apply_fd_time_shift, taper_timeseries, \
                                  ceilpow2
@@ -483,7 +483,7 @@ class BaseDetFrameGenerator(object):
         # initialize the radiation frame generator
         self.rframe_generator = rFrameGeneratorClass(
             variable_args=rframe_variables, **frozen_params)
-        self.set_epoch(epoch)
+        self.epoch = epoch
         # set calibration model
         self.recalib = recalib
         # if detectors are provided, convert to detector type; also ensure that
@@ -683,6 +683,12 @@ class TDomainDetFrameGenerator(BaseDetFrameGenerator):
             # happens at the end of the time series (as they are for f-domain),
             # so we add an additional shift to account for it
             #tshift = 1./df - abs(hp._epoch)
+        # zero-pad out to the desired segment length
+        dt = self.current_params['delta_t']
+        df = self.current_params['delta_f']
+        N = int(1./(dt*df))
+        hp.resize(N)
+        hc.resize(N)
         h = {}
         ra = self.current_params['ra']
         dec = self.current_params['dec']
@@ -713,7 +719,22 @@ class TDomainDetFrameGenerator(BaseDetFrameGenerator):
         return h
 
 
-def select_waveform_generator(approximant):
+fd_generators = {
+    'FdQNMfromFinalMassSpin': FDomainMassSpinRingdownGenerator,
+    'FdQNMfromFreqTau': FDomainFreqTauRingdownGenerator,
+    }
+fd_generators.update({_apprx: FDomainCBCGenerator
+                      for _apprx in waveform.fd_approximants()})
+
+td_generators = {
+    'TdQNMfromFinalMassSpin': TDomainMassSpinRingdownGenerator,
+    'TdQNMfromFreqTau': TDomainFreqTauRingdownGenerator,
+    }
+td_generators.update({_apprx: TDomainCBCGenerator
+                      for _apprx in waveform.td_approximants()})
+
+
+def select_waveform_generator(approximant, prefer='fd'):
     """Returns the single-IFO generator for the approximant.
 
     Parameters
@@ -721,6 +742,10 @@ def select_waveform_generator(approximant):
     approximant : str
         Name of waveform approximant. Valid names can be found using
         ``pycbc.waveform`` methods.
+    prefer : {'fd', 'td'}
+        Some approximants have both time domain and frequency domain variants.
+        This sets which domain takes precedence. Options are 'fd' (for
+        frequency domain) or 'td' (for time domain); default is 'fd'.
 
     Returns
     -------
@@ -740,28 +765,19 @@ def select_waveform_generator(approximant):
     >>> from pycbc.waveform.generator import select_waveform_generator
     >>> select_waveform_generator(waveform.fd_approximants()[0])
     """
-
-    # check if frequency-domain CBC waveform
-    if approximant in waveform.fd_approximants():
-        return FDomainCBCGenerator
-
-    # check if time-domain CBC waveform
-    elif approximant in waveform.td_approximants():
-        return TDomainCBCGenerator
-
-    # check if frequency-domain ringdown waveform
-    elif approximant in ringdown.ringdown_fd_approximants:
-        if approximant == 'FdQNMfromFinalMassSpin':
-            return FDomainMassSpinRingdownGenerator
-        elif approximant == 'FdQNMfromFreqTau':
-            return FDomainFreqTauRingdownGenerator
-
-    elif approximant in ringdown.ringdown_td_approximants:
-        if approximant == 'TdQNMfromFinalMassSpin':
-            return TDomainMassSpinRingdownGenerator
-        elif approximant == 'TdQNMfromFreqTau':
-            return TDomainFreqTauRingdownGenerator
-
-    # otherwise waveform approximant is not supported
+    if prefer == 'fd':
+        tryfirst = fd_generators
+        trysecond = td_generators
+    elif prefer == 'td':
+        tryfirst = td_generators
+        trysecond = fd_generators
     else:
-        raise ValueError("%s is not a valid approximant." % approximant)
+        raise ValueError("unrecognized prefer argument {}; choices are 'fd' "
+                         "or 'td'".format(prefer))
+    try:
+        return tryfirst[approximant]
+    except KeyError:
+        try:
+            return trysecond[approximant]
+        except KeyError:
+            raise ValueError("%s is not a valid approximant." % approximant)
