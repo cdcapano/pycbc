@@ -191,11 +191,12 @@ class TimeDomainGaussian(BaseDataModel):
             denom = 0.5*(logdet + m*numpy.log(2*numpy.pi))
             logl += hd - 0.5*hh - 0.5*dd - denom
             lognl += dd
-            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
-            setattr(self._current_stats, '{}_lognl'.format(det), dd)
+            setattr(self._current_stats, '{}_optimal_snrsq'.format(det),
+                    0.5*hh)
+            setattr(self._current_stats, '{}_lognl'.format(det), 0.5*dd)
             setattr(self._current_stats, '{}_logdetcov'.format(det), logdet)
             setattr(self._current_stats, '{}_datalen'.format(det), m)
-        self._current_stats.lognl = lognl
+        self._current_stats.lognl = 0.5*lognl
         return logl
 
 
