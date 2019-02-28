@@ -204,7 +204,7 @@ class LimitedSizeDict(OrderedDict):
 
     def __getitem__(self, item):
         """Promotes most recently retrieved item to top of the stack."""
-        val = self.pop(item)
+        val = super(LimitedSizeDict, self).__getitem__(item)
         self[item] = val
         return val
 
