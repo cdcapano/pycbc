@@ -187,10 +187,10 @@ class TimeDomainGaussian(BaseDataModel):
         t_gate_start = params.pop('t_gate_start', None)
         t_gate_end = params.pop('t_gate_end', None)
         # put gates in terms of time since start
-        if t_gate_start is not None:
-            t_gate_start -= self.analysis_start_time
-        if t_gate_end is not None:
-            t_gate_end -= self.analysis_start_time
+        #if t_gate_start is not None:
+        #    t_gate_start -= self.analysis_start_time
+        #if t_gate_end is not None:
+        #    t_gate_end -= self.analysis_start_time
         # generate the waveform
         try:
             wfs = self._waveform_generator.generate(**params)
@@ -202,18 +202,22 @@ class TimeDomainGaussian(BaseDataModel):
         lognl = 0.
         for det, h in wfs.items():
             d = self.data[det]
-            tflight = h.detector_tc - params['tc']
+            det_tc = h.detector_tc
+            tflight = det_tc - params['tc']
             h = h.time_slice(d.start_time, d.end_time)
             if t_gate_start is not None:
                 # figure out the time to start the gate in the detector frame
-                det_gate_start = float(t_gate_start)# + tflight)
-                gstart = int(det_gate_start/h.delta_t)
+                det_gate_start = t_gate_start + tflight
+                gstart = int(float(det_gate_start-h.start_time)/h.delta_t)
+                gstart = min(len(d), max(0, gstart))
             else:
                 gstart = None
             if t_gate_end is not None:
                 # figure out the time to stop the gate in the detector frame
-                det_gate_end = float(t_gate_end)# + tflight)
-                gstop = int(numpy.ceil(det_gate_end/h.delta_t))
+                det_gate_end = t_gate_end + tflight
+                gstop = int(numpy.ceil(float(det_gate_end-h.start_time)
+                            /h.delta_t))
+                gstop = min(len(d), max(0, gstop))
             else:
                 gstop = None
             if gstart is not None or gstop is not None:
@@ -222,6 +226,7 @@ class TimeDomainGaussian(BaseDataModel):
                 keep[slice(gstart, gstop)] = False
                 h = h[keep]
                 d = d[keep]
+                h.detector_tc = det_tc
                 # DELETE ME
                 h.sample_times = sample_times[keep]
                 d.sample_times = sample_times[keep]
