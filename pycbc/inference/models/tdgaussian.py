@@ -72,7 +72,8 @@ class TimeDomainGaussian(BaseDataModel):
                                  epoch=self.start_time)
                 rss[0] = 1.
             else:
-                rss = psd.astype(numpy.complex).to_timeseries()/2.
+                rss = psd.astype(numpy.complex).to_timeseries()
+                rss[1:] /= 2.
             Nrss = len(rss)
             N = len(self.data[det])
             if Nrss < N:
@@ -186,12 +187,6 @@ class TimeDomainGaussian(BaseDataModel):
         params = self.current_params.copy()
         t_gate_start = params.pop('t_gate_start', None)
         t_gate_end = params.pop('t_gate_end', None)
-        # put gates in terms of time since start
-        #if t_gate_start is not None:
-        #    t_gate_start -= self.analysis_start_time
-        #if t_gate_end is not None:
-        #    t_gate_end -= self.analysis_start_time
-        # generate the waveform
         try:
             wfs = self._waveform_generator.generate(**params)
         except NoWaveformError:
@@ -234,17 +229,16 @@ class TimeDomainGaussian(BaseDataModel):
             self.current_data[det] = d
             invcov = self.invcov(det, gstart, gstop)
             ovwh = numpy.matmul(invcov, h)
-            hd = numpy.matmul(d, ovwh)
-            hh = numpy.matmul(h, ovwh)
-            dd = self._lognl(d, det, invcov, gstart, gstop)
+            hd = 2*numpy.matmul(d, ovwh)
+            hh = 2*numpy.matmul(h, ovwh)
+            dd = 2*self._lognl(d, det, invcov, gstart, gstop)
             logdet = self.logdet(det, gstart, gstop)
             m = len(d)
             denom = 0.5*(logdet + m*LOG2PI)
             thislognl = -0.5*dd - denom
             logl += hd - 0.5*hh + thislognl
             lognl += thislognl
-            setattr(self._current_stats, '{}_optimal_snrsq'.format(det),
-                    0.5*hh)
+            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
             setattr(self._current_stats, '{}_lognl'.format(det), thislognl)
             setattr(self._current_stats, '{}_logdetcov'.format(det), logdet)
             setattr(self._current_stats, '{}_datalen'.format(det), m)
