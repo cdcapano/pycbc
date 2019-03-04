@@ -26,10 +26,13 @@ from pycbc.waveform import NoWaveformError
 from .base_data import BaseDataModel
 
 
+LOG2PI = numpy.log(2*numpy.pi)
+
+
 class TimeDomainGaussian(BaseDataModel):
     name = 'tdgaussian'
 
-    def __init__(self, variable_params, data, psds, static_params=None,
+    def __init__(self, variable_params, data, psds=None, static_params=None,
                  analysis_start_time=None, analysis_end_time=None,
                  **kwargs):
         # set up the boiler-plate attributes
@@ -43,10 +46,14 @@ class TimeDomainGaussian(BaseDataModel):
         dlens = numpy.array([len(d) for d in self.data.values()])
         if not all(dlens == dlens[0]):
             raise ValueError("all data must be of the same length")
+        self.start_time = list(self.data.values())[0].start_time
+        self.end_time = list(self.data.values())[0].start_time
         if analysis_start_time is None:
-            analysis_start_time = d.start_time
+            analysis_start_time = self.start_time
         if analysis_end_time is None:
-            analysis_end_time = d.end_time
+            analysis_end_time = self.end_time
+        self.analysis_start_time = analysis_start_time
+        self.analysis_end_time = analysis_end_time
         self.data = {det: d.time_slice(analysis_start_time, analysis_end_time)
                      for det, d in self.data.items()}
         # get the autocorrelation function from the psd
@@ -54,27 +61,31 @@ class TimeDomainGaussian(BaseDataModel):
         self.autocorrs = {}
         self._fullcov = {}
         self.current_waveforms = {}
+        self.current_data = {}
+        if psds is None:
+            psds = {det: None for det in self.data}
         for det, psd in psds.items():
-            rss = psd.astype(numpy.complex).to_timeseries()/2.
+            if psd is None:
+                # assume white: in this case, the response function is just
+                # a delta function
+                rss = TimeSeries(numpy.zeros(dlens), delta_t=data[det].delta_t,
+                                 epoch=self.start_time)
+                rss[0] = 1.
+            else:
+                rss = psd.astype(numpy.complex).to_timeseries()/2.
             Nrss = len(rss)
             N = len(self.data[det])
-            if False:#Nrss > N:
-                # throw out the middle bit
-                cropped = TimeSeries(numpy.zeros(N), delta_t=rss.delta_t,
-                                     epoch=rss.start_time)
-                cropped[:N/2] = rss[:N/2]
-                cropped[N/2:] = rss[Nrss-N/2:]
-                rss = cropped
-            elif Nrss < N:
+            if Nrss < N:
                 raise ValueError("1/psd.delta_f < data length")
             self.autocorrs[det] = rss
             # create the covariance matrix
             cov = numpy.zeros((N, N), dtype=float)
             rss = rss.numpy()
+            initshift = int((analysis_start_time-self.start_time)
+                            /data[det].delta_t)
+            rss = numpy.roll(rss, initshift)
             for ii in range(N):
-                #cov[ii,:] = rss
-                cov[ii, :N/2] = rss[:N/2]
-                cov[ii, N/2:] = rss[-N/2:]
+                cov[ii, :] = rss[initshift:N+initshift]
                 rss = numpy.roll(rss, 1)
             self._fullcov[det] = cov
         self._cov = {det: LimitedSizeDict(size_limit=self.cachesize)
@@ -115,11 +126,12 @@ class TimeDomainGaussian(BaseDataModel):
             return self._cov[detector][gstart, gstop]
         except KeyError:
             pass
+        cov = self._fullcov[detector]
         if gstart is not None or gstop is not None:
-            if gstart and not gstop:
+            if gstart is not None and gstop is None:
                 # easy
                 cov = cov[:gstart, :gstart]
-            elif gstop and not gstart:
+            elif gstart is None and gstop is not None:
                 # also easy
                 cov = cov[gstop:, gstop:]
             else:
@@ -162,11 +174,10 @@ class TimeDomainGaussian(BaseDataModel):
         self._invcov[detector][gstart, gstop] = invcov
         return invcov
 
-    def _lognl(self, detector, invcov, gstart=None, gstop=None):
+    def _lognl(self, data, detector, invcov, gstart=None, gstop=None):
         try:
             return self._dd[detector][gstart, gstop]
         except KeyError:
-            data = self.data[detector]
             dd = numpy.matmul(data, numpy.matmul(invcov, data))
             self._dd[detector, gstart, gstop] = dd
             return dd
@@ -177,44 +188,53 @@ class TimeDomainGaussian(BaseDataModel):
         t_gate_end = params.pop('t_gate_end', None)
         # put gates in terms of time since start
         if t_gate_start is not None:
-            t_gate_start -= self.epoch
+            t_gate_start -= self.analysis_start_time
         if t_gate_end is not None:
-            t_gate_end -= self.epoch
+            t_gate_end -= self.analysis_start_time
         # generate the waveform
         try:
             wfs = self._waveform_generator.generate(**params)
         except NoWaveformError:
             self.current_waveforms.clear()
+            self.current_data.clear()
             return 0.
         logl = 0.
         lognl = 0.
         for det, h in wfs.items():
             d = self.data[det]
+            tflight = h.detector_tc - params['tc']
             h = h.time_slice(d.start_time, d.end_time)
-            self.current_waveforms[det] = h
             if t_gate_start is not None:
                 # figure out the time to start the gate in the detector frame
-                det_gate_start = t_gate_start + (h.det_tc - h.start_time )
+                det_gate_start = float(t_gate_start)# + tflight)
                 gstart = int(det_gate_start/h.delta_t)
             else:
                 gstart = None
             if t_gate_end is not None:
                 # figure out the time to stop the gate in the detector frame
-                det_gate_end = t_gate_end + (h.det_tc - h.start_time )
+                det_gate_end = float(t_gate_end)# + tflight)
                 gstop = int(numpy.ceil(det_gate_end/h.delta_t))
             else:
                 gstop = None
-            keep = slice(gstart, gstop)
-            h = h[keep]
-            d = d[keep]
+            if gstart is not None or gstop is not None:
+                sample_times = h.sample_times
+                keep = numpy.ones(len(h), dtype=bool)
+                keep[slice(gstart, gstop)] = False
+                h = h[keep]
+                d = d[keep]
+                # DELETE ME
+                h.sample_times = sample_times[keep]
+                d.sample_times = sample_times[keep]
+            self.current_waveforms[det] = h
+            self.current_data[det] = d
             invcov = self.invcov(det, gstart, gstop)
             ovwh = numpy.matmul(invcov, h)
             hd = numpy.matmul(d, ovwh)
             hh = numpy.matmul(h, ovwh)
-            dd = self._lognl(det, invcov, gstart, gstop)
+            dd = self._lognl(d, det, invcov, gstart, gstop)
             logdet = self.logdet(det, gstart, gstop)
             m = len(d)
-            denom = 0.5*(logdet + m*numpy.log(2*numpy.pi))
+            denom = 0.5*(logdet + m*LOG2PI)
             thislognl = -0.5*dd - denom
             logl += hd - 0.5*hh + thislognl
             lognl += thislognl
