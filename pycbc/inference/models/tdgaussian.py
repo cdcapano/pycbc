@@ -76,7 +76,6 @@ class TimeDomainGaussian(BaseDataModel):
                 rss[0] = 1.
             else:
                 rss = psd.astype(numpy.complex).to_timeseries()
-                #rss[1:] /= 2.
                 rss /= 2 * delta_t
             Nrss = len(rss)
             N = len(self.data[det])
@@ -210,6 +209,46 @@ class TimeDomainGaussian(BaseDataModel):
             self._dd[detector, gstart, gstop] = dd
             return dd
 
+    @staticmethod
+    def _shift_and_slice(data, t_gate_start=None, t_gate_end=None,
+                         keepidx=None):
+        """Shifts the data by sub sample, and excises the exclusion region."""
+        # convert times to indices
+        if t_gate_start is not None:
+            gstart = float(t_gate_start-data.start_time)/data.delta_t
+            gstart = min(len(data), max(0, gstart))
+        else:
+            gstart = None
+        if t_gate_end is not None:
+            gstop = float(t_gate_end-data.start_time)/data.delta_t
+            gstop = min(len(data), max(0, gstop))
+        else:
+            gstop = None
+        # figure out if the gate is on an integer time or not; if not, shift
+        # the data so that it is
+        if gstart is not None:
+            remainder = gstart % 1
+            gstart = int(gstart)
+            if remainder:
+                # shift the data backward
+                data = data.cyclic_time_shift(-remainder*data.delta_t)
+        if gstop is not None:
+            remainder = gstop % 1 
+            gstop = int(numpy.ceil(gstop))
+            if remainder:
+                # shift the data after the gap forward
+                shiftd = data.cyclic_time_shift(remainder*data.delta_t)
+                data[gstop:] = shiftd[gstop:]
+        # slice the data
+        if gstart is not None or gstop is not None:
+            sample_times = data.sample_times  # XXX: delete me
+            if keepidx is None:
+                keepidx = numpy.ones(len(data), dtype=bool)
+                keepidx[slice(gstart, gstop)] = False
+            data = data[keepidx]
+            data.sample_times = sample_times[keepidx]  # XXX: delete me
+        return data, gstart, gstop, keepidx
+
     def _loglikelihood(self):
         params = self.current_params.copy()
         t_gate_start = params.pop('t_gate_start', None)
@@ -227,31 +266,18 @@ class TimeDomainGaussian(BaseDataModel):
             det_tc = h.detector_tc
             tflight = det_tc - params['tc']
             h = h.time_slice(d.start_time, d.end_time)
-            if t_gate_start is not None:
-                # figure out the time to start the gate in the detector frame
-                det_gate_start = t_gate_start + tflight
-                gstart = int(float(det_gate_start-h.start_time)/h.delta_t)
-                gstart = min(len(d), max(0, gstart))
-            else:
-                gstart = None
-            if t_gate_end is not None:
-                # figure out the time to stop the gate in the detector frame
-                det_gate_end = t_gate_end + tflight
-                gstop = int(numpy.ceil(float(det_gate_end-h.start_time)
-                            /h.delta_t))
-                gstop = min(len(d), max(0, gstop))
-            else:
-                gstop = None
-            if gstart is not None or gstop is not None:
-                sample_times = h.sample_times
-                keep = numpy.ones(len(h), dtype=bool)
-                keep[slice(gstart, gstop)] = False
-                h = h[keep]
-                d = d[keep]
-                h.detector_tc = det_tc
-                # DELETE ME
-                h.sample_times = sample_times[keep]
-                d.sample_times = sample_times[keep]
+            # figure out the time to start/stop the gate in the detector frame
+            det_gate_start = t_gate_start
+            if det_gate_start is not None:
+                det_gate_start += tflight
+            det_gate_end = t_gate_end
+            if det_gate_end is not None:
+                det_gate_end += tflight
+            d, gstart, gstop, keep = self._shift_and_slice(d, det_gate_start,
+                                                           det_gate_end)
+            h, _, _, _ = self._shift_and_slice(h, det_gate_start, det_gate_end,
+                                               keepidx=keep)
+            h.detector_tc = det_tc
             self.current_waveforms[det] = h
             self.current_data[det] = d
             invcov = self.invcov(det, gstart, gstop)
