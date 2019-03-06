@@ -17,8 +17,9 @@
 """
 
 import numpy
+import logging
 
-from pycbc.types import TimeSeries
+from pycbc.types import (TimeSeries, FrequencySeries)
 from pycbc.waveform import generator
 from pycbc.opt import LimitedSizeDict
 from pycbc.waveform import NoWaveformError
@@ -47,7 +48,7 @@ class TimeDomainGaussian(BaseDataModel):
         if not all(dlens == dlens[0]):
             raise ValueError("all data must be of the same length")
         self.start_time = list(self.data.values())[0].start_time
-        self.end_time = list(self.data.values())[0].start_time
+        self.end_time = list(self.data.values())[0].end_time
         if analysis_start_time is None:
             analysis_start_time = self.start_time
         if analysis_end_time is None:
@@ -60,35 +61,44 @@ class TimeDomainGaussian(BaseDataModel):
         self.cachesize = 10
         self.autocorrs = {}
         self._fullcov = {}
+        self._fullinvcov = {}
         self.current_waveforms = {}
         self.current_data = {}
         if psds is None:
             psds = {det: None for det in self.data}
         for det, psd in psds.items():
+            delta_t = data[det].delta_t
             if psd is None:
                 # assume white: in this case, the response function is just
                 # a delta function
-                rss = TimeSeries(numpy.zeros(dlens), delta_t=data[det].delta_t,
+                rss = TimeSeries(numpy.zeros(dlens), delta_t=delta_t,
                                  epoch=self.start_time)
                 rss[0] = 1.
             else:
                 rss = psd.astype(numpy.complex).to_timeseries()
-                rss[1:] /= 2.
+                #rss[1:] /= 2.
+                rss /= 2 * delta_t
             Nrss = len(rss)
             N = len(self.data[det])
             if Nrss < N:
                 raise ValueError("1/psd.delta_f < data length")
             self.autocorrs[det] = rss
             # create the covariance matrix
-            cov = numpy.zeros((N, N), dtype=float)
             rss = rss.numpy()
             initshift = int((analysis_start_time-self.start_time)
                             /data[det].delta_t)
-            rss = numpy.roll(rss, initshift)
-            for ii in range(N):
-                cov[ii, :] = rss[initshift:N+initshift]
-                rss = numpy.roll(rss, 1)
-            self._fullcov[det] = cov
+            self._fullcov[det] = self._create_matrix(rss, N, initshift)
+            # create the inverse covariance matrix
+            invpsd = numpy.zeros(len(psd), dtype=float)
+            nppsd = psd.numpy()
+            idx = nppsd != 0
+            invpsd[idx] = 1./(nppsd[idx])
+            invpsd = FrequencySeries(invpsd, delta_f=psd.delta_f,
+                                     epoch=data[det].start_time)
+            invrss = 2 * delta_t**2 * \
+                invpsd.astype(numpy.complex).to_timeseries()
+            self._fullinvcov[det] = self._create_matrix(invrss, N, initshift)
+
         self._cov = {det: LimitedSizeDict(size_limit=self.cachesize)
                      for det in data}
         self._invcov = {det: LimitedSizeDict(size_limit=self.cachesize)
@@ -107,6 +117,36 @@ class TimeDomainGaussian(BaseDataModel):
                ['{}_optimal_snrsq'.format(det) for det in self._data] + \
                ['{}_logdetcov'.format(det) for det in self._data] + \
                ['{}_datalen'.format(det) for det in self._data] 
+
+    @staticmethod
+    def _create_matrix(timeseries, N, initshift):
+        """Creates a square matrix from the given timeseries."""
+        matrix = numpy.zeros((N, N), dtype=float)
+        timeseries = numpy.roll(timeseries, initshift)
+        for ii in range(N):
+            matrix[ii, :] = timeseries[initshift:N+initshift]
+            timeseries = numpy.roll(timeseries, 1)
+        return matrix
+
+    @staticmethod
+    def _slice_matrix(matrix, gstart=None, gstop=None):
+        """Applies a gap to the given square matrix."""
+        if gstart is not None or gstop is not None:
+            if gstart is not None and gstop is None:
+                # easy
+                matrix = matrix[:gstart, :gstart]
+            elif gstart is None and gstop is not None:
+                # also easy
+                matrix = matrix[gstop:, gstop:]
+            else:
+                # have to rebuild
+                q1 = matrix[:gstart, :gstart]
+                q2 = matrix[:gstart, gstop:]
+                q3 = matrix[gstop:, :gstart]
+                q4 = matrix[gstop:, gstop:]
+                # stack
+                matrix = numpy.block([[q1, q2], [q3, q4]])
+        return matrix
 
     def cov(self, detector, gstart=None, gstop=None):
         """Returns the covariance matrix.
@@ -127,22 +167,7 @@ class TimeDomainGaussian(BaseDataModel):
             return self._cov[detector][gstart, gstop]
         except KeyError:
             pass
-        cov = self._fullcov[detector]
-        if gstart is not None or gstop is not None:
-            if gstart is not None and gstop is None:
-                # easy
-                cov = cov[:gstart, :gstart]
-            elif gstart is None and gstop is not None:
-                # also easy
-                cov = cov[gstop:, gstop:]
-            else:
-                # have to rebuild
-                q1 = cov[:gstart, :gstart]
-                q2 = cov[:gstart, gstop:]
-                q3 = cov[gstop:, :gstart]
-                q4 = cov[gstop:, gstop:]
-                # stack
-                cov = numpy.block([[q1, q2], [q3, q4]])
+        cov = self._slice_matrix(self._fullcov[detector], gstart, gstop)
         # cache for next time
         self._cov[detector][gstart, gstop] = cov
         return cov
@@ -158,19 +183,21 @@ class TimeDomainGaussian(BaseDataModel):
         if sign == 0:
             raise ValueError("singular covariance matrix")
         elif sign == -1:
-            raise ValueError("determinant of covariance matrix is negative")
+            logging.warn("determinant of covariance matrix may be negative")
+            #raise ValueError("determinant of covariance matrix is negative")
         self._logdet[detector][gstart, gstop] = det
         return det
 
     def invcov(self, detector, gstart=None, gstop=None):
         """Inverts the covariance matrix."""
+        if gstart is None and gstop is None:
+            # just return the full covariance matrix
+            return self._fullinvcov[detector]
         try:
-            # try to return from cache
             return self._invcov[detector][gstart, gstop]
         except KeyError:
             pass
-        cov = self.cov(detector, gstart, gstop)
-        invcov = numpy.linalg.inv(cov)
+        invcov = self._slice_matrix(self._fullinvcov[detector], gstart, gstop)
         # cache for next time
         self._invcov[detector][gstart, gstop] = invcov
         return invcov
@@ -229,18 +256,17 @@ class TimeDomainGaussian(BaseDataModel):
             self.current_data[det] = d
             invcov = self.invcov(det, gstart, gstop)
             ovwh = numpy.matmul(invcov, h)
-            hd = 2*numpy.matmul(d, ovwh)
-            hh = 2*numpy.matmul(h, ovwh)
-            dd = 2*self._lognl(d, det, invcov, gstart, gstop)
+            hd = numpy.matmul(d, ovwh)
+            hh = numpy.matmul(h, ovwh)
+            dd = self._lognl(d, det, invcov, gstart, gstop)
             logdet = self.logdet(det, gstart, gstop)
             m = len(d)
             denom = 0.5*(logdet + m*LOG2PI)
             thislognl = -0.5*dd - denom
-            loglr = hd - 0.5*hh
-            logl += loglr + thislognl
+            logl += hd - 0.5*hh + thislognl
             lognl += thislognl
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det),
-                    2*loglr)
+                    hh)
             setattr(self._current_stats, '{}_lognl'.format(det), thislognl)
             setattr(self._current_stats, '{}_logdetcov'.format(det), logdet)
             setattr(self._current_stats, '{}_datalen'.format(det), m)
@@ -249,6 +275,7 @@ class TimeDomainGaussian(BaseDataModel):
 
     def _loglr(self):
         return self.loglikelihood - self._current_stats.lognl
+
 
 #
 # =============================================================================
