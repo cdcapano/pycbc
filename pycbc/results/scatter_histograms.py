@@ -284,10 +284,11 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         ct = ax.contour(X, Y, Z, s, colors=contour_color, linewidths=lw,
                         zorder=3)
         # label contours
-        lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
-        fmt = dict(zip(ct.levels, lbls))
-        fs = 12
-        ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
+        if False:
+            lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
+            fmt = dict(zip(ct.levels, lbls))
+            fs = 12
+            ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
 
     return fig, ax
 
@@ -385,39 +386,36 @@ def create_marginalized_hist(ax, values, label, percentiles=None,
             values_med, negerror, plus_error=poserror))
         if rotated:
             ax.yaxis.set_label_position("right")
-
             # sets colored title for marginal histogram
             set_marginal_histogram_title(ax, fmt, color,
                                          label=label, rotated=rotated)
-
-            # Remove x-ticks
-            ax.set_xticks([])
-            # turn off x-labels
-            ax.set_xlabel('')
-            # set limits
-            ymin, ymax = ax.get_ylim()
-            if plot_min is not None:
-                ymin = plot_min
-            if plot_max is not None:
-                ymax = plot_max
-            ax.set_ylim(ymin, ymax)
-
         else:
-
             # sets colored title for marginal histogram
             set_marginal_histogram_title(ax, fmt, color, label=label)
-
-            # Remove y-ticks
-            ax.set_yticks([])
-            # turn off y-label
-            ax.set_ylabel('')
-            # set limits
-            xmin, xmax = ax.get_xlim()
-            if plot_min is not None:
-                xmin = plot_min
-            if plot_max is not None:
-                xmax = plot_max
-            ax.set_xlim(xmin, xmax)
+    if rotated:
+        # Remove x-ticks
+        ax.set_xticks([])
+        # turn off x-labels
+        ax.set_xlabel('')
+        # set limits
+        ymin, ymax = ax.get_ylim()
+        if plot_min is not None:
+            ymin = plot_min
+        if plot_max is not None:
+            ymax = plot_max
+        ax.set_ylim(ymin, ymax)
+    else:
+        # Remove y-ticks
+        ax.set_yticks([])
+        # turn off y-label
+        ax.set_ylabel('')
+        # set limits
+        xmin, xmax = ax.get_xlim()
+        if plot_min is not None:
+            xmin = plot_min
+        if plot_max is not None:
+            xmax = plot_max
+        ax.set_xlim(xmin, xmax)
 
 
 def set_marginal_histogram_title(ax, fmt, color, label=None, rotated=False):
@@ -477,7 +475,7 @@ def set_marginal_histogram_title(ax, fmt, color, label=None, rotated=False):
 
         # add new text box to list
         tbox1 = offsetbox.TextArea(
-                   " {}".format(fmt),
+                   " {} = {}".format(label, fmt),
                    textprops=dict(color=color, size=15, rotation=rotation,
                                   ha='left', va='bottom'))
         ax.title_boxes = ax.title_boxes + [tbox1]
@@ -506,6 +504,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                          density_cmap='viridis',
                          contour_color=None, hist_color='black',
                          line_color=None, fill_color='gray',
+                         exclude_region=None,
                          use_kombine=False, fig=None, axis_dict=None):
     """Generate a figure with several plots and histograms.
 
@@ -702,10 +701,6 @@ def create_multidim_plot(parameters, samples, labels=None,
             # Exclude out-of-bound regions
             # this is a bit kludgy; should probably figure out a better
             # solution to eventually allow for more than just m_p m_s
-            if (px == 'm_p' and py == 'm_s') or (py == 'm_p' and px == 'm_s'):
-                exclude_region = 'm_s > m_p'
-            else:
-                exclude_region = None
             create_density_plot(
                 px, py, samples, plot_density=plot_density,
                 plot_contours=plot_contours, cmap=density_cmap,
@@ -740,8 +735,8 @@ def create_multidim_plot(parameters, samples, labels=None,
     if plot_scatter and show_colorbar:
         # compute font size based on fig size
         scale_fac = get_scale_fac(fig)
-        fig.subplots_adjust(right=0.85, wspace=0.03)
-        cbar_ax = fig.add_axes([0.9, 0.1, 0.03, 0.8])
+        fig.subplots_adjust(left=0.08, right=0.83, wspace=0.03)
+        cbar_ax = fig.add_axes([0.86, 0.1, 0.03, 0.8])
         cb = fig.colorbar(plt, cax=cbar_ax)
         if cbar_label is not None:
             cb.set_label(cbar_label, fontsize=12*scale_fac)
