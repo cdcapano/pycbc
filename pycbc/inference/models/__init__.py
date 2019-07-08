@@ -26,7 +26,7 @@ from .gaussian_noise import GaussianNoise
 from .marginalized_gaussian_noise import (MarginalizedPhaseGaussianNoise,
                                           MarginalizedGaussianNoise)
 from .single_template import SingleTemplate
-from .tdgaussian import TimeDomainGaussian
+from .gated_gaussian import GatedGaussian
 
 
 # Used to manage a model instance across multiple cores or MPI
@@ -185,5 +185,5 @@ models = {_cls.name: _cls for _cls in (
     MarginalizedPhaseGaussianNoise,
     MarginalizedGaussianNoise,
     SingleTemplate,
-    TimeDomainGaussian,
+    GatedGaussian,
 )}

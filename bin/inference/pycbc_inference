@@ -135,7 +135,7 @@ if stilde_dict:
     model_args['data'] = stilde_dict
     model_args['psds'] = psd_dict
 # FIXME: remove this when move data options to config file
-elif cp.get('model', 'name') == 'tdgaussian':
+elif cp.get('model', 'name') == 'gated_gaussian':
     model_args['data'] = strain_dict
     model_args['psds'] = psd_dict
 
