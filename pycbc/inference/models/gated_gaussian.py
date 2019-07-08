@@ -30,14 +30,15 @@ from .base_data import BaseDataModel
 LOG2PI = numpy.log(2*numpy.pi)
 
 
-class TimeDomainGaussian(BaseDataModel):
-    name = 'tdgaussian'
+class GatedGaussian(BaseDataModel):
+    name = 'gated_gaussian'
 
-    def __init__(self, variable_params, data, psds=None, static_params=None,
+    def __init__(self, variable_params, data, low_frequency_cutoff, psds=None,
+                 static_params=None,
                  analysis_start_time=None, analysis_end_time=None,
                  **kwargs):
         # set up the boiler-plate attributes
-        super(TimeDomainGaussian, self).__init__(
+        super(GatedGaussian, self).__init__(
             variable_params, data, static_params=static_params, **kwargs)
         # create the waveform generator
         self._waveform_generator = create_waveform_generator(
@@ -66,17 +67,25 @@ class TimeDomainGaussian(BaseDataModel):
         self.current_data = {}
         if psds is None:
             psds = {det: None for det in self.data}
+        self._psds = {}
         for det, psd in psds.items():
             delta_t = data[det].delta_t
             if psd is None:
                 # assume white: in this case, the response function is just
                 # a delta function
-                rss = TimeSeries(numpy.zeros(dlens), delta_t=delta_t,
+                rss = TimeSeries(numpy.zeros(dlens[0]), delta_t=delta_t,
                                  epoch=self.start_time)
-                rss[0] = 1.
+                rss[0] = 2*delta_t
             else:
+                # stick psd outside of low frequency range
+                kmin = int(low_frequency_cutoff/psd.delta_f)
+                maxpsd = psd[kmin:].max()
+                psd[:kmin] = maxpsd #2*delta_t
+                # set nyquist to the same
+                psd[len(psd)-1] = maxpsd
+                self._psds[det] = psd
                 rss = psd.astype(numpy.complex).to_timeseries()
-                rss /= 2 * delta_t
+                rss /= 2.
             Nrss = len(rss)
             N = len(self.data[det])
             if Nrss < N:
@@ -89,15 +98,20 @@ class TimeDomainGaussian(BaseDataModel):
             self._fullcov[det] = self._create_matrix(rss, N, initshift)
             # create the inverse covariance matrix
             invpsd = numpy.zeros(len(psd), dtype=float)
-            nppsd = psd.numpy()
-            idx = nppsd != 0
-            invpsd[idx] = 1./(nppsd[idx])
-            invpsd = FrequencySeries(invpsd, delta_f=psd.delta_f,
-                                     epoch=data[det].start_time)
-            invrss = 2 * delta_t**2 * \
-                invpsd.astype(numpy.complex).to_timeseries()
-            self._fullinvcov[det] = self._create_matrix(invrss, N, initshift)
-
+            #nppsd = psd.numpy()
+            #idx = nppsd != 0
+            #invpsd[idx] = 1./(nppsd[idx])
+            #invpsd = FrequencySeries(invpsd, delta_f=psd.delta_f,
+            #                         epoch=data[det].start_time)
+            #invpsd = FrequencySeries(numpy.zeros(N), delta_f=psd.delta_f,
+            #                         epoch=data[det].start_time)
+            #invpsd = 1./psd
+            #indx = numpy.zeros((N, N))
+            #colidx, rowidx = numpy.meshgrid(numpy.arange(N), numpy.arange(N))
+            #cosarg = 2*numpy.pi*(rowidx-colidx)/float(N)
+            #invrss = 2 * delta_t**2 * \
+            #    invpsd.astype(numpy.complex).to_timeseries()
+            #self._fullinvcov[det] = self._create_matrix(invrss, N, initshift)
         self._cov = {det: LimitedSizeDict(size_limit=self.cachesize)
                      for det in data}
         self._invcov = {det: LimitedSizeDict(size_limit=self.cachesize)
@@ -189,17 +203,22 @@ class TimeDomainGaussian(BaseDataModel):
 
     def invcov(self, detector, gstart=None, gstop=None):
         """Inverts the covariance matrix."""
-        if gstart is None and gstop is None:
-            # just return the full covariance matrix
-            return self._fullinvcov[detector]
+        #if gstart is None and gstop is None:
+        #    # just return the full covariance matrix
+        #    return self._fullinvcov[detector]
         try:
             return self._invcov[detector][gstart, gstop]
         except KeyError:
             pass
-        invcov = self._slice_matrix(self._fullinvcov[detector], gstart, gstop)
-        # cache for next time
+        # sliced covariance matrix
+        cov = self.cov(detector, gstart, gstop)
+        invcov = numpy.linalg.inv(cov)
         self._invcov[detector][gstart, gstop] = invcov
         return invcov
+        #invcov = self._slice_matrix(self._fullinvcov[detector], gstart, gstop)
+        # cache for next time
+        #self._invcov[detector][gstart, gstop] = invcov
+        #return invcov
 
     def _lognl(self, data, detector, invcov, gstart=None, gstop=None):
         try:
@@ -227,13 +246,13 @@ class TimeDomainGaussian(BaseDataModel):
         # figure out if the gate is on an integer time or not; if not, shift
         # the data so that it is
         if gstart is not None:
-            remainder = gstart % 1
+            remainder = 0 # gstart % 1 # FIXME: not doing shifts for now
             gstart = int(gstart)
             if remainder:
                 # shift the data backward
                 data = data.cyclic_time_shift(-remainder*data.delta_t)
         if gstop is not None:
-            remainder = gstop % 1 
+            remainder = 0 # gstop % 1  FIXME: not doing shifts for now
             gstop = int(numpy.ceil(gstop))
             if remainder:
                 # shift the data after the gap forward
