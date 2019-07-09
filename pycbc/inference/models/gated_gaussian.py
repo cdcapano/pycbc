@@ -284,7 +284,7 @@ class GatedGaussian(BaseDataModel):
             d = self.data[det]
             det_tc = h.detector_tc
             tflight = det_tc - params['tc']
-            h = h.time_slice(d.start_time, d.end_time)
+            h = h.time_slice(h.start_time, h.end_time)
             # figure out the time to start/stop the gate in the detector frame
             det_gate_start = t_gate_start
             if det_gate_start is not None:
