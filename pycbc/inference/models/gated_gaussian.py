@@ -214,7 +214,12 @@ class GatedGaussian(BaseDataModel):
         # sliced covariance matrix
         cov = self.cov(detector, gstart, gstop)
         invcov = numpy.linalg.inv(cov)
+        #print("detector:", detector)
+        #print("gstart, gstop is: {}, {}".format(gstart, gstop))
+        #print("dict keys are:", list(self._invcov[detector].keys()))
+        #logging.info("calculating inverse")
         self._invcov[detector][gstart, gstop] = invcov
+        #logging.info("done")
         return invcov
         #invcov = self._slice_matrix(self._fullinvcov[detector], gstart, gstop)
         # cache for next time
@@ -274,7 +279,9 @@ class GatedGaussian(BaseDataModel):
         t_gate_start = params.pop('t_gate_start', None)
         t_gate_end = params.pop('t_gate_end', None)
         try:
+            #logging.info("generating waveform")
             wfs = self._waveform_generator.generate(**params)
+            #logging.info("done generating waveform")
         except NoWaveformError:
             self.current_waveforms.clear()
             self.current_data.clear()
@@ -293,14 +300,18 @@ class GatedGaussian(BaseDataModel):
             det_gate_end = t_gate_end
             if det_gate_end is not None:
                 det_gate_end += tflight
+            #logging.info("shifting and slicing data")
             d, gstart, gstop, keep = self._shift_and_slice(d, det_gate_start,
                                                            det_gate_end)
+            #logging.info("shifting and slicing waveform")
             h, _, _, _ = self._shift_and_slice(h, det_gate_start, det_gate_end,
                                                keepidx=keep)
             h.detector_tc = det_tc
             self.current_waveforms[det] = h
             self.current_data[det] = d
+            #logging.info("getting inverse cov")
             invcov = self.invcov(det, gstart, gstop)
+            #logging.info("doing matrix math")
             ovwh = numpy.matmul(invcov, h)
             hd = numpy.matmul(d, ovwh)
             hh = numpy.matmul(h, ovwh)

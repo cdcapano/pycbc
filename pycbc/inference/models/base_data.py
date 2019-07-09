@@ -30,6 +30,8 @@ from abc import (ABCMeta, abstractmethod)
 
 from six import add_metaclass
 
+from pycbc import types
+
 from .base import BaseModel
 
 
@@ -156,4 +158,7 @@ class BaseDataModel(BaseModel):
             The inference file to write to.
         """
         super(BaseDataModel, self).write_metadata(fp)
-        fp.write_stilde(self.data)
+        if isinstance(list(self.data.values())[0], types.TimeSeries):
+            fp.write_strain(self.data)
+        else:
+            fp.write_stilde(self.data)

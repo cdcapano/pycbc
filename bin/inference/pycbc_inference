@@ -125,24 +125,28 @@ fft.from_cli(opts)
 # Set up model arguments
 model_args = {}
 
+# read configuration file
+cp = configuration.WorkflowConfigParser.from_cli(opts)
+
 # get the data and psd
 strain_dict, stilde_dict, psd_dict = option_utils.data_from_cli(opts)
-if stilde_dict:
+# FIXME: remove this when move data options to config file
+if cp.get('model', 'name') == 'gated_gaussian':
+    if not opts.low_frequency_cutoff:
+        raise ValueError("must provide --low-frequency-cutoff for PSD "
+                         "estimation")
+    model_args['data'] = strain_dict
+    model_args['psds'] = psd_dict
+elif stilde_dict:
     # make sure a low frequency cutoff was provided
     if not opts.low_frequency_cutoff:
         raise ValueError("must provide --low-frequency-cutoff for PSD "
                          "estimation")
     model_args['data'] = stilde_dict
     model_args['psds'] = psd_dict
-# FIXME: remove this when move data options to config file
-elif cp.get('model', 'name') == 'gated_gaussian':
-    model_args['data'] = strain_dict
-    model_args['psds'] = psd_dict
 
 with ctx:
 
-    # read configuration file
-    cp = configuration.WorkflowConfigParser.from_cli(opts)
 
     # create an empty checkpoint file, if needed
     condor_ckpt = cp.has_option('sampler', 'checkpoint-signal')
