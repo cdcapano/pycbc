@@ -37,6 +37,7 @@ class GatedGaussian(BaseDataModel):
                  static_params=None,
                  analysis_start_time=None, analysis_end_time=None,
                  **kwargs):
+        low_frequency_cutoff = float(low_frequency_cutoff)
         # set up the boiler-plate attributes
         super(GatedGaussian, self).__init__(
             variable_params, data, static_params=static_params, **kwargs)
