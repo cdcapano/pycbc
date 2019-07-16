@@ -113,13 +113,13 @@ class GatedGaussian(BaseDataModel):
             #invrss = 2 * delta_t**2 * \
             #    invpsd.astype(numpy.complex).to_timeseries()
             #self._fullinvcov[det] = self._create_matrix(invrss, N, initshift)
-        self._cov = {det: LimitedSizeDict(size_limit=self.cachesize)
+        self._cov = {det: {}
                      for det in data}
-        self._invcov = {det: LimitedSizeDict(size_limit=self.cachesize)
+        self._invcov = {det: {}
                         for det in data}
-        self._logdet = {det: LimitedSizeDict(size_limit=self.cachesize)
+        self._logdet = {det: {}
                              for det in data}
-        self._dd = {det: LimitedSizeDict(size_limit=self.cachesize)
+        self._dd = {det: {}
                     for det in data}
 
     @property
@@ -180,6 +180,7 @@ class GatedGaussian(BaseDataModel):
         try:
             return self._cov[detector][gstart, gstop]
         except KeyError:
+            logging.info("sliced cov not found; calculating")
             pass
         cov = self._slice_matrix(self._fullcov[detector], gstart, gstop)
         # cache for next time
@@ -191,6 +192,7 @@ class GatedGaussian(BaseDataModel):
         try:
             return self._logdet[detector][gstart, gstop]
         except KeyError:
+            logging.info("determinant not found; calculating")
             pass
         cov = self.cov(detector, gstart=gstart, gstop=gstop)
         sign, det = numpy.linalg.slogdet(cov)
@@ -210,6 +212,7 @@ class GatedGaussian(BaseDataModel):
         try:
             return self._invcov[detector][gstart, gstop]
         except KeyError:
+            logging.info("invcov not found; calculating")
             pass
         # sliced covariance matrix
         cov = self.cov(detector, gstart, gstop)
@@ -230,8 +233,11 @@ class GatedGaussian(BaseDataModel):
         try:
             return self._dd[detector][gstart, gstop]
         except KeyError:
+            print detector, gstart, gstop
+            print self._dd[detector].keys()
+            logging.info("lognl not found; calculating")
             dd = numpy.matmul(data, numpy.matmul(invcov, data))
-            self._dd[detector, gstart, gstop] = dd
+            self._dd[detector][gstart, gstop] = dd
             return dd
 
     @staticmethod
@@ -333,6 +339,26 @@ class GatedGaussian(BaseDataModel):
     def _loglr(self):
         return self.loglikelihood - self._current_stats.lognl
 
+    def write_metadata(self, fp):
+        """Adds writing the psds and lognl, since it's a constant.
+
+        The lognl is written to the sample group's ``attrs``.
+
+        Parameters
+        ----------
+        fp : pycbc.inference.io.BaseInferenceFile instance
+            The inference file to write to.
+        """
+        super(GatedGaussian, self).write_metadata(fp)
+        if self._psds is not None:
+            fp.write_psd(self._psds)
+        #try:
+        #    attrs = fp[fp.samples_group].attrs
+        #except KeyError:
+        #    # group doesn't exist, create it
+        #    fp.create_group(fp.samples_group)
+        #    attrs = fp[fp.samples_group].attrs
+        #attrs['lognl'] = self.lognl
 
 #
 # =============================================================================
