@@ -163,6 +163,7 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
                         plot_contours=True, percentiles=None, cmap='viridis',
                         contour_color=None, xmin=None, xmax=None,
                         ymin=None, ymax=None, exclude_region=None,
+                        exclude_function=None,
                         fig=None, ax=None, use_kombine=False):
     """Computes and plots posterior density and confidence intervals using the
     given samples.
@@ -245,9 +246,19 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
     if ymax is None:
         ymax = ysamples.max()
     npts = 100
+    xlog = ax.get_xaxis().get_scale() == 'log'
+    ylog = ax.get_yaxis().get_scale() == 'log'
+    if xlog:
+        xmin, xmax = numpy.log10([xmin, xmax])
+    if ylog:
+        ymin, ymax = numpy.log10([ymin, ymax])
     X, Y = numpy.mgrid[
         xmin:xmax:complex(0, npts),  # pylint:disable=invalid-slice-index
         ymin:ymax:complex(0, npts)]  # pylint:disable=invalid-slice-index
+    if xlog:
+        X = 10**X
+    if ylog:
+        Y = 10**Y
     pos = numpy.vstack([X.ravel(), Y.ravel()])
     if use_kombine:
         Z = numpy.exp(kde(pos.T).reshape(X.shape))
@@ -260,7 +271,23 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         # convert X,Y to a single FieldArray so we can use it's ability to
         # evaluate strings
         farr = FieldArray.from_kwargs(**{xparam: X, yparam: Y})
+        mask = numpy.zeros_like(Z, dtype=bool)
         Z[farr[exclude_region]] = 0.
+    if exclude_function is not None:
+        mask = numpy.zeros_like(Z, dtype=bool)
+        for xi, x in enumerate(X[:,0]):
+            y = exclude_function(x)
+            idx = numpy.where(Y[xi, :] < y)[0]
+            for yi in idx:
+                mask[xi, yi] = True
+        Z = numpy.ma.array(Z, mask=mask)
+            # smoothing: use the above and right value to average
+            #yi = idx.max()
+            #try:
+            #    Z[xi, yi] = (Z[xi,yi+1] + Z[xi+1,yi])/2.
+            #except IndexError:
+            #    pass
+            
 
     if plot_density:
         ax.imshow(numpy.rot90(Z), extent=[xmin, xmax, ymin, ymax],
@@ -298,7 +325,7 @@ def create_marginalized_hist(ax, values, label, percentiles=None,
                              linestyle='-',
                              title=True, expected_value=None,
                              expected_color='red', rotated=False,
-                             plot_min=None, plot_max=None):
+                             plot_min=None, plot_max=None, logbins=False):
     """Plots a 1D marginalized histogram of the given param from the given
     samples.
 
@@ -348,7 +375,13 @@ def create_marginalized_hist(ax, values, label, percentiles=None,
         orientation = 'horizontal'
     else:
         orientation = 'vertical'
-    ax.hist(values, bins=50, histtype=htype, orientation=orientation,
+    nbins = 30
+    if logbins:
+        bins = numpy.logspace(numpy.log10(values.min()),
+                              numpy.log10(values.max()), nbins)
+    else:
+        bins = nbins
+    ax.hist(values, bins=bins, histtype=htype, orientation=orientation,
             facecolor=fillcolor, edgecolor=color, ls=linestyle, lw=2,
             density=True)
     if percentiles is None:
@@ -504,7 +537,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                          density_cmap='viridis',
                          contour_color=None, hist_color='black',
                          line_color=None, fill_color='gray',
-                         exclude_region=None,
+                         exclude_region=None, exclude_function=None,
                          use_kombine=False, fig=None, axis_dict=None):
     """Generate a figure with several plots and histograms.
 
@@ -666,6 +699,12 @@ def create_multidim_plot(parameters, samples, labels=None,
             # if only plotting 2 parameters and on the second parameter,
             # rotate the marginal plot
             rotated = nparams == 2 and pi == nparams-1
+            logbins = param.startswith('lambda')
+            if logbins:
+                if rotated:
+                    ax.semilogy()
+                else:
+                    ax.semilogx()
             # see if there are expected values
             if expected_parameters is not None:
                 try:
@@ -681,13 +720,18 @@ def create_multidim_plot(parameters, samples, labels=None,
                 title=marginal_title, expected_value=expected_value,
                 expected_color=expected_parameters_color,
                 rotated=rotated, plot_min=mins[param], plot_max=maxs[param],
-                percentiles=marginal_percentiles)
+                percentiles=marginal_percentiles,
+                logbins=logbins)
 
     # Off-diagonals...
     for px, py in axis_dict:
         if px == py:
             continue
         ax, _, _ = axis_dict[px, py]
+        if px.startswith('lambda'):
+            ax.semilogx()
+        if py.startswith('lambda'):
+            ax.semilogy()
         if plot_scatter:
             if plot_density:
                 alpha = 0.3
@@ -707,7 +751,9 @@ def create_multidim_plot(parameters, samples, labels=None,
                 percentiles=contour_percentiles,
                 contour_color=contour_color, xmin=mins[px], xmax=maxs[px],
                 ymin=mins[py], ymax=maxs[py],
-                exclude_region=exclude_region, ax=ax,
+                exclude_region=exclude_region,
+                exclude_function=exclude_function,
+                ax=ax,
                 use_kombine=use_kombine)
 
         if expected_parameters is not None:
