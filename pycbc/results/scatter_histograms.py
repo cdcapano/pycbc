@@ -163,7 +163,7 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
                         plot_contours=True, percentiles=None, cmap='viridis',
                         contour_color=None, xmin=None, xmax=None,
                         ymin=None, ymax=None, exclude_region=None,
-                        exclude_function=None,
+                        exclude_below=None, exclude_left=None,
                         fig=None, ax=None, use_kombine=False):
     """Computes and plots posterior density and confidence intervals using the
     given samples.
@@ -230,35 +230,40 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
     if ax is None:
         ax = fig.add_subplot(111)
 
+    xlog = ax.get_xaxis().get_scale() == 'log'
+    ylog = ax.get_yaxis().get_scale() == 'log'
+
     # convert samples to array and construct kde
     xsamples = samples[xparam]
     ysamples = samples[yparam]
+    if xlog:
+        xsamples = numpy.log10(xsamples)
+    if ylog:
+        ysamples = numpy.log10(ysamples)
     arr = numpy.vstack((xsamples, ysamples)).T
     kde = construct_kde(arr, use_kombine=use_kombine)
 
     # construct grid to evaluate on
     if xmin is None:
         xmin = xsamples.min()
+    elif xlog:
+        xmin = numpy.log10(xmin)
     if xmax is None:
         xmax = xsamples.max()
+    elif xlog:
+        xmax = numpy.log10(xmax)
     if ymin is None:
         ymin = ysamples.min()
+    elif ylog:
+        ymin = numpy.log10(ymin)
     if ymax is None:
         ymax = ysamples.max()
-    npts = 100
-    xlog = ax.get_xaxis().get_scale() == 'log'
-    ylog = ax.get_yaxis().get_scale() == 'log'
-    if xlog:
-        xmin, xmax = numpy.log10([xmin, xmax])
-    if ylog:
-        ymin, ymax = numpy.log10([ymin, ymax])
+    elif ylog:
+        ymax = numpy.log10(ymax)
+    npts = 200
     X, Y = numpy.mgrid[
         xmin:xmax:complex(0, npts),  # pylint:disable=invalid-slice-index
         ymin:ymax:complex(0, npts)]  # pylint:disable=invalid-slice-index
-    if xlog:
-        X = 10**X
-    if ylog:
-        Y = 10**Y
     pos = numpy.vstack([X.ravel(), Y.ravel()])
     if use_kombine:
         Z = numpy.exp(kde(pos.T).reshape(X.shape))
@@ -266,28 +271,34 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
     else:
         Z = kde(pos).T.reshape(X.shape)
         draw = kde.resample
-
-    if exclude_region is not None:
-        # convert X,Y to a single FieldArray so we can use it's ability to
-        # evaluate strings
-        farr = FieldArray.from_kwargs(**{xparam: X, yparam: Y})
+    if xlog:
+        X = 10**X
+        xmin = 10**xmin
+        xmax = 10**xmax
+    if ylog:
+        Y = 10**Y
+        ymin = 10**ymin
+        ymax = 10**ymax
+    if any([exclude_region, exclude_below, exclude_left]):
         mask = numpy.zeros_like(Z, dtype=bool)
-        Z[farr[exclude_region]] = 0.
-    if exclude_function is not None:
-        mask = numpy.zeros_like(Z, dtype=bool)
-        for xi, x in enumerate(X[:,0]):
-            y = exclude_function(x)
-            idx = numpy.where(Y[xi, :] < y)[0]
-            for yi in idx:
-                mask[xi, yi] = True
+        if exclude_region is not None:
+            # convert X,Y to a single FieldArray so we can use it's ability to
+            # evaluate strings
+            farr = FieldArray.from_kwargs(**{xparam: X, yparam: Y})
+            mask[farr[exclude_region]] = True
+        if exclude_below is not None:
+            for xi, x in enumerate(X[:,0]):
+                y = exclude_below(x)
+                idx = numpy.where(Y[xi, :] < y)[0]
+                for yi in idx:
+                    mask[xi, yi] = True
+        if exclude_left is not None:
+            for yi, y in enumerate(Y[0,:]):
+                x = exclude_left(y)
+                idx = numpy.where(X[:, yi] < x)[0]
+                for xi in idx:
+                    mask[xi, yi] = True
         Z = numpy.ma.array(Z, mask=mask)
-            # smoothing: use the above and right value to average
-            #yi = idx.max()
-            #try:
-            #    Z[xi, yi] = (Z[xi,yi+1] + Z[xi+1,yi])/2.
-            #except IndexError:
-            #    pass
-            
 
     if plot_density:
         ax.imshow(numpy.rot90(Z), extent=[xmin, xmax, ymin, ymax],
@@ -537,7 +548,8 @@ def create_multidim_plot(parameters, samples, labels=None,
                          density_cmap='viridis',
                          contour_color=None, hist_color='black',
                          line_color=None, fill_color='gray',
-                         exclude_region=None, exclude_function=None,
+                         exclude_region=None, exclude_below=None,
+                         exclude_left=None,
                          use_kombine=False, fig=None, axis_dict=None):
     """Generate a figure with several plots and histograms.
 
@@ -752,7 +764,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                 contour_color=contour_color, xmin=mins[px], xmax=maxs[px],
                 ymin=mins[py], ymax=maxs[py],
                 exclude_region=exclude_region,
-                exclude_function=exclude_function,
+                exclude_below=exclude_below, exclude_left=exclude_left,
                 ax=ax,
                 use_kombine=use_kombine)
 
