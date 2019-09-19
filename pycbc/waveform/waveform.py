@@ -496,7 +496,11 @@ def get_fd_waveform(template=None, **kwargs):
     except KeyError:
         pass
 
-    return wav_gen[input_params['approximant']](**input_params)
+    try:
+        return wav_gen[input_params['approximant']](**input_params)
+    except RuntimeError:
+        raise NowaveformError("could not generate waveform due to runtime "
+                              "error raised by lalsimulation")
 
 get_fd_waveform.__doc__ = get_fd_waveform.__doc__.format(
     params=parameters.fd_waveform_params.docstr(prefix="    ",
@@ -802,6 +806,7 @@ _filter_time_lengths["SEOBNRv1_ROM_EffectiveSpin"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv1_ROM_DoubleSpin"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv2_ROM_EffectiveSpin"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv2_ROM_DoubleSpin"] = seobnrv2_length_in_time
+_filter_time_lengths["Lackey_Tidal_2013_SEOBNRv2_ROM"] = seobnrv2_length_in_time
 _filter_time_lengths["EOBNRv2_ROM"] = seobnrv2_length_in_time
 _filter_time_lengths["EOBNRv2HM_ROM"] = seobnrv2_length_in_time
 _filter_time_lengths["SEOBNRv2_ROM_DoubleSpin_HI"] = seobnrv2_length_in_time
