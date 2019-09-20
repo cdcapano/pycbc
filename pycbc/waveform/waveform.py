@@ -499,7 +499,7 @@ def get_fd_waveform(template=None, **kwargs):
     try:
         return wav_gen[input_params['approximant']](**input_params)
     except RuntimeError:
-        raise NowaveformError("could not generate waveform due to runtime "
+        raise NoWaveformError("could not generate waveform due to runtime "
                               "error raised by lalsimulation")
 
 get_fd_waveform.__doc__ = get_fd_waveform.__doc__.format(
