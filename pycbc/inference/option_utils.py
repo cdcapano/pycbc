@@ -153,7 +153,10 @@ def add_plot_posterior_option_group(parser):
     pgroup.add_argument('--marginal-percentiles', nargs='+', default=None,
                         type=float,
                         help="Percentiles to draw lines at on the 1D "
-                             "histograms.")
+                             "histograms. Set to -1 to plot no lines.")
+    pgroup.add_argument('--no-titles', action='store_true',
+                        help='Do not put titles over 1D marginal plots giving '
+                             'parameter estimates.')
     pgroup.add_argument("--plot-scatter", action='store_true', default=False,
                         help="Plot each sample point as a scatter plot.")
     pgroup.add_argument("--plot-density", action="store_true", default=False,
@@ -165,6 +168,9 @@ def add_plot_posterior_option_group(parser):
                         type=float,
                         help="Percentiles to draw contours if different "
                              "than 50th and 90th.")
+    pgroup.add_argument('--no-contour-labels', action='store_true',
+                        default=False,
+                        help='Do not put labels on the contours.')
     # add mins, maxs options
     pgroup.add_argument('--mins', nargs='+', metavar='PARAM:VAL', default=[],
                         help="Specify minimum parameter values to plot. This "

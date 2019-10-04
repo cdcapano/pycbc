@@ -161,6 +161,7 @@ def construct_kde(samples_array, use_kombine=False):
 
 def create_density_plot(xparam, yparam, samples, plot_density=True,
                         plot_contours=True, percentiles=None, cmap='viridis',
+                        contour_labels=True,
                         contour_color=None, xmin=None, xmax=None,
                         ymin=None, ymax=None, exclude_region=None,
                         fig=None, ax=None, use_kombine=False):
@@ -284,10 +285,11 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         ct = ax.contour(X, Y, Z, s, colors=contour_color, linewidths=lw,
                         zorder=3)
         # label contours
-        lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
-        fmt = dict(zip(ct.levels, lbls))
-        fs = 12
-        ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
+        if contour_labels:
+            lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
+            fmt = dict(zip(ct.levels, lbls))
+            fs = 12
+            ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
 
     return fig, ax
 
@@ -385,39 +387,37 @@ def create_marginalized_hist(ax, values, label, percentiles=None,
             values_med, negerror, plus_error=poserror))
         if rotated:
             ax.yaxis.set_label_position("right")
-
             # sets colored title for marginal histogram
             set_marginal_histogram_title(ax, fmt, color,
                                          label=label, rotated=rotated)
-
-            # Remove x-ticks
-            ax.set_xticks([])
-            # turn off x-labels
-            ax.set_xlabel('')
-            # set limits
-            ymin, ymax = ax.get_ylim()
-            if plot_min is not None:
-                ymin = plot_min
-            if plot_max is not None:
-                ymax = plot_max
-            ax.set_ylim(ymin, ymax)
-
         else:
-
             # sets colored title for marginal histogram
             set_marginal_histogram_title(ax, fmt, color, label=label)
-
-            # Remove y-ticks
-            ax.set_yticks([])
-            # turn off y-label
-            ax.set_ylabel('')
-            # set limits
-            xmin, xmax = ax.get_xlim()
-            if plot_min is not None:
-                xmin = plot_min
-            if plot_max is not None:
-                xmax = plot_max
-            ax.set_xlim(xmin, xmax)
+    # remove ticks and set limits
+    if rotated:
+        # Remove x-ticks
+        ax.set_xticks([])
+        # turn off x-labels
+        ax.set_xlabel('')
+        # set limits
+        ymin, ymax = ax.get_ylim()
+        if plot_min is not None:
+            ymin = plot_min
+        if plot_max is not None:
+            ymax = plot_max
+        ax.set_ylim(ymin, ymax)
+    else:
+        # Remove y-ticks
+        ax.set_yticks([])
+        # turn off y-label
+        ax.set_ylabel('')
+        # set limits
+        xmin, xmax = ax.get_xlim()
+        if plot_min is not None:
+            xmin = plot_min
+        if plot_max is not None:
+            xmax = plot_max
+        ax.set_xlim(xmin, xmax)
 
 
 def set_marginal_histogram_title(ax, fmt, color, label=None, rotated=False):
@@ -500,6 +500,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                          plot_marginal=True, plot_scatter=True,
                          marginal_percentiles=None, contour_percentiles=None,
                          marginal_title=True, marginal_linestyle='-',
+                         contour_labels=True,
                          zvals=None, show_colorbar=True, cbar_label=None,
                          vmin=None, vmax=None, scatter_cmap='plasma',
                          plot_density=False, plot_contours=True,
@@ -709,7 +710,7 @@ def create_multidim_plot(parameters, samples, labels=None,
             create_density_plot(
                 px, py, samples, plot_density=plot_density,
                 plot_contours=plot_contours, cmap=density_cmap,
-                percentiles=contour_percentiles,
+                percentiles=contour_percentiles, contour_labels=contour_labels,
                 contour_color=contour_color, xmin=mins[px], xmax=maxs[px],
                 ymin=mins[py], ymax=maxs[py],
                 exclude_region=exclude_region, ax=ax,

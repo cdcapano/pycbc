@@ -115,6 +115,10 @@ if not numpy.any(plot_options):
         # two or more parameters
         opts.plot_marginal = True
 
+# if -1 in marginal percentiles, turn off
+if opts.marginal_percentiles == [-1]:
+    opts.marginal_percentiles = []
+    
 if opts.plot_prior is not None:
     # check that we're plotting 1D marginals
     if not opts.plot_marginal:
@@ -211,6 +215,7 @@ for (i, s) in enumerate(samples):
                     parameters, s, labels=labels, fig=fig, axis_dict=axis_dict,
                     plot_marginal=opts.plot_marginal,
                     marginal_percentiles=opts.marginal_percentiles,
+                    marginal_title=not opts.no_titles,
                     plot_scatter=opts.plot_scatter,
                     zvals=zvals[i] if zvals is not None else None,
                     show_colorbar=opts.z_arg is not None,
@@ -220,6 +225,7 @@ for (i, s) in enumerate(samples):
                     plot_density=opts.plot_density,
                     plot_contours=opts.plot_contours,
                     contour_percentiles=opts.contour_percentiles,
+                    contour_labels=not opts.no_contour_labels,
                     density_cmap=opts.density_cmap,
                     contour_color=contour_color,
                     hist_color=hist_color,
