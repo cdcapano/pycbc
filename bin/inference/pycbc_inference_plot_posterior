@@ -69,6 +69,9 @@ option_utils.add_plot_posterior_option_group(parser)
 option_utils.add_scatter_option_group(parser)
 # density configuration
 option_utils.add_density_option_group(parser)
+parser.add_argument('--file-colors', nargs='+',
+                    help='Specify colors for each file. If provided, must '
+                         'give colors for all files.')
 parser.add_argument('--dpi', type=int, default=200,
                     help="Set the DPI of the plot. Default is 200.")
 
@@ -184,7 +187,19 @@ if opts.plot_injection_parameters:
 expected_parameters.update(option_utils.expected_parameters_from_cli(opts))
 
 # assign some colors
-colors = itertools.cycle(["black"] + ["C{}".format(i) for i in range(10)])
+if opts.file_colors is not None:
+    colors = opts.file_colors
+    from matplotlib import pyplot
+    for ii,clr in enumerate(colors):
+        try:
+            clr = float(clr)/112.
+        except ValueError:
+            continue
+        clr = getattr(pyplot.cm, opts.density_cmap)(clr) 
+        colors[ii] = clr
+    colors = itertools.cycle(colors)
+else:
+    colors = itertools.cycle(["black"] + ["C{}".format(i) for i in range(10)])
 
 # plot each input file
 logging.info("Plotting")
