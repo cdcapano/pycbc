@@ -33,6 +33,7 @@ import sys
 import numpy
 
 from matplotlib import (patches, use)
+import matplotlib.style as style
 
 import pycbc
 import pycbc.version
@@ -69,6 +70,7 @@ option_utils.add_plot_posterior_option_group(parser)
 option_utils.add_scatter_option_group(parser)
 # density configuration
 option_utils.add_density_option_group(parser)
+parser.add_argument('--style', help='Style to use for color cycle.')
 parser.add_argument('--file-colors', nargs='+',
                     help='Specify colors for each file. If provided, must '
                          'give colors for all files.')
@@ -106,7 +108,8 @@ else:
 
 # if no plotting options selected, then the default options are based
 # on the number of parameters
-plot_options = [opts.plot_marginal, opts.plot_scatter, opts.plot_density]
+plot_options = [opts.plot_marginal, opts.plot_scatter, opts.plot_density,
+                opts.plot_contours]
 if not numpy.any(plot_options):
     if len(parameters) == 1:
         opts.plot_marginal = True
@@ -192,35 +195,55 @@ if opts.file_colors is not None:
     from matplotlib import pyplot
     for ii,clr in enumerate(colors):
         try:
-            clr = float(clr)/112.
+            clr = float(clr)
         except ValueError:
             continue
         clr = getattr(pyplot.cm, opts.density_cmap)(clr) 
         colors[ii] = clr
     colors = itertools.cycle(colors)
+elif opts.style is not None:
+    color_cycle = style.library[opts.style]['axes.prop_cycle']
+    colors = itertools.cycle(color_cycle)
 else:
     colors = itertools.cycle(["black"] + ["C{}".format(i) for i in range(10)])
 
+contour_linestyles = itertools.cycle(['solid', 'dashed', 'dotted'])
+
+hist_colors = []
+contour_colors = []
+contour_lines = []
+for _ in samples:
+    # loop over some contour colors
+    if opts.style is not None:
+        clr = colors.next()['color']
+    elif not opts.contour_color:
+        clr = next(colors)
+    else:
+        clr = opts.contour_color
+    contour_colors.append(clr)
+
+    contour_linestyle = next(contour_linestyles)
+    contour_lines.append(contour_linestyle)
+
+    # make histogram black lines if only one
+    hist_color = "black" if len(opts.input_file) == 1 else clr
+    hist_colors.append(hist_color)
+
+    
 # plot each input file
 logging.info("Plotting")
-hist_colors = []
-for (i, s) in enumerate(samples):
-
+if zvals is not None:
+    zvals = zvals[::-1]
+for (i, (s, hist_color, contour_color, contour_linestyle)) in enumerate(
+        zip(samples, hist_colors, contour_colors, contour_lines)[::-1]):
+    logging.info("File {}".format(i+1))
     # on first iteration create figure otherwise update old figure
     if i == 0:
         fig = None
         axis_dict = None
 
-    # loop over some contour colors
-    contour_color = next(colors) if not opts.contour_color \
-        else opts.contour_color
-
     # make histograms filled if only one input file to plot
     fill_color = "gray" if len(opts.input_file) == 1 else None
-
-    # make histogram black lines if only one
-    hist_color = "black" if len(opts.input_file) == 1 else contour_color
-    hist_colors.append(hist_color)
 
     # pick a new color for each input file
     linecolor = "navy" if len(opts.input_file) == 1 else contour_color
@@ -240,6 +263,7 @@ for (i, s) in enumerate(samples):
                     plot_density=opts.plot_density,
                     plot_contours=opts.plot_contours,
                     contour_percentiles=opts.contour_percentiles,
+                    contour_linestyle=contour_linestyle,
                     contour_labels=not opts.no_contour_labels,
                     density_cmap=opts.density_cmap,
                     contour_color=contour_color,
@@ -266,17 +290,26 @@ if opts.plot_prior:
 
 # add legend to upper right for input files
 if len(opts.input_file) > 1:
+    from matplotlib.lines import Line2D
     handles = []
     labels = []
-    for color, fn in zip(hist_colors, opts.input_file):
+    for color, ls, fn in zip(hist_colors, contour_lines, opts.input_file):
         label = opts.input_file_labels[fn]
-        handles.append(patches.Patch(color=color, label=label))
+        handles.append(Line2D([0], [0], color=color, linestyle=ls,
+                              label=label))
+        #handles.append(patches.Patch(color=color, label=label))
         labels.append(label)
-    fig.legend(loc="upper right", handles=handles,
-               labels=labels)
+    if len(list(axis_dict.keys())) == 1:
+        addto = list(axis_dict.values())[0][0]
+    else:
+        addto = fig
+    addto.legend(loc="lower right", handles=handles,
+               labels=labels, ncol=3, fontsize=8)
 
 # set DPI
 fig.set_dpi(opts.dpi)
+fig.set_figheight(4, forward=True)
+fig.subplots_adjust(bottom=0.15, top=0.95, left=0.1, right=0.98)
 
 # save
 metadata.save_fig_with_metadata(

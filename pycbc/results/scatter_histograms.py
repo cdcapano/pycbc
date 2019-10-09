@@ -161,7 +161,7 @@ def construct_kde(samples_array, use_kombine=False):
 
 def create_density_plot(xparam, yparam, samples, plot_density=True,
                         plot_contours=True, percentiles=None, cmap='viridis',
-                        contour_labels=True,
+                        contour_linestyle='-', contour_labels=True,
                         contour_color=None, xmin=None, xmax=None,
                         ymin=None, ymax=None, exclude_region=None,
                         fig=None, ax=None, use_kombine=False):
@@ -277,13 +277,16 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         s = numpy.percentile(resamps, percentiles)
         if contour_color is None:
             contour_color = 'k'
+        #if isinstance(contour_color, float):
+        #    # convert using cmap
+        #    contour_color = getattr(pyplot.cm, cmap)(contour_color)
         # make linewidths thicker if not plotting density for clarity
         if plot_density:
             lw = 1
         else:
             lw = 2
-        ct = ax.contour(X, Y, Z, s, colors=contour_color, linewidths=lw,
-                        zorder=3)
+        ct = ax.contour(X, Y, Z, s, colors=[contour_color], linewidths=[lw],
+                        linestyles=[contour_linestyle], zorder=3)
         # label contours
         if contour_labels:
             lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
@@ -500,7 +503,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                          plot_marginal=True, plot_scatter=True,
                          marginal_percentiles=None, contour_percentiles=None,
                          marginal_title=True, marginal_linestyle='-',
-                         contour_labels=True,
+                         contour_linestyle='-', contour_labels=True,
                          zvals=None, show_colorbar=True, cbar_label=None,
                          vmin=None, vmax=None, scatter_cmap='plasma',
                          plot_density=False, plot_contours=True,
@@ -597,7 +600,7 @@ def create_multidim_plot(parameters, samples, labels=None,
     # set up the figure with a grid of axes
     # if only plotting 2 parameters, make the marginal plots smaller
     nparams = len(parameters)
-    if nparams == 2:
+    if nparams == 2 and plot_marginal:
         width_ratios = [3, 1]
         height_ratios = [1, 3]
     else:
@@ -711,6 +714,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                 px, py, samples, plot_density=plot_density,
                 plot_contours=plot_contours, cmap=density_cmap,
                 percentiles=contour_percentiles, contour_labels=contour_labels,
+                contour_linestyle=contour_linestyle,
                 contour_color=contour_color, xmin=mins[px], xmax=maxs[px],
                 ymin=mins[py], ymax=maxs[py],
                 exclude_region=exclude_region, ax=ax,
