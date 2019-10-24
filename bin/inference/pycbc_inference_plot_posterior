@@ -74,8 +74,10 @@ parser.add_argument('--style', help='Style to use for color cycle.')
 parser.add_argument('--file-colors', nargs='+',
                     help='Specify colors for each file. If provided, must '
                          'give colors for all files.')
+parser.add_argument('--show-legend')
 parser.add_argument('--dpi', type=int, default=200,
                     help="Set the DPI of the plot. Default is 200.")
+parser.add_argument('--fig-height', type=float)
 
 # parse command line
 opts = parser.parse_args()
@@ -289,7 +291,7 @@ if opts.plot_prior:
         mins=mins, maxs=maxs)
 
 # add legend to upper right for input files
-if len(opts.input_file) > 1:
+if len(opts.input_file) > 1 and opts.show_legend:
     from matplotlib.lines import Line2D
     handles = []
     labels = []
@@ -303,12 +305,14 @@ if len(opts.input_file) > 1:
         addto = list(axis_dict.values())[0][0]
     else:
         addto = fig
-    addto.legend(loc="lower right", handles=handles,
+    addto.legend(loc=opts.show_legend, handles=handles,
                labels=labels, ncol=3, fontsize=8)
 
 # set DPI
 fig.set_dpi(opts.dpi)
-fig.set_figheight(4, forward=True)
+
+if opts.fig_height:
+    fig.set_figheight(opts.fig_height, forward=True)
 fig.subplots_adjust(bottom=0.15, top=0.95, left=0.1, right=0.98)
 
 # save
