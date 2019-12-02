@@ -106,8 +106,8 @@ def loadfile(path, mode=None, filetype=None, **kwargs):
             fileclass = get_file_type(path)
         except IOError:
             # file doesn't exist, filetype must be provided
-            raise IOError("The file appears not to exist. In this case, "
-                          "filetype must be provided.")
+            raise IOError("The file {} appears not to exist. In this case, "
+                          "filetype must be provided.".format(path))
     else:
         fileclass = filetypes[filetype]
     return fileclass(path, mode=mode, **kwargs)

@@ -67,7 +67,10 @@ class ParseLabelArg(argparse.Action):
         params = []
         labels = {}
         for param in values:
+            # apply colon escapes
+            param = param.replace('\:', '!!COLON!!')
             psplit = param.split(':')
+            psplit = [p.replace('!!COLON!!', ':') for p in psplit]
             if len(psplit) == 2:
                 param, label = psplit
             else:

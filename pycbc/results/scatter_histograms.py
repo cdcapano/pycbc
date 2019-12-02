@@ -233,6 +233,20 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
     # convert samples to array and construct kde
     xsamples = samples[xparam]
     ysamples = samples[yparam]
+    if xparam == 'mass1' and yparam == 'mass2':
+        # fold over
+        new_xsamples = numpy.concatenate((xsamples, ysamples))
+        new_ysamples = numpy.concatenate((ysamples, xsamples))
+        xsamples = new_xsamples
+        ysamples = new_ysamples
+        npts = 200
+    elif xparam == 'mass1/mass2':
+        # fold over
+        xsamples = numpy.concatenate((xsamples, 1./xsamples))
+        ysamples = numpy.concatenate((ysamples, ysamples))
+        npts = 200
+    else:
+        npts = 100
     arr = numpy.vstack((xsamples, ysamples)).T
     kde = construct_kde(arr, use_kombine=use_kombine)
 
@@ -245,7 +259,6 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         ymin = ysamples.min()
     if ymax is None:
         ymax = ysamples.max()
-    npts = 100
     X, Y = numpy.mgrid[
         xmin:xmax:complex(0, npts),  # pylint:disable=invalid-slice-index
         ymin:ymax:complex(0, npts)]  # pylint:disable=invalid-slice-index
@@ -294,6 +307,14 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
             fs = 12
             ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
 
+    # cover folded region
+    if xparam == 'mass1' and yparam == 'mass2':
+        ax.fill_between([0.9*xmin, 1.1*xmax], [0.9*xmin, 1.1*xmax],
+                        [1.1*ymax, 1.1*ymax],
+                        color='lightgray', edgecolor='none', zorder=4)
+    if xparam == 'mass1/mass2' and xmin < 1.:
+        ax.fill_between([0.9*xmin, 1.], [0.9*ymin, 1.1*ymax],
+                        color='lightgray', edgecolor='none', zorder=4)
     return fig, ax
 
 

@@ -202,14 +202,18 @@ if opts.file_colors is not None:
             continue
         clr = getattr(pyplot.cm, opts.density_cmap)(clr) 
         colors[ii] = clr
+    ncolors = len(colors)
     colors = itertools.cycle(colors)
 elif opts.style is not None:
     color_cycle = style.library[opts.style]['axes.prop_cycle']
+    ncolors = len(color_cycle)
     colors = itertools.cycle(color_cycle)
 else:
     colors = itertools.cycle(["black"] + ["C{}".format(i) for i in range(10)])
+    ncolors = 11
 
-contour_linestyles = itertools.cycle(['solid', 'dashed', 'dotted'])
+ls = ['solid']*ncolors + ['dashed']*ncolors + ['dotted']*ncolors
+contour_linestyles = itertools.cycle(ls)
 
 hist_colors = []
 contour_colors = []
@@ -234,10 +238,12 @@ for _ in samples:
     
 # plot each input file
 logging.info("Plotting")
-if zvals is not None:
-    zvals = zvals[::-1]
+#if zvals is not None:
+#    zvals = zvals[::-1]
+#for (i, (s, hist_color, contour_color, contour_linestyle)) in enumerate(
+#        zip(samples, hist_colors, contour_colors, contour_lines)[::-1]):
 for (i, (s, hist_color, contour_color, contour_linestyle)) in enumerate(
-        zip(samples, hist_colors, contour_colors, contour_lines)[::-1]):
+        zip(samples, hist_colors, contour_colors, contour_lines)):
     logging.info("File {}".format(i+1))
     # on first iteration create figure otherwise update old figure
     if i == 0:
@@ -301,19 +307,23 @@ if len(opts.input_file) > 1 and opts.show_legend:
                               label=label))
         #handles.append(patches.Patch(color=color, label=label))
         labels.append(label)
-    if len(list(axis_dict.keys())) == 1:
+    if True:#len(list(axis_dict.keys())) == 1:
         addto = list(axis_dict.values())[0][0]
     else:
         addto = fig
     addto.legend(loc=opts.show_legend, handles=handles,
-               labels=labels, ncol=3, fontsize=8)
+               labels=labels, fontsize=12, ncol=1)#, bbox_to_anchor=(0.995, 0.96))
+               #fontsize=12, ncol=2)
 
 # set DPI
 fig.set_dpi(opts.dpi)
 
 if opts.fig_height:
     fig.set_figheight(opts.fig_height, forward=True)
-fig.subplots_adjust(bottom=0.15, top=0.95, left=0.1, right=0.98)
+if opts.no_titles:
+    fig.subplots_adjust(bottom=0.15, top=0.95, left=0.1, right=0.98)
+else:
+    fig.subplots_adjust(bottom=0.1, top=0.95, left=0.1, right=0.95)
 
 # save
 metadata.save_fig_with_metadata(
