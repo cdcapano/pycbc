@@ -139,19 +139,19 @@ if opts.plot_prior is not None:
     logging.info("Drawing samples from prior")
     prior_samples = prior.rvs(opts.prior_nsamples)
     # add the static params
-    for param in fp.attrs['static_params']:
-        setattr(prior_samples, param, fp.attrs[param])
+    for param in fps[0].attrs['static_params']:
+        setattr(prior_samples, param, fps[0].attrs[param])
     # remap any parameters
-    if 'remapped_params' in fp.attrs:
+    if 'remapped_params' in fps[0].attrs:
         remapped_params = {}
-        for func, param in fp.attrs['remapped_params']:
+        for func, param in fps[0].attrs['remapped_params']:
             try:
                 remapped_params[param] = prior_samples[func]
             except NameError:
                 continue
         prior_samples = FieldArray.from_kwargs(**remapped_params)
-        for param in fp.attrs['static_params']:
-            setattr(prior_samples, param, fp.attrs[param])
+        for param in fps[0].attrs['static_params']:
+            setattr(prior_samples, param, fps[0].attrs[param])
 
 # close the files, we don't need them anymore
 for fp in fps:

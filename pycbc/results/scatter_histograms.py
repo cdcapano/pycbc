@@ -120,12 +120,14 @@ def create_axes_grid(parameters, labels=None, height_ratios=None,
                 axis_dict[px, py] = (ax, nrow, ncolumn)
                 # x labels only on bottom
                 if nrow + 1 == ndim:
-                    ax.set_xlabel('{}'.format(labels[px]), fontsize=18)
+                    ax.set_xlabel('{}'.format(labels[px]), fontsize=20)
+                    ax.tick_params(axis='x', which='major', labelsize=18)
                 else:
                     pyplot.setp(ax.get_xticklabels(), visible=False)
                 # y labels only on left
                 if ncolumn == 0:
-                    ax.set_ylabel('{}'.format(labels[py]), fontsize=18)
+                    ax.set_ylabel('{}'.format(labels[py]), fontsize=20)
+                    ax.tick_params(axis='y', which='major', labelsize=18)
                 else:
                     pyplot.setp(ax.get_yticklabels(), visible=False)
             else:
