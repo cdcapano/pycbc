@@ -16,6 +16,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+import os
 import argparse
 import h5py
 import logging
@@ -23,6 +24,7 @@ import numpy
 import sys
 import pycbc
 from pycbc import results
+from pycbc.inference.option_utils import ParseLabelArg
 from pycbc.inference.io import ResultsArgumentParser, results_from_cli
 
 parser = ResultsArgumentParser(
@@ -34,15 +36,22 @@ parser.add_argument("--output-file", type=str, required=True,
 parser.add_argument("--result-label", nargs="+",
                     help="Provide labels for the provided file. If given, "
                          "must equal the number of files provided.")
-# add quantile options
-parser.add_argument("--quote-as-bounds", action="store_true", default=False,
-                    help="Quote values as "
-                         "{middle}^{+upper}_{-lower}. Must "
-                         "provide 3 quantiles in this case.")
-parser.add_argument("--quantiles", type=float, nargs="+",
-                    default=[16, 50, 84],
-                    help="Quantiles to calculate. Default is 16 50 84 "
-                         "(the median with one sigma errors).")
+parser.add_argument("--print-metadata", nargs="+", metavar="PARAM[:LABEL]",
+                    action=ParseLabelArg,
+                    help="Add metadata information after the parameter table. "
+                         "Any parameter stored in the any of the file's attrs "
+                         "may be printed. To specify an attribute in a "
+                         "sub-group, prepend the parameter with the group  "
+                         "name in the file. A label may be provided for the "
+                         "html output; otherwise, the parameter name will be "
+                         "used. If nothing provided, will just print the "
+                         "number of posterior samples that were used (this is "
+                         "always printed).")
+parser.add_argument("--quantiles", type=float, nargs=3,
+                    default=[5, 50, 95],
+                    help="Quantiles to calculate. Must provide 3 values. "
+                          "Default is 5 50 95 (the median with 90\% credible "
+                          "interval).")
 
 # parse the command line
 opts = parser.parse_args()
@@ -53,66 +62,85 @@ ninputs = len(opts.input_file)
 if ninputs > 1:
     raise ValueError("This program can only handle one file at a time")
 
+# make sure the loglikelihood and logprior are included in the parameters
+# so that we can get the maxL and MAP values
+requested_params = [p for p in opts.parameters]
+if 'loglikelihood' not in requested_params:
+    opts.parameters.append('loglikelihood')
+if 'logprior' not in requested_params:
+    opts.parameters.append('logprior')
+
 # load the results
 fp, parameters, labels, samples = results_from_cli(opts)
+# replace with the requested parameters
+parameters = requested_params
+
+# get the index of the map and maxl
+mapidx = samples['loglikelihood+logprior'].argmax()
+maxlidx = samples['loglikelihood'].argmax()
 
 if opts.result_label is None:
     opts.result_label = ["Event {}".format(ii+1) for ii in range(len(fp))]
 
-# get thinned samples for each parameter
+# make sure the quantiles are sorted
+opts.quantiles.sort()
+
 table = []
-if opts.quote_as_bounds:
-    lbl = opts.result_label[0]
-    if ninputs == 1:
-        row = []
-    else:
-        row = [lbl]
-
 for param in parameters:
-
-
+    row = [labels[param]]
     # calculate the score at a given percentile
-    # eg. 50 is the median, 16 and 84 correspond to 68 percentile
     x = samples[param]
     quantiles = numpy.array([numpy.percentile(x, q)
-                              for q in opts.quantiles])
-    if opts.quote_as_bounds:
-        if len(quantiles) != 3:
-            raise ValueError("must provide 3 quantiles if using "
-                             "quote-as-bounds")
-        values_min, values_med, values_max = quantiles
-        negerror = values_med - values_min
-        poserror = values_max - values_med
+                              for q in sorted(opts.quantiles)])
+    values_min, values_med, values_max = quantiles
+    negerror = values_med - values_min
+    poserror = values_max - values_med
+    fmt = '${0}$'.format(results.format_value(
+        values_med, negerror, plus_error=poserror, use_scientific_notation=5))
+    row.append(fmt)
+    # get the maxl and map values
+    mapval = x[mapidx]
+    maxlval = x[maxlidx]
+    # we'll use the error from the credible interval to determine how many
+    # significant figures to print for the map and maxl values
+    error = min(negerror, poserror)
+    for val in [mapval, maxlval]:
         fmt = '${0}$'.format(results.format_value(
-            values_med, negerror, plus_error=poserror))
+            val, error, use_scientific_notation=5, include_error=False))
         row.append(fmt)
-    else:
-        # add qunatiles to row;
-        row = [labels[param]]
-        # we'll quote using the range of quanitles as the error; if there was
-        # only a single value, then we'll just do 1/100
-        if len(quantiles) > 1:
-            med = numpy.median(x)
-            err = min(abs(quantiles.max()-med), abs(quantiles.min()-med))
-        else:
-            err = quantiles[0]/100.
-        row += ['$%s$' %(results.format_value(val, err, include_error=False,
-            use_scientific_notation=10 if numpy.log10(abs(val)) > 0 else 3))
-            for val in quantiles]
-        # add row to table
-        table.append(row)
-if opts.quote_as_bounds:
+    # add to the table
     table.append(row)
 
-# make HTML table
-if opts.quote_as_bounds:
-    headers = [labels[p] for p in parameters]
-else:
-    headers = ["Parameter"]
-    headers += ["{:d} Quantile".format(int(val)) for val in opts.quantiles]
+# create table header
+interval = opts.quantiles[-1]-opts.quantiles[0]
+headers = ["Parameter",
+           "{}% Credible Interval".format(interval),
+           "Maximum Posterior",
+           "Maximum Likelihood"
+           ]
+
 # add mathjax header to display latex
 html = results.mathjax_html_header() + '\n%s'%(
-    str( results.static_table(table, headers) ))
+    str(results.static_table(table, headers) ))
+
+# add extra metadata
+mdatatmplt = '<h4><b>{}:</b> {}</h4>'
+def formatattr(fp, attr):
+    group = os.path.dirname(attr)
+    if not group.startswith('/'):
+        group = '/' + group
+    attr = os.path.basename(attr)
+    val = fp[group].attrs[attr]
+    if isinstance(val, numpy.ndarray):
+        val = ', '.join(['{}'.format(x) for x in val])
+    return val
+metadata = [mdatatmplt.format(opts.print_metadata_labels[p],
+                              formatattr(fp, p))
+            for p in opts.print_metadata]
+# add the number of posterior samples
+metadata.append(mdatatmplt.format('Number of posterior samples', samples.size))
+
+html += '\n'.join(metadata) + '<br />\n<br />\n'
 
 # save HTML table
 if ninputs == 1:
@@ -122,4 +150,9 @@ else:
 results.save_fig_with_metadata(html, opts.output_file, {},
                  cmd=" ".join(sys.argv),
                  title=ttl,
-                 caption="Table with quantiles for variable parameters.")
+                 caption="Summary of parameter estimates. The {}% credible "
+                         "interval is the {}th +/- {}th/{}th percentiles. "
+                         "The maximum posterior parameters are the parameters "
+                         "with the largest likelihood * prior. The maximum "
+                         "likelihood parameters are the parameters with the "
+                         "largest likelihood.")
