@@ -161,6 +161,7 @@ def construct_kde(samples_array, use_kombine=False):
 
 def create_density_plot(xparam, yparam, samples, plot_density=True,
                         plot_contours=True, percentiles=None, cmap='viridis',
+                        contour_linestyle='-', contour_labels=True,
                         contour_color=None, xmin=None, xmax=None,
                         ymin=None, ymax=None, exclude_region=None,
                         fig=None, ax=None, use_kombine=False):
@@ -232,6 +233,20 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
     # convert samples to array and construct kde
     xsamples = samples[xparam]
     ysamples = samples[yparam]
+    if xparam == 'mass1' and yparam == 'mass2':
+        # fold over
+        new_xsamples = numpy.concatenate((xsamples, ysamples))
+        new_ysamples = numpy.concatenate((ysamples, xsamples))
+        xsamples = new_xsamples
+        ysamples = new_ysamples
+        npts = 200
+    elif xparam == 'mass1/mass2':
+        # fold over
+        xsamples = numpy.concatenate((xsamples, 1./xsamples))
+        ysamples = numpy.concatenate((ysamples, ysamples))
+        npts = 200
+    else:
+        npts = 100
     arr = numpy.vstack((xsamples, ysamples)).T
     kde = construct_kde(arr, use_kombine=use_kombine)
 
@@ -244,7 +259,6 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         ymin = ysamples.min()
     if ymax is None:
         ymax = ysamples.max()
-    npts = 100
     X, Y = numpy.mgrid[
         xmin:xmax:complex(0, npts),  # pylint:disable=invalid-slice-index
         ymin:ymax:complex(0, npts)]  # pylint:disable=invalid-slice-index
@@ -281,14 +295,23 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
             lw = 1
         else:
             lw = 2
-        ct = ax.contour(X, Y, Z, s, colors=contour_color, linewidths=lw,
-                        zorder=3)
+        ct = ax.contour(X, Y, Z, s, colors=[contour_color], linewidths=[lw],
+                        linestyles=[contour_linestyle], zorder=3)
         # label contours
-        lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
-        fmt = dict(zip(ct.levels, lbls))
-        fs = 12
-        ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
+        if contour_labels:
+            lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
+            fmt = dict(zip(ct.levels, lbls))
+            fs = 12
+            ax.clabel(ct, ct.levels, inline=True, fmt=fmt, fontsize=fs)
 
+    # cover folded region
+    if xparam == 'mass1' and yparam == 'mass2':
+        ax.fill_between([0.9*xmin, 1.1*xmax], [0.9*xmin, 1.1*xmax],
+                        [1.1*ymax, 1.1*ymax],
+                        color='lightgray', edgecolor='none', zorder=4)
+    if xparam == 'mass1/mass2' and xmin < 1.:
+        ax.fill_between([0.9*xmin, 1.], [0.9*ymin, 1.1*ymax],
+                        color='lightgray', edgecolor='none', zorder=4)
     return fig, ax
 
 
@@ -385,39 +408,37 @@ def create_marginalized_hist(ax, values, label, percentiles=None,
             values_med, negerror, plus_error=poserror))
         if rotated:
             ax.yaxis.set_label_position("right")
-
             # sets colored title for marginal histogram
             set_marginal_histogram_title(ax, fmt, color,
                                          label=label, rotated=rotated)
-
-            # Remove x-ticks
-            ax.set_xticks([])
-            # turn off x-labels
-            ax.set_xlabel('')
-            # set limits
-            ymin, ymax = ax.get_ylim()
-            if plot_min is not None:
-                ymin = plot_min
-            if plot_max is not None:
-                ymax = plot_max
-            ax.set_ylim(ymin, ymax)
-
         else:
-
             # sets colored title for marginal histogram
             set_marginal_histogram_title(ax, fmt, color, label=label)
-
-            # Remove y-ticks
-            ax.set_yticks([])
-            # turn off y-label
-            ax.set_ylabel('')
-            # set limits
-            xmin, xmax = ax.get_xlim()
-            if plot_min is not None:
-                xmin = plot_min
-            if plot_max is not None:
-                xmax = plot_max
-            ax.set_xlim(xmin, xmax)
+    # remove ticks and set limits
+    if rotated:
+        # Remove x-ticks
+        ax.set_xticks([])
+        # turn off x-labels
+        ax.set_xlabel('')
+        # set limits
+        ymin, ymax = ax.get_ylim()
+        if plot_min is not None:
+            ymin = plot_min
+        if plot_max is not None:
+            ymax = plot_max
+        ax.set_ylim(ymin, ymax)
+    else:
+        # Remove y-ticks
+        ax.set_yticks([])
+        # turn off y-label
+        ax.set_ylabel('')
+        # set limits
+        xmin, xmax = ax.get_xlim()
+        if plot_min is not None:
+            xmin = plot_min
+        if plot_max is not None:
+            xmax = plot_max
+        ax.set_xlim(xmin, xmax)
 
 
 def set_marginal_histogram_title(ax, fmt, color, label=None, rotated=False):
@@ -500,6 +521,7 @@ def create_multidim_plot(parameters, samples, labels=None,
                          plot_marginal=True, plot_scatter=True,
                          marginal_percentiles=None, contour_percentiles=None,
                          marginal_title=True, marginal_linestyle='-',
+                         contour_linestyle='-', contour_labels=True,
                          zvals=None, show_colorbar=True, cbar_label=None,
                          vmin=None, vmax=None, scatter_cmap='plasma',
                          plot_density=False, plot_contours=True,
@@ -596,7 +618,7 @@ def create_multidim_plot(parameters, samples, labels=None,
     # set up the figure with a grid of axes
     # if only plotting 2 parameters, make the marginal plots smaller
     nparams = len(parameters)
-    if nparams == 2:
+    if nparams == 2 and plot_marginal:
         width_ratios = [3, 1]
         height_ratios = [1, 3]
     else:
@@ -709,7 +731,8 @@ def create_multidim_plot(parameters, samples, labels=None,
             create_density_plot(
                 px, py, samples, plot_density=plot_density,
                 plot_contours=plot_contours, cmap=density_cmap,
-                percentiles=contour_percentiles,
+                percentiles=contour_percentiles, contour_labels=contour_labels,
+                contour_linestyle=contour_linestyle,
                 contour_color=contour_color, xmin=mins[px], xmax=maxs[px],
                 ymin=mins[py], ymax=maxs[py],
                 exclude_region=exclude_region, ax=ax,
