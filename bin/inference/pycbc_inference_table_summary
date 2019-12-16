@@ -33,10 +33,8 @@ parser.add_argument("--verbose", action="store_true", default=False,
     help="Print logging info.")
 parser.add_argument("--output-file", type=str, required=True,
     help="Path to output plot.")
-parser.add_argument("--result-label", nargs="+",
-                    help="Provide labels for the provided file. If given, "
-                         "must equal the number of files provided.")
 parser.add_argument("--print-metadata", nargs="+", metavar="PARAM[:LABEL]",
+                    default=[],
                     action=ParseLabelArg,
                     help="Add metadata information after the parameter table. "
                          "Any parameter stored in the any of the file's attrs "
@@ -114,7 +112,7 @@ for param in parameters:
 # create table header
 interval = opts.quantiles[-1]-opts.quantiles[0]
 headers = ["Parameter",
-           "{}% Credible Interval".format(interval),
+           "{0:d}% Credible Interval".format(int(interval)),
            "Maximum Posterior",
            "Maximum Likelihood"
            ]
@@ -143,16 +141,15 @@ metadata.append(mdatatmplt.format('Number of posterior samples', samples.size))
 html += '\n'.join(metadata) + '<br />\n<br />\n'
 
 # save HTML table
-if ninputs == 1:
-    ttl = "Parameter Estimates for {}".format(opts.result_label[0])
-else:
-    ttl = "Parameter Estimates"
-results.save_fig_with_metadata(html, opts.output_file, {},
-                 cmd=" ".join(sys.argv),
-                 title=ttl,
-                 caption="Summary of parameter estimates. The {}% credible "
-                         "interval is the {}th +/- {}th/{}th percentiles. "
-                         "The maximum posterior parameters are the parameters "
-                         "with the largest likelihood * prior. The maximum "
-                         "likelihood parameters are the parameters with the "
-                         "largest likelihood.")
+results.save_fig_with_metadata(
+    html, opts.output_file, {},
+    cmd=" ".join(sys.argv),
+    title="Parameter Estimates",
+    caption="Summary of parameter estimates. The {0:d}-percent credible "
+            "interval is the {1:d}th +/- {2:d}th/{3:d}th percentiles. "
+            "The maximum posterior parameters are the parameters "
+            "with the largest likelihood * prior. The maximum "
+            "likelihood parameters are the parameters with the "
+            "largest likelihood."
+            .format(int(interval), int(opts.quantiles[1]),
+                    int(opts.quantiles[2]), int(opts.quantiles[0])))
