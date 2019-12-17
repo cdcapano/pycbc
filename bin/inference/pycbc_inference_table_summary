@@ -77,9 +77,6 @@ parameters = requested_params
 mapidx = samples['loglikelihood+logprior'].argmax()
 maxlidx = samples['loglikelihood'].argmax()
 
-if opts.result_label is None:
-    opts.result_label = ["Event {}".format(ii+1) for ii in range(len(fp))]
-
 # make sure the quantiles are sorted
 opts.quantiles.sort()
 
