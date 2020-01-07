@@ -622,6 +622,13 @@ def spin2y_from_mass1_mass2_xi2_phi_a_phi_s(mass1, mass2, xi2, phi_a, phi_s):
     return chi_perp * numpy.sin(phi2)
 
 
+#
+# =============================================================================
+#
+#                       NS EOS functions
+#
+# =============================================================================
+#
 def dquadmon_from_lambda(lambdav):
     r"""Return the quadrupole moment of a neutron star given its lambda
 
@@ -642,6 +649,32 @@ def dquadmon_from_lambda(lambdav):
     ei = 1.23 * 10**-4.0
     ln_quad_moment = ai + bi*ll + ci*ll**2.0 + di*ll**3.0 + ei*ll**4.0
     return numpy.exp(ln_quad_moment) - 1
+
+
+def max_mass_from_eft_eos(eos_index, eos_directory):
+    """Returns the maximum mass supported by a Chiral EFT equation of state.
+    """
+    # convert to arrays
+    eos_index, input_is_array = ensurearray(eos_index)
+    if eos_index.shape == ():
+        eos_index = eos_index.reshape(1)
+    eos_index = eos_index.astype(int)
+    # FIXME: EFT files should be turned into hdf so we don't have to keep
+    # passing around these column headers
+    file_columns = ('radius', 'mass', 'lambda')
+    dtype = [(fname, float) for fname in file_columns]
+    eos_cache = {}
+    out = numpy.zeros(max(1, eos_index.size), dtype=float)
+    for ii, eos in enumerate(eos_index):
+        try:
+            mass = eos_cache[eos]
+        except KeyError:
+            eos_file = '{}/{}.dat'.format(eos_directory, eos)
+            data = numpy.loadtxt(eos_file, dtype=dtype)
+            eos_cache[eos] = data['mass'].max()
+            mass = eos_cache[eos]
+        out[ii] = mass
+    return formatreturn(out, input_is_array)
 
 #
 # =============================================================================
@@ -1521,5 +1554,5 @@ __all__ = ['dquadmon_from_lambda', 'lambda_tilde',
            'final_mass_from_initial', 'final_spin_from_initial',
            'optimal_dec_from_detector', 'optimal_ra_from_detector',
            'chi_eff_from_spherical', 'chi_p_from_spherical',
-           'nltides_gw_phase_diff_isco',
+           'nltides_gw_phase_diff_isco', 'max_mass_from_eft_eos',
           ]
