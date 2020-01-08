@@ -651,6 +651,8 @@ def dquadmon_from_lambda(lambdav):
     return numpy.exp(ln_quad_moment) - 1
 
 
+# caching for faster max mass checking
+_eos_caches = {}
 def max_mass_from_eft_eos(eos_index, eos_directory):
     """Returns the maximum mass supported by a Chiral EFT equation of state.
     """
@@ -663,16 +665,25 @@ def max_mass_from_eft_eos(eos_index, eos_directory):
     # passing around these column headers
     file_columns = ('radius', 'mass', 'lambda')
     dtype = [(fname, float) for fname in file_columns]
-    eos_cache = {}
+    try:
+        eos_cache = _eos_caches[eos_directory]
+    except KeyError:
+        eos_cache = {}
+        _eos_caches[eos_directory] = eos_cache
     out = numpy.zeros(max(1, eos_index.size), dtype=float)
     for ii, eos in enumerate(eos_index):
         try:
             mass = eos_cache[eos]
         except KeyError:
             eos_file = '{}/{}.dat'.format(eos_directory, eos)
-            data = numpy.loadtxt(eos_file, dtype=dtype)
-            eos_cache[eos] = data['mass'].max()
-            mass = eos_cache[eos]
+            try:
+                data = numpy.loadtxt(eos_file, dtype=dtype)
+                eos_cache[eos] = data['mass'].max()
+                mass = eos_cache[eos]
+            except OSError:
+                # file doesn't exist; might be the eos index is out of bounds,
+                # so just return nan
+                mass = numpy.nan
         out[ii] = mass
     return formatreturn(out, input_is_array)
 
