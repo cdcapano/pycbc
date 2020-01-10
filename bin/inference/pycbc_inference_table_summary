@@ -74,8 +74,16 @@ fp, parameters, labels, samples = results_from_cli(opts)
 parameters = requested_params
 
 # get the index of the map and maxl
-mapidx = samples['loglikelihood+logprior'].argmax()
-maxlidx = samples['loglikelihood'].argmax()
+if 'loglikelihood' in samples.fieldnames:
+    maxlidx = samples['loglikelihood'].argmax()
+    if 'logprior' in samples.fieldnames:
+        mapidx = samples['loglikelihood+logprior'].argmax()
+    else:
+        # the sampler didn't save the logprior
+        mapidx = None
+else:
+    # the sampler didn't save the loglikelihood
+    maxlidx = None
 
 # make sure the quantiles are sorted
 opts.quantiles.sort()
@@ -99,9 +107,15 @@ for param in parameters:
     # we'll use the error from the credible interval to determine how many
     # significant figures to print for the map and maxl values
     error = min(negerror, poserror)
-    for val in [mapval, maxlval]:
-        fmt = '${0}$'.format(results.format_value(
-            val, error, use_scientific_notation=5, include_error=False))
+    for idx in [mapidx, maxlidx]:
+        if idx is not None:
+            val = x[idx]
+            fmt = '${0}$'.format(results.format_value(
+                val, error, use_scientific_notation=5, include_error=False))
+        else:
+            # sampler didn't provide a loglikelihood or logprior, so just
+            # enter nothing
+            fmt = '--'
         row.append(fmt)
     # add to the table
     table.append(row)
