@@ -680,7 +680,7 @@ def max_mass_from_eft_eos(eos_index, eos_directory):
                 data = numpy.loadtxt(eos_file, dtype=dtype)
                 eos_cache[eos] = data['mass'].max()
                 mass = eos_cache[eos]
-            except OSError:
+            except (IOError, OSError):
                 # file doesn't exist; might be the eos index is out of bounds,
                 # so just return nan
                 mass = numpy.nan
