@@ -1195,26 +1195,22 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 cplx_hd = 0j
                 hh = 0.
             else:
-                #slc = slice(self._kmin[det], kmax)
                 #time series of the signal
-                H = h[self._kmin[det]:kmax].to_timeseries()
+                H = h[self._kmin[det]:-1].to_timeseries()
                 #data details
-                d = self._data[det][self._kmin[det]:kmax]
+                d = self._data[det][self._kmin[det]:-1]
                 D = d.to_timeseries()
                 D.resize(len(H))
+                ## residual = data - signal
                 residual = D-H
+                ##Applying the gate method "paint"
                 gatedresidual = residual.gate(gatestart + dgate/2, window=dgate/2, copy=False,method='paint')
+                ##conversion to the frequency series
                 gatedresidualFreq = gatedresidual.to_frequencyseries()
-                gatedresidualFreq *= self._weight[det][self._kmin[det]:kmax]
-                '''
-                # whiten the waveform
-                h[self._kmin[det]:kmax] *= self._weight[det][slc]
-                # the inner products
-                cplx_hd = self._whitened_data[det][slc].inner(h[slc])  # <h, d>
-                hh = h[slc].inner(h[slc]).real  # < h, h>
-                '''
-                residualinner = gatedresidualFreq[self._kmin[det]:kmax].inner(gatedresidualFreq[self._kmin[det]:kmax]).real
-            cplx_loglr = residualinner #cplx_hd - 0.5*hh
+                gatedresidualFreq *= self._weight[det][self._kmin[det]:-1]
+                #inner product
+                residualinner = -(gatedresidualFreq[self._kmin[det]:-1].inner(gatedresidualFreq[self._kmin[det]:-1]).real)*0.5
+            cplx_loglr = residualinner
             # store
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), residualinner)
             setattr(self._current_stats, '{}_cplx_loglr'.format(det),
