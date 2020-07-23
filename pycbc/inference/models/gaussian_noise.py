@@ -971,7 +971,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
         return -numpy.inf
 
 
-
     def _loglr(self):
         r"""Computes the log likelihood ratio after removing the power
          within the given time window,
