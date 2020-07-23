@@ -1157,13 +1157,14 @@ class GatedGaussianNoise(BaseGaussianNoise):
         return -numpy.inf
 
     def _loglr(self):
-        r"""Computes the log likelihood ratio,
+        r"""Computes the log likelihood ratio after removing the power
+         within the given time window,
 
         .. math::
 
-            \log \mathcal{L}(\Theta) = \sum_i
-                \left<h_i(\Theta)|d_i\right> -
-                \frac{1}{2}\left<h_i(\Theta)|h_i(\Theta)\right>,
+            \log \mathcal{L}(\Theta) = -\frac{1}{2} \sum_i
+             \left< d_i - h_i(\Theta) | d_i - h_i(\Theta) \right>,
+
 
         at the current parameter values :math:`\Theta`.
 
@@ -1209,7 +1210,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 gatedresidualFreq = gatedresidual.to_frequencyseries()
                 gatedresidualFreq *= self._weight[det][self._kmin[det]:-1]
                 #inner product
-                residualinner = -(gatedresidualFreq[self._kmin[det]:-1].inner(gatedresidualFreq[self._kmin[det]:-1]).real)*0.5
+                residualinner = -(1./2.)*(gatedresidualFreq[self._kmin[det]:-1].inner(gatedresidualFreq[self._kmin[det]:-1]).real)
             cplx_loglr = residualinner
             # store
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), residualinner)
