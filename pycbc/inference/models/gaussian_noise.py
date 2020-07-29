@@ -859,7 +859,7 @@ class GaussianNoise(BaseGaussianNoise):
                 # the inner products
                 cplx_hd = self._whitened_data[det][slc].inner(h[slc])  # <h, d>
                 hh = h[slc].inner(h[slc]).real  # < h, h>
-            cplx_loglr = cplx_hd - 0.5*hh
+            cplx_loglr = cplx_hd - 0.5 * hh
             # store
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
             setattr(self._current_stats, '{}_cplx_loglr'.format(det),
@@ -1211,15 +1211,27 @@ class GatedGaussianNoise(BaseGaussianNoise):
 
 
                 ##Applying the gate method "paint"
-                gatedresidual = residual.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
+                #gatedresidual = residual.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
+                gatedH = H.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
+                gatedD = D.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
+
                 ##conversion to the frequency series
-                gatedresidualFreq = gatedresidual.to_frequencyseries()
-                gatedresidualFreq *= self._weight[det][self._kmin[det]:-1]
+                #gatedresidualFreq = gatedresidual.to_frequencyseries()
+                gatedHFreq = gatedH.to_frequencyseries()
+                gatedDFreq = gatedD.to_frequencyseries()
+                #gatedresidualFreq *= self._weight[det][self._kmin[det]:-1]
+                gatedDFreq *= self._weight[det][self._kmin[det]:-1]
+                gatedHFreq *= self._weight[det][self._kmin[det]:-1]
                 #inner product
-                residualinner = -(1./2.)*(gatedresidualFreq[self._kmin[det]:-1].inner(gatedresidualFreq[self._kmin[det]:-1]).real)
-            cplx_loglr = residualinner
+
+                cplx_hd = gatedHFreq[self._kmin[det]:-1] . inner(gatedDFreq[self._kmin[det]:-1])  # <h, d>
+                hh = gatedHFreq[self._kmin[det]:-1] . inner(gatedHFreq[self._kmin[det]:-1]).real  # < h, h>
+            cplx_loglr = cplx_hd - 0.5*hh
+                #inner product
+                #residualinner = -(1./2.)*(gatedresidualFreq[self._kmin[det]:-1].inner(gatedresidualFreq[self._kmin[det]:-1]).real)
+            #cplx_loglr = residualinner
             # store
-            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), residualinner)
+            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
             setattr(self._current_stats, '{}_cplx_loglr'.format(det),
                     cplx_loglr)
             lr += cplx_loglr.real
