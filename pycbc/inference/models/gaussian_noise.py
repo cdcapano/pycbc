@@ -1218,8 +1218,14 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 D.resize(len(H))
                 ## residual = data - signal
                 residual = D-H
+
+
+                Invpsd=1. / self.psds[det][self._kmin[det]:-1]
+
+
+
                 ##Applying the gate method "paint"
-                gatedresidual = residual.gate(gatestart + dgate/2, window=dgate/2, copy=False,method='paint')
+                gatedresidual = residual.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
                 ##conversion to the frequency series
                 gatedresidualFreq = gatedresidual.to_frequencyseries()
                 gatedresidualFreq *= self._weight[det][self._kmin[det]:-1]
