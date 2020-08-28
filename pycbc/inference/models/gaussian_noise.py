@@ -36,6 +36,7 @@ from .base import ModelStats
 from .base_data import BaseDataModel
 from .data_utils import (data_opts_from_config, data_from_cli,
                          fd_data_from_strain_dict, gate_overwhitened_data)
+from pycbc.detector import Detector
 
 
 @add_metaclass(ABCMeta)
@@ -1188,6 +1189,11 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 raise e
         lr = 0.
         for det, h in wfs.items():
+            Det = Detector(det)
+            #Accounting for the time delay between the waveforms of the different detectors
+            gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
+            gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
+            dgatedelay = gateenddelay - gatestartdelay
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             if self._kmin[det] >= kmax:
@@ -1202,8 +1208,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 d = self._data[det][self._kmin[det]:-1]
                 D = d.to_timeseries()
                 D.resize(len(H))
-                ## residual = data - signal
-                residual = D-H
 
 
                 Invpsd=1. / self.psds[det][self._kmin[det]:-1]
@@ -1211,25 +1215,19 @@ class GatedGaussianNoise(BaseGaussianNoise):
 
 
                 ##Applying the gate method "paint"
-                #gatedresidual = residual.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
-                gatedH = H.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
-                gatedD = D.gate(gatestart + dgate/2, window=dgate/2, copy=False, invpsd=Invpsd, method='paint')
+                gatedH = H.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invpsd, method='paint')
+                gatedD = D.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invpsd, method='paint')
 
                 ##conversion to the frequency series
-                #gatedresidualFreq = gatedresidual.to_frequencyseries()
                 gatedHFreq = gatedH.to_frequencyseries()
                 gatedDFreq = gatedD.to_frequencyseries()
-                #gatedresidualFreq *= self._weight[det][self._kmin[det]:-1]
+                #Normalization
                 gatedDFreq *= self._weight[det][self._kmin[det]:-1]
                 gatedHFreq *= self._weight[det][self._kmin[det]:-1]
                 #inner product
-
                 cplx_hd = gatedHFreq[self._kmin[det]:-1] . inner(gatedDFreq[self._kmin[det]:-1])  # <h, d>
                 hh = gatedHFreq[self._kmin[det]:-1] . inner(gatedHFreq[self._kmin[det]:-1]).real  # < h, h>
             cplx_loglr = cplx_hd - 0.5*hh
-                #inner product
-                #residualinner = -(1./2.)*(gatedresidualFreq[self._kmin[det]:-1].inner(gatedresidualFreq[self._kmin[det]:-1]).real)
-            #cplx_loglr = residualinner
             # store
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
             setattr(self._current_stats, '{}_cplx_loglr'.format(det),
