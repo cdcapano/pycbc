@@ -1204,7 +1204,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
         lr = 0.
         for det, h in wfs.items():
             #h._epoch = self._epoch
-            print (h._epoch)
             Invpsd=1. / self.psds[det][self._kmin[det]:-1]
             Det = Detector(det)
             #Accounting for the time delay between the waveforms of the different detectors
@@ -1229,13 +1228,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
 
 
 
-
                 ##Applying the gate method "paint"
                 gatedH = H.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invpsd, method='paint')
                 gatedD = D.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invpsd, method='paint')
 
-                print (gatedH._epoch)
-                print (gatedD._epoch)
                 ##conversion to the frequency series
                 gatedHFreq = gatedH.to_frequencyseries()
                 gatedDFreq = gatedD.to_frequencyseries()
