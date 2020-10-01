@@ -1224,7 +1224,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
             for F in h.sample_frequencies.numpy():
                 if F <= meco_f:
                     i = i+1
-            gatestartdelay = GateStart[i]
+            gatestartdelay = h.epoch + GateStart[i]
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             slc = slice(self._kmin[det], kmax)
