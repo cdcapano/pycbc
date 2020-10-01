@@ -37,6 +37,9 @@ from .base_data import BaseDataModel
 from .data_utils import (data_opts_from_config, data_from_cli,
                          fd_data_from_strain_dict, gate_overwhitened_data)
 from pycbc.detector import Detector
+from pycbc.pnutils import hybrid_meco_frequency
+from pycbc.waveform.utils import time_from_frequencyseries
+
 
 
 @add_metaclass(ABCMeta)
@@ -1197,9 +1200,16 @@ class GatedGaussianNoise(BaseGaussianNoise):
             The value of the log likelihood ratio.
         """
         params = self.current_params
-        gatestart = params['t_gate_start']
-        gateend = params['t_gate_end']
-        dgate = gateend-gatestart
+
+        """gate input for ringdown analysis which consideres a start time and an end time"""
+        #gatestart = params['t_gate_start']
+        #gateend = params['t_gate_end']
+        #dgate = gateend-gatestart
+
+        """ Gate input for inspiral analysis which is only the window length
+        as the gate start time is determined by the HybridMeco"""
+        dgate = params['gate_window']
+
         try:
             wfs = self.waveform_generator.generate(**params)
         except NoWaveformError:
@@ -1213,10 +1223,22 @@ class GatedGaussianNoise(BaseGaussianNoise):
         for det, h in wfs.items():
             Invp = self._invpsds[det]
             Det = Detector(det)
+
+            """Gateing configuration Ringdown analysis"""
             #Accounting for the time delay between the waveforms of the different detectors
-            gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
-            gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
-            dgatedelay = gateenddelay - gatestartdelay
+            #gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
+            #gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
+            #dgatedelay = gateenddelay - gatestartdelay
+
+            """ Gateing configuration  inspiral analysis"""
+            dgatedelay = dgate
+            meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], params['spin1z'], params['spin2z'], qm1=None, qm2=None)
+            Gatestart = time_from_frequencyseries(h)
+            i=0
+            for F in h.sample_frequencies.numpy():
+                if F <= meco_f:
+                    i = i+1
+            gatestartdelay = Gatestart[i]
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             slc = slice(self._kmin[det], kmax)
