@@ -1233,11 +1233,12 @@ class GatedGaussianNoise(BaseGaussianNoise):
             """ Gateing configuration  inspiral analysis"""
             dgatedelay = dgate
             meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], params['spin1z'], params['spin2z'], qm1=None, qm2=None)
-            TimeFreqSrs = time_from_frequencyseries(h)
-            sample_freq = h.sample_frequencies.numpy()
-            Meco_idx = numpy.where(sample_freq[0:] >= meco_f)[0]
-            gatestart = h.epoch + TimeFreqSrs[Meco_idx[0]]
-            gatestartdelay = gatestart #+ Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
+            TimeFreqSrs = time_from_frequencyseries(h[int(21/htilde.delta_f):], sample_frequencies=htilde.sample_frequencies[int(21/htilde.delta_f):])
+            i = 0
+            for F in h.sample_frequencies.numpy():
+                if F <= meco_f:
+                    i = i+1
+            gatestartdelay = h.epoch + TimeFreqSrs[i]
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             slc = slice(self._kmin[det], kmax)
