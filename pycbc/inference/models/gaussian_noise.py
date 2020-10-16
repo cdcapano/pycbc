@@ -1235,8 +1235,11 @@ class GatedGaussianNoise(BaseGaussianNoise):
             meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], params['spin1z'], params['spin2z'], qm1=None, qm2=None)
             Sample_Freq = h.sample_frequencies[int(21/h.delta_f):]
             TimeFreqSrs = time_from_frequencyseries(h[int(21/h.delta_f):], sample_frequencies= Sample_Freq)
-            idx = numpy.where(Sample_Freq[0:] <= meco_f)[0]
-            gatestartdelay = h.epoch + TimeFreqSrs[idx[-1]]
+            i = 0
+            for F in Sample_Freq:
+                if F <= meco_f:
+                    i = i+1
+            gatestartdelay = h.epoch + TimeFreqSrs[i]
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             slc = slice(self._kmin[det], kmax)
