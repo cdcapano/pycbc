@@ -634,6 +634,11 @@ class ResultsArgumentParser(argparse.ArgumentParser):
                  "is python; any parameter or function of parameter can be "
                  "used, similar to the parameters argument. Multiple "
                  "constraints may be combined by using '&' and '|'.")
+        results_reading_group.add_argument(
+            "--include", nargs="+", default=None, type=str,
+            help="Include the given modules in the function library. All "
+                 "functions in the module's __all__ attribute will be added. "
+                 "To use a function, it must be vectorized.")
         return results_reading_group
 
 
@@ -704,6 +709,14 @@ def results_from_cli(opts, load_samples=True, **kwargs):
             samples = fp.samples_from_cli(opts, parameters=opts.parameters,
                                           **kwargs)
 
+            if opts.include is not None:
+                import importlib
+                for mod in opts.include:
+                    fnames = importlib.import_module(mod).__all__
+                    funcs = [getattr(importlib.import_module(mod), _f)
+                             for _f in fnames]
+                    samples.add_functions(fnames, funcs)
+                    
             logging.info("Loaded {} samples".format(samples.size))
 
             if input_file in constraints:
