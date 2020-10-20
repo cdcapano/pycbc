@@ -1219,7 +1219,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
             """ Gateing configuration  inspiral analysis"""
             dgatedelay = dgate
             meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], params['spin1z'], params['spin2z'], qm1=None, qm2=None)
-            flow = params['f_lower'] + 1.
+            flow = params['f_lower'] + 10.
             Sample_Freq = h.sample_frequencies[int(flow/h.delta_f):]
             TimeFreqSrs = time_from_frequencyseries(h[int(flow/h.delta_f):], sample_frequencies = Sample_Freq)
             i = 0
