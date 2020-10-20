@@ -1226,6 +1226,8 @@ class GatedGaussianNoise(BaseGaussianNoise):
             for F in Sample_Freq:
                 if F <= meco_f:
                     i = i+1
+            hTD = h.to_timeseries()
+            gatestartdelay = hTD.sample_times.data[-1] + TimeFreqSrs[i]
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             slc = slice(self._kmin[det], kmax)
@@ -1238,7 +1240,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 #time series of the signal
                 h.resize(len(Invp))
                 H = h.to_timeseries()
-                gatestartdelay = H.sample_times.data[-1] + TimeFreqSrs[i]
                 #data details
                 d = self._data[det]
                 D = d.to_timeseries()
