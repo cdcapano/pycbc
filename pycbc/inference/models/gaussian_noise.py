@@ -1188,13 +1188,13 @@ class GatedGaussianNoise(BaseGaussianNoise):
         params = self.current_params
 
         """gate input for ringdown analysis which consideres a start time and an end time"""
-        #gatestart = params['t_gate_start']
-        #gateend = params['t_gate_end']
-        #dgate = gateend-gatestart
+        gatestart = params['t_gate_start']
+        gateend = params['t_gate_end']
+        dgate = gateend-gatestart
 
         """ Gate input for inspiral analysis which is only the window length
         as the gate start time is determined by the HybridMeco"""
-        dgate = params['gate_window']
+        #dgate = params['gate_window']
 
         try:
             wfs = self.waveform_generator.generate(**params)
@@ -1212,12 +1212,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
 
             """Gateing configuration Ringdown analysis"""
             #Accounting for the time delay between the waveforms of the different detectors
-            #gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
-            #gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
-            #dgatedelay = gateenddelay - gatestartdelay
+            Gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
+            gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
 
             """ Gateing configuration  inspiral analysis"""
-            dgatedelay = dgate
             meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], params['spin1z'], params['spin2z'], qm1=None, qm2=None)
             flow = 25. #max (params['f_lower'] + 2., meco_f - 40.)
             Sample_Freq = h.sample_frequencies[int(flow/h.delta_f):]
@@ -1227,7 +1225,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 if F <= meco_f:
                     i = i+1
             hTD = h.to_timeseries()
-            gatestartdelay = hTD.sample_times.data[-1] + TimeFreqSrs[i]
+            hmecotime = hTD.sample_times.data[-1] + TimeFreqSrs[i]
+            #finding the minimum of h-meco or the input time
+            gatestartdelay = min (hmecotime, Gatestartdelay)
+            dgatedelay = gateenddelay - gatestartdelay
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
             slc = slice(self._kmin[det], kmax)
