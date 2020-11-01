@@ -1237,8 +1237,9 @@ class GatedGaussianNoise(BaseGaussianNoise):
                     if F <= meco_f:
                         i = i+1
                 hmecotime = H.sample_times.data[-1] + TimeFreqSrs[i]
+                hmecotimeDelay = hmecotime + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], hmecotime)
                 #finding the minimum of h-meco or the input time
-                gatestartdelay = min (hmecotime, Gatestartdelay)
+                gatestartdelay = min (hmecotimeDelay, Gatestartdelay)
                 dgatedelay = gateenddelay - gatestartdelay
                 #data details
                 d = self._data[det]
