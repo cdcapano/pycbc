@@ -264,6 +264,8 @@ class BaseGaussianNoise(BaseDataModel):
             kmax = self._kmax[det]
             invp = FrequencySeries(numpy.zeros(len(p)), delta_f=p.delta_f)
             invp[kmin:kmax] = 1./p[kmin:kmax]
+            invp[:kmin+10] = invp[kmin+10]
+            invp[kmax-10:] = invp[kmax-10]
             w[kmin:kmax] = numpy.sqrt(4 * invp.delta_f * invp[kmin:kmax])
             self._invpsds[det] = invp
             self._weight[det] = w
