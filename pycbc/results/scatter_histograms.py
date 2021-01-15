@@ -614,8 +614,8 @@ def create_multidim_plot(parameters, samples, labels=None,
         elif show_colorbar:
             raise ValueError("must provide z values to create a colorbar")
         else:
-            # just make all scatter points same color
-            zvals = 'gray'
+            # make all scatter points same color as the marginal hist color
+            zvals = hist_color 
             if plot_contours and contour_color is None:
                 contour_color = 'navy'
 
@@ -672,7 +672,7 @@ def create_multidim_plot(parameters, samples, labels=None,
             continue
         ax, _, _ = axis_dict[px, py]
         if plot_scatter:
-            if plot_density:
+            if plot_density or not show_colorbar:
                 alpha = 0.3
             else:
                 alpha = 1.
