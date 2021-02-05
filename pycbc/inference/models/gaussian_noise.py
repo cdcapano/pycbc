@@ -915,20 +915,17 @@ class GaussianNoise(BaseGaussianNoise):
             return getattr(self._current_stats, '{}_optimal_snrsq'.format(det))
 
 
-
-
-
-
 class GatedGaussianNoise(BaseGaussianNoise):
-    r"""Model that assumes data is stationary Gaussian noise.
-
-
+    r"""Model that applies a time domain gate, assuming stationary Gaussian
+    noise.
     """
     name = 'gated_gaussian_noise'
 
     def __init__(self, variable_params, data, low_frequency_cutoff, psds=None,
                  high_frequency_cutoff=None, normalize=False,
                  static_params=None, **kwargs):
+        # we'll want the time-domain data, so store that
+        self._td_data = {}
         # set up the boiler-plate attributes
         super(GatedGaussianNoise, self).__init__(
             variable_params, data, low_frequency_cutoff, psds=psds,
@@ -941,6 +938,16 @@ class GatedGaussianNoise(BaseGaussianNoise):
             recalibration=self.recalibration,
             gates=self.gates, **self.static_params)
 
+
+    @BaseData.data.setter(self, data):
+        """Store a copy of the FD and TD data."""
+        BaseData.data.fset(self, data)
+        # store the td version
+        self._td_data = {det: d.to_timeseries() for det, d in data.items()}
+
+    @property
+    def td_data(self):
+        return self._td_data
 
     @property
     def _extra_stats(self):
@@ -969,16 +976,13 @@ class GatedGaussianNoise(BaseGaussianNoise):
         """
         params = self.current_params
 
-        """gate inputs which consideres a start time and an end time"""
+        # gate input for ringdown analysis which consideres a start time
+        # and an end time
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
         dgate = gateend-gatestart
         ra = params['ra']
         dec = params['dec']
-
-        """ Gate input for inspiral analysis which is only the window length
-        as the gate start time is determined by the HybridMeco"""
-        #dgate = params['gate_window']
 
         try:
             wfs = self.waveform_generator.generate(**params)
@@ -990,45 +994,49 @@ class GatedGaussianNoise(BaseGaussianNoise):
             else:
                 raise e
         lr = 0.
+        # we'll need the sky location for determining time shifts
+        ra = self.current_params['ra']
+        dec = self.current_params['dec']
         for det, h in wfs.items():
-            Invp = self._invpsds[det]
-            Det = Detector(det)
-
-            """Gateing configuration Ringdown analysis"""
-            #Accounting for the time delay between the waveforms of the different detectors
-            gatestartdelay = gatestart + Det.time_delay_from_earth_center(ra, dec, gatestart)
-            gateenddelay = gateend + Det.time_delay_from_earth_center(ra, dec, gateend)
-            dgatedelay = gateenddelay - gatestartdelay
-
-            # the kmax of the waveforms may be different than internal kmax
-            kmax = min(len(h), self._kmax[det])
-            slc = slice(self._kmin[det], kmax)
+            invpsd = self._invpsds[det]
+            thisdet = Detector(det)
+            # account for the time delay between the waveforms of the
+            # different detectors
+            gatestartdelay = gatestart + thisdet.time_delay_from_earth_center(
+                ra, dec, gatestart)
+            gateenddelay = gateend + thisdet.time_delay_from_earth_center(
+                ra, dec, gateend)
+            # we always filter the entire segment starting from kmin, since the
+            # gated series may have high frequency components
+            slc = slice(self._kmin[det], self._kmax[det])
             if self._kmin[det] >= kmax:
                 # if the waveform terminates before the filtering low frequency
                 # cutoff, then the loglr is just 0 for this detector
                 cplx_hd = 0j
                 hh = 0.
             else:
-                #time series of the signal
-                h.resize(len(Invp))
+                # time series of the signal
+                h.resize(len(invpsd))
                 ht = h.to_timeseries()
-                #data details
-                d = self._data[det]
-                dt = d.to_timeseries()
-                dt.resize(len(ht))
-                ##Applying the gate method "paint"
-                gatedH = ht.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
-                gatedD = dt.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
-                 
-                ##conversion to the frequency series
-                gatedHFreq = gatedH.to_frequencyseries()
-                gatedDFreq = gatedD.to_frequencyseries()
-                #Normalization
-                gatedDFreq *= self._weight[det]
-                gatedHFreq *= self._weight[det]
-                #inner product
-                cplx_hd = gatedHFreq[slc] . inner(gatedDFreq[slc])  # <h, d>
-                hh = gatedHFreq[slc] . inner(gatedHFreq[slc]).real  # < h, h>
+                dgatedelay = gateenddelay - gatestartdelay
+                # apply the gate method "paint"
+                gated_ht = ht.gate(gatestartdelay + dgatedelay/2,
+                                   window=dgatedelay/2, copy=False,
+                                   invpsd=invpsd, method='paint')
+                # the data
+                data = self.td_data[det]
+                gated_dt = data.gate(gatestartdelay + dgatedelay/2,
+                                     window=dgatedelay/2, copy=False,
+                                     invpsd=invpsd, method='paint')
+                # conversion to the frequency series
+                gated_h = gated_ht.to_frequencyseries()
+                gated_d = gated_dt.to_frequencyseries()
+                # normalization
+                gated_d *= self._weight[det]
+                gated_h *= self._weight[det]
+                # inner product
+                cplx_hd = gated_h[slc].inner(gated_d[slc])  # <h, d>
+                hh = gated_h[slc].inner(gated_h[slc]).real  # < h, h>
             cplx_loglr = cplx_hd - 0.5*hh
             # store
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
