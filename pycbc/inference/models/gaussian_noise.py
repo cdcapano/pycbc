@@ -939,7 +939,8 @@ class GatedGaussianNoise(BaseGaussianNoise):
             gates=self.gates, **self.static_params)
 
 
-    @BaseData.data.setter(self, data):
+    @BaseData.data.setter
+    def data(self, data):
         """Store a copy of the FD and TD data."""
         BaseData.data.fset(self, data)
         # store the td version
