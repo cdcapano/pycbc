@@ -617,7 +617,7 @@ def select_waveform_generator(approximant):
 
     # check if frequency-domain CBC waveform
     if approximant in waveform.fd_approximants():
-        return TDomainCBCGenerator
+        return FDomainCBCGenerator
 
     # check if time-domain CBC waveform
     elif approximant in waveform.td_approximants():
