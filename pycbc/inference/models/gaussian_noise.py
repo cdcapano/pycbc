@@ -264,8 +264,6 @@ class BaseGaussianNoise(BaseDataModel):
             kmax = self._kmax[det]
             invp = FrequencySeries(numpy.zeros(len(p)), delta_f=p.delta_f)
             invp[kmin:kmax] = 1./p[kmin:kmax]
-            invp[:kmin+10] = invp[kmin+10]
-            invp[kmax-10:] = invp[kmax-10]
             w[kmin:kmax] = numpy.sqrt(4 * invp.delta_f * invp[kmin:kmax])
             self._invpsds[det] = invp
             self._weight[det] = w
@@ -1214,8 +1212,9 @@ class GatedGaussianNoise(BaseGaussianNoise):
 
             """Gateing configuration Ringdown analysis"""
             #Accounting for the time delay between the waveforms of the different detectors
-            Gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
+            gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
             gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
+            dgatedelay = gateenddelay - gatestartdelay
 
             # the kmax of the waveforms may be different than internal kmax
             kmax = min(len(h), self._kmax[det])
@@ -1229,28 +1228,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 #time series of the signal
                 h.resize(len(Invp))
                 H = h.to_timeseries()
-                """ Gateing configuration  inspiral analysis"""
-                meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], params['spin1z'], params['spin2z'], qm1=None, qm2=None)
-                flow = 25. #max (params['f_lower'] + 2., meco_f - 40.)
-                Sample_Freq = h.sample_frequencies[int(flow/h.delta_f):]
-                TimeFreqSrs = time_from_frequencyseries(h[int(flow/h.delta_f):], sample_frequencies = Sample_Freq)
-                i = 0
-                for F in Sample_Freq:
-                    if F <= meco_f:
-                        i = i+1
-                hmecotime = H.sample_times.data[-1] + TimeFreqSrs[i]
-                hmecotimeDelay = hmecotime + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], hmecotime)
-                #finding the minimum of h-meco or the input time
-                gatestartdelay = hmecotimeDelay
-                dgatedelay = gateenddelay - gatestartdelay
                 #data details
                 d = self._data[det]
                 D = d.to_timeseries()
                 D.resize(len(H))
-
-
-
-
                 ##Applying the gate method "paint"
                 gatedH = H.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
                 gatedD = D.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
