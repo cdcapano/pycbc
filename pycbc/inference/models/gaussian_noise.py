@@ -37,12 +37,6 @@ from .base_data import BaseDataModel
 from .data_utils import (data_opts_from_config, data_from_cli,
                          fd_data_from_strain_dict, gate_overwhitened_data)
 from pycbc.detector import Detector
-<<<<<<< HEAD
-from pycbc.pnutils import hybrid_meco_frequency
-from pycbc.waveform.utils import time_from_frequencyseries
-
-=======
->>>>>>> added the modified code accounting for the delay time
 
 
 @add_metaclass(ABCMeta)
