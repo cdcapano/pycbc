@@ -931,202 +931,6 @@ class GaussianNoise(BaseGaussianNoise):
 class GatedGaussianNoise(BaseGaussianNoise):
     r"""Model that assumes data is stationary Gaussian noise.
 
-    With Gaussian noise the log likelihood functions for signal
-    :math:`\log p(d|\Theta, h)` and for noise :math:`\log p(d|n)` are given by:
-
-    .. math::
-
-        \log p(d|\Theta, h) &=  \log\alpha -\frac{1}{2} \sum_i
-            \left< d_i - h_i(\Theta) | d_i - h_i(\Theta) \right> \\
-        \log p(d|n) &= \log\alpha -\frac{1}{2} \sum_i \left<d_i | d_i\right>
-
-    where the sum is over the number of detectors, :math:`d_i` is the data in
-    each detector, and :math:`h_i(\Theta)` is the model signal in each
-    detector. The (discrete) inner product is given by:
-
-    .. math::
-
-        \left<a_i | b_i\right> = 4\Re \Delta f
-            \sum_{k=k_{\mathrm{min}}}^{k_{\mathrm{max}}}
-            \frac{\tilde{a}_i^{*}[k] \tilde{b}_i[k]}{S^{(i)}_n[k]},
-
-    where :math:`\Delta f` is the frequency resolution (given by 1 / the
-    observation time :math:`T`), :math:`k` is an index over the discretely
-    sampled frequencies :math:`f = k \Delta_f`, and :math:`S^{(i)}_n[k]` is the
-    PSD in the given detector. The upper cutoff on the inner product
-    :math:`k_{\max}` is by default the Nyquist frequency
-    :math:`k_{\max} = N/2+1`, where :math:`N = \lfloor T/\Delta t \rfloor`
-    is the number of samples in the time domain, but this can be set manually
-    to a smaller value.
-
-    The normalization factor :math:`\alpha` is:
-
-    .. math::
-
-        \alpha = \prod_{i} \frac{1}{\left(\pi T\right)^{N/2}
-            \prod_{k=k_\mathrm{min}}^{k_{\mathrm{max}}} S^{(i)}_n[k]},
-
-    where the product is over the number of detectors. By default, the
-    normalization constant is not included in the log likelihood, but it can
-    be turned on using the ``normalize`` keyword argument.
-
-    Note that the log likelihood ratio has fewer terms than the log likelihood,
-    since the normalization and :math:`\left<d_i|d_i\right>` terms cancel:
-
-    .. math::
-
-        \log \mathcal{L}(\Theta) = \sum_i \left[
-            \left<h_i(\Theta)|d_i\right> -
-            \frac{1}{2} \left<h_i(\Theta)|h_i(\Theta)\right> \right]
-
-    Upon initialization, the data is whitened using the given PSDs. If no PSDs
-    are given the data and waveforms returned by the waveform generator are
-    assumed to be whitened.
-
-    For more details on initialization parameters and definition of terms, see
-    :py:class:`models.BaseDataModel`.
-
-    Parameters
-    ----------
-    variable_params : (tuple of) string(s)
-        A tuple of parameter names that will be varied.
-    data : dict
-        A dictionary of data, in which the keys are the detector names and the
-        values are the data (assumed to be unwhitened). The list of keys must
-        match the waveform generator's detectors keys, and the epoch of every
-        data set must be the same as the waveform generator's epoch.
-    low_frequency_cutoff : dict
-        A dictionary of starting frequencies, in which the keys are the
-        detector names and the values are the starting frequencies for the
-        respective detectors to be used for computing inner products.
-    psds : dict, optional
-        A dictionary of FrequencySeries keyed by the detector names. The
-        dictionary must have a psd for each detector specified in the data
-        dictionary. If provided, the inner products in each detector will be
-        weighted by 1/psd of that detector.
-    high_frequency_cutoff : dict, optional
-        A dictionary of ending frequencies, in which the keys are the
-        detector names and the values are the ending frequencies for the
-        respective detectors to be used for computing inner products. If not
-        provided, the minimum of the largest frequency stored in the data
-        and a given waveform will be used.
-    normalize : bool, optional
-        If True, the normalization factor :math:`alpha` will be included in the
-        log likelihood. Default is to not include it.
-    static_params : dict, optional
-        A dictionary of parameter names -> values to keep fixed.
-    \**kwargs :
-        All other keyword arguments are passed to ``BaseDataModel``.
-
-    Examples
-    --------
-    Create a signal, and set up the model using that signal:
-
-    >>> from pycbc import psd as pypsd
-    >>> from pycbc.inference.models import GaussianNoise
-    >>> from pycbc.waveform.generator import (FDomainDetFrameGenerator,
-    ...                                       FDomainCBCGenerator)
-    >>> seglen = 4
-    >>> sample_rate = 2048
-    >>> N = seglen*sample_rate/2+1
-    >>> fmin = 30.
-    >>> static_params = {'approximant': 'IMRPhenomD', 'f_lower': fmin,
-    ...                  'mass1': 38.6, 'mass2': 29.3,
-    ...                  'spin1z': 0., 'spin2z': 0., 'ra': 1.37, 'dec': -1.26,
-    ...                  'polarization': 2.76, 'distance': 3*500.}
-    >>> variable_params = ['tc']
-    >>> tsig = 3.1
-    >>> generator = FDomainDetFrameGenerator(
-    ...     FDomainCBCGenerator, 0., detectors=['H1', 'L1'],
-    ...     variable_args=variable_params,
-    ...     delta_f=1./seglen, **static_params)
-    >>> signal = generator.generate(tc=tsig)
-    >>> psd = pypsd.aLIGOZeroDetHighPower(N, 1./seglen, 20.)
-    >>> psds = {'H1': psd, 'L1': psd}
-    >>> low_frequency_cutoff = {'H1': fmin, 'L1': fmin}
-    >>> model = GaussianNoise(variable_params, signal, low_frequency_cutoff,
-                              psds=psds, static_params=static_params)
-
-    Set the current position to the coalescence time of the signal:
-
-    >>> model.update(tc=tsig)
-
-    Now compute the log likelihood ratio and prior-weighted likelihood ratio;
-    since we have not provided a prior, these should be equal to each other:
-
-    >>> print('{:.2f}'.format(model.loglr))
-    282.43
-    >>> print('{:.2f}'.format(model.logplr))
-    282.43
-
-    Print all of the default_stats:
-
-    >>> print(',\n'.join(['{}: {:.2f}'.format(s, v)
-    ...                   for (s, v) in sorted(model.current_stats.items())]))
-    H1_cplx_loglr: 177.76+0.00j,
-    H1_optimal_snrsq: 355.52,
-    L1_cplx_loglr: 104.67+0.00j,
-    L1_optimal_snrsq: 209.35,
-    logjacobian: 0.00,
-    loglikelihood: 0.00,
-    loglr: 282.43,
-    logprior: 0.00
-
-    Compute the SNR; for this system and PSD, this should be approximately 24:
-
-    >>> from pycbc.conversions import snr_from_loglr
-    >>> x = snr_from_loglr(model.loglr)
-    >>> print('{:.2f}'.format(x))
-    23.77
-
-    Since there is no noise, the SNR should be the same as the quadrature sum
-    of the optimal SNRs in each detector:
-
-    >>> x = (model.det_optimal_snrsq('H1') +
-    ...      model.det_optimal_snrsq('L1'))**0.5
-    >>> print('{:.2f}'.format(x))
-    23.77
-
-    Toggle on the normalization constant:
-
-    >>> model.normalize = True
-    >>> model.loglikelihood
-    835397.8757405131
-
-    Using the same model, evaluate the log likelihood ratio at several points
-    in time and check that the max is at tsig:
-
-    >>> import numpy
-    >>> times = numpy.linspace(tsig-1, tsig+1, num=101)
-    >>> loglrs = numpy.zeros(len(times))
-    >>> for (ii, t) in enumerate(times):
-    ...     model.update(tc=t)
-    ...     loglrs[ii] = model.loglr
-    >>> print('tsig: {:.2f}, time of max loglr: {:.2f}'.format(
-    ...     tsig, times[loglrs.argmax()]))
-    tsig: 3.10, time of max loglr: 3.10
-
-    Create a prior and use it (see distributions module for more details):
-
-    >>> from pycbc import distributions
-    >>> uniform_prior = distributions.Uniform(tc=(tsig-0.2,tsig+0.2))
-    >>> prior = distributions.JointDistribution(variable_params, uniform_prior)
-    >>> model = GaussianNoise(variable_params,
-    ...     signal, low_frequency_cutoff, psds=psds, prior=prior,
-    ...     static_params=static_params)
-    >>> model.update(tc=tsig)
-    >>> print('{:.2f}'.format(model.logplr))
-    283.35
-    >>> print(',\n'.join(['{}: {:.2f}'.format(s, v)
-    ...                   for (s, v) in sorted(model.current_stats.items())]))
-    H1_cplx_loglr: 177.76+0.00j,
-    H1_optimal_snrsq: 355.52,
-    L1_cplx_loglr: 104.67+0.00j,
-    L1_optimal_snrsq: 209.35,
-    logjacobian: 0.00,
-    loglikelihood: 0.00,
-    loglr: 282.43,
-    logprior: 0.92
 
     """
     name = 'gated_gaussian_noise'
@@ -1172,22 +976,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
         r"""Computes the log likelihood ratio after removing the power
          within the given time window,
 
-        .. math::
-
-            \log \mathcal{L}(\Theta) = -\frac{1}{2} \sum_i
-             \left< d_i - h_i(\Theta) | d_i - h_i(\Theta) \right>,
-
-
-        at the current parameter values :math:`\Theta`.
-
-        Returns
-        -------
-        float
-            The value of the log likelihood ratio.
         """
         params = self.current_params
 
-        """gate input for ringdown analysis which consideres a start time and an end time"""
+        """gate inputs which consideres a start time and an end time"""
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
         dgate = gateend-gatestart
@@ -1211,9 +1003,11 @@ class GatedGaussianNoise(BaseGaussianNoise):
             Det = Detector(det)
 
             """Gateing configuration Ringdown analysis"""
+            ra = params['ra']
+            dec = params['dec']
             #Accounting for the time delay between the waveforms of the different detectors
-            gatestartdelay = gatestart + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gatestart)
-            gateenddelay = gateend + Det.time_delay_from_earth_center(self.current_params['ra'], self.current_params['dec'], gateend)
+            gatestartdelay = gatestart + Det.time_delay_from_earth_center(ra, dec, gatestart)
+            gateenddelay = gateend + Det.time_delay_from_earth_center(ra, dec, gateend)
             dgatedelay = gateenddelay - gatestartdelay
 
             # the kmax of the waveforms may be different than internal kmax
@@ -1227,15 +1021,15 @@ class GatedGaussianNoise(BaseGaussianNoise):
             else:
                 #time series of the signal
                 h.resize(len(Invp))
-                H = h.to_timeseries()
+                ht = h.to_timeseries()
                 #data details
                 d = self._data[det]
-                D = d.to_timeseries()
-                D.resize(len(H))
+                dt = d.to_timeseries()
+                dt.resize(len(ht))
                 ##Applying the gate method "paint"
-                gatedH = H.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
-                gatedD = D.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
-
+                gatedH = ht.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
+                gatedD = dt.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
+                 
                 ##conversion to the frequency series
                 gatedHFreq = gatedH.to_frequencyseries()
                 gatedDFreq = gatedD.to_frequencyseries()
