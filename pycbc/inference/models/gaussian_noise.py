@@ -979,6 +979,8 @@ class GatedGaussianNoise(BaseGaussianNoise):
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
         dgate = gateend-gatestart
+        ra = params['ra']
+        dec = params['dec']
 
         """ Gate input for inspiral analysis which is only the window length
         as the gate start time is determined by the HybridMeco"""
@@ -999,8 +1001,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
             Det = Detector(det)
 
             """Gateing configuration Ringdown analysis"""
-            ra = params['ra']
-            dec = params['dec']
             #Accounting for the time delay between the waveforms of the different detectors
             gatestartdelay = gatestart + Det.time_delay_from_earth_center(ra, dec, gatestart)
             gateenddelay = gateend + Det.time_delay_from_earth_center(ra, dec, gateend)
