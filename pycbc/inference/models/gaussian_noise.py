@@ -37,7 +37,6 @@ from .base_data import BaseDataModel
 from .data_utils import (data_opts_from_config, data_from_cli,
                          fd_data_from_strain_dict, gate_overwhitened_data)
 from pycbc.detector import Detector
-from pycbc.psd import welch, interpolate
 
 
 @add_metaclass(ABCMeta)
@@ -256,17 +255,11 @@ class BaseGaussianNoise(BaseDataModel):
                 p = psds[det].copy()
             self._psds[det] = p
             # we'll store the weight to apply to the inner product
-            w = Array(numpy.zeros(len(p)))
-            # only set weight in band we will analyze
-            kmin = self._kmin[det]
-            kmax = self._kmax[det]
-            invp = FrequencySeries(numpy.zeros(len(p)), delta_f=p.delta_f)
-            invp[kmin:kmax] = 1./p[kmin:kmax]
-            w[kmin:kmax] = numpy.sqrt(4 * invp.delta_f * invp[kmin:kmax])
+            invp = 1./p
             self._invpsds[det] = invp
-            self._weight[det] = w
+            self._weight[det] = numpy.sqrt(4 * invp.delta_f * invp)
             self._whitened_data[det] = d.copy()
-            self._whitened_data[det][kmin:kmax] *= w[kmin:kmax]
+            self._whitened_data[det] *= self._weight[det]
         # set the lognl and lognorm; we'll get this by just calling lognl
         _ = self.lognl
 
@@ -1017,17 +1010,15 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 hh = 0.
             else:
                 #time series of the signal
-                d = self._data[det]
-                dt = d.to_timeseries()
-                p = interpolate(welch(dt), 1.0 / dt.duration)
-                invp = 1./p
-                h.resize(len(invp))
+                h.resize(len(Invp))
                 ht = h.to_timeseries()
                 #data details
+                d = self._data[det]
+                dt = d.to_timeseries()
                 dt.resize(len(ht))
                 ##Applying the gate method "paint"
-                gatedH = ht.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=invp, method='paint')
-                gatedD = dt.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=invp, method='paint')
+                gatedH = ht.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
+                gatedD = dt.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
                  
                 ##conversion to the frequency series
                 gatedHFreq = gatedH.to_frequencyseries()
