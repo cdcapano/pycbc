@@ -37,6 +37,7 @@ from .base_data import BaseDataModel
 from .data_utils import (data_opts_from_config, data_from_cli,
                          fd_data_from_strain_dict, gate_overwhitened_data)
 from pycbc.detector import Detector
+from pycbc.psd import welch, interpolate
 
 
 @add_metaclass(ABCMeta)
@@ -1016,15 +1017,17 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 hh = 0.
             else:
                 #time series of the signal
-                h.resize(len(Invp))
-                ht = h.to_timeseries()
-                #data details
                 d = self._data[det]
                 dt = d.to_timeseries()
+                p = interpolate(welch(dt), 1.0 / dt.duration)
+                invp = 1./p
+                h.resize(len(invp))
+                ht = h.to_timeseries()
+                #data details
                 dt.resize(len(ht))
                 ##Applying the gate method "paint"
-                gatedH = ht.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
-                gatedD = dt.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=Invp, method='paint')
+                gatedH = ht.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=invp, method='paint')
+                gatedD = dt.gate(gatestartdelay + dgatedelay/2, window=dgatedelay/2, copy=False, invpsd=invp, method='paint')
                  
                 ##conversion to the frequency series
                 gatedHFreq = gatedH.to_frequencyseries()
