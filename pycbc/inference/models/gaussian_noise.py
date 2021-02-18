@@ -255,7 +255,13 @@ class BaseGaussianNoise(BaseDataModel):
                 p = psds[det].copy()
             self._psds[det] = p
             # we'll store the weight to apply to the inner product
-            invp = 1./p
+            w = Array(numpy.zeros(len(p)))
+            # only set weight in band we will analyze
+            kmin = self._kmin[det]
+            kmax = self._kmax[det]
+            invp = FrequencySeries(numpy.zeros(len(p)), delta_f=p.delta_f)
+            invp[kmin:kmax] = 1./p[kmin:kmax]
+            w[kmin:kmax] = numpy.sqrt(4 * invp.delta_f * invp[kmin:kmax])
             self._invpsds[det] = invp
             self._weight[det] = numpy.sqrt(4 * invp.delta_f * invp)
             self._whitened_data[det] = d.copy()
@@ -553,6 +559,11 @@ class BaseGaussianNoise(BaseDataModel):
         # convert to frequency domain and get psds
         stilde_dict, psds = fd_data_from_strain_dict(opts, strain_dict,
                                                      psd_strain_dict)
+        logging.info('Calculating psds using filter psd')
+        psds = {}
+        for det, d in psd_strain_dict.items():
+            psds[det] = d.filter_psd(opts.psd_segment_length[det], 
+                                     strain_dict[det].delta_f, 0.)
         # save the psd data segments if the psd was estimated from data
         if opts.psd_estimation is not None:
             _tdict = psd_strain_dict or strain_dict
@@ -931,6 +942,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
             variable_params, data, low_frequency_cutoff, psds=psds,
             high_frequency_cutoff=high_frequency_cutoff, normalize=normalize,
             static_params=static_params, **kwargs)
+        # caches for debuging
+        self.current_wfs = {}
+        self.current_gated_wfs = {}
+        self.current_gated_data = {}
         # create the waveform generator
         self.waveform_generator = create_waveform_generator(
             self.variable_params, self.data,
@@ -938,11 +953,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
             recalibration=self.recalibration,
             gates=self.gates, **self.static_params)
 
-
-    @BaseData.data.setter
+    @BaseDataModel.data.setter
     def data(self, data):
         """Store a copy of the FD and TD data."""
-        BaseData.data.fset(self, data)
+        BaseDataModel.data.fset(self, data)
         # store the td version
         self._td_data = {det: d.to_timeseries() for det, d in data.items()}
 
@@ -951,55 +965,110 @@ class GatedGaussianNoise(BaseGaussianNoise):
         return self._td_data
 
     @property
+    def psds(self):
+        """Dictionary of detectors -> PSD frequency series.
+
+        If no PSD was provided for a detector, this will just be a frequency
+        series of ones.
+        """
+        return self._psds
+
+    @BaseGaussianNoise.psds.setter
+    def psds(self, psds):
+        """Sets the psds, and calculates the weight and norm from them.
+
+        The data and the low and high frequency cutoffs must be set first.
+        """
+        # check that the data has been set
+        if self._data is None:
+            raise ValueError("No data set")
+        if self._f_lower is None:
+            raise ValueError("low frequency cutoff not set")
+        if self._f_upper is None:
+            raise ValueError("high frequency cutoff not set")
+        # make sure the relevant caches are cleared
+        self._psds.clear()
+        self._invpsds.clear()
+        self._weight.clear()
+        self._whitened_data.clear()
+        for det, d in self._data.items():
+            if psds is None:
+                # No psd means assume white PSD
+                p = FrequencySeries(numpy.ones(int(self._N/2+1)),
+                                    delta_f=d.delta_f)
+            else:
+                # copy for storage
+                p = psds[det].copy()
+            self._psds[det] = p
+            # we'll store the weight to apply to the inner product
+            invp = 1./p
+            self._invpsds[det] = invp
+            self._weight[det] = numpy.sqrt(4 * invp.delta_f * invp)
+            self._whitened_data[det] = d.copy()
+            self._whitened_data[det] *= self._weight[det]
+
+    def det_lognorm(self, det):
+        # FIXME: just returning 0 for now, but should be the determinant
+        # of the truncated covariance matrix
+        return 0.
+
+    @property
+    def normalize(self):
+        """Determines if the loglikelihood includes the normalization term.
+        """
+        return self._normalize
+
+    @normalize.setter
+    def normalize(self, normalize):
+        """Clears the current stats if the normalization state is changed.
+        """
+        self._normalize = normalize
+
+    @property
     def _extra_stats(self):
-        """Adds ``loglr``, plus ``cplx_loglr`` and ``optimal_snrsq`` in each
+        """Adds ``lognl``, plus ```optimal_snrsq`` in each
         detector."""
-        return ['loglr'] + \
-               ['{}_cplx_loglr'.format(det) for det in self._data] + \
+        return ['lognl'] + \
                ['{}_optimal_snrsq'.format(det) for det in self._data]
 
-    def _nowaveform_loglr(self):
-        """Convenience function to set loglr values if no waveform generated.
+    def _nowaveform_logl(self):
+        """Convenience function to set logl values if no waveform generated.
         """
         for det in self._data:
-            setattr(self._current_stats, 'loglikelihood', -numpy.inf)
-            setattr(self._current_stats, '{}_cplx_loglr'.format(det),
-                    -numpy.inf)
-            # snr can't be < 0 by definition, so return 0
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), 0.)
+        # set the lognl
+        _ = self.lognl
         return -numpy.inf
 
-
     def _loglr(self):
-        r"""Computes the log likelihood ratio after removing the power
-         within the given time window,
+        r"""Computes the log likelihood ratio.
 
+        Returns
+        -------
+        float
+            The value of the log likelihood ratio evaluated at the given point.
+        """
+        return self.loglikelihood - self.lognl
+
+    def get_gate_times(self):
+        """Gets the time to apply a gate based on the current sky position.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> (gate start, gate width)
         """
         params = self.current_params
-
         # gate input for ringdown analysis which consideres a start time
         # and an end time
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
         dgate = gateend-gatestart
-        ra = params['ra']
-        dec = params['dec']
-
-        try:
-            wfs = self.waveform_generator.generate(**params)
-        except NoWaveformError:
-            return self._nowaveform_loglr()
-        except FailedWaveformError as e:
-            if self.ignore_failed_waveforms:
-                return self._nowaveform_loglr()
-            else:
-                raise e
-        lr = 0.
         # we'll need the sky location for determining time shifts
         ra = self.current_params['ra']
         dec = self.current_params['dec']
-        for det, h in wfs.items():
-            invpsd = self._invpsds[det]
+        gatetimes = {}
+        for det, invpsd in self._invpsds.items():
             thisdet = Detector(det)
             # account for the time delay between the waveforms of the
             # different detectors
@@ -1007,99 +1076,180 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 ra, dec, gatestart)
             gateenddelay = gateend + thisdet.time_delay_from_earth_center(
                 ra, dec, gateend)
+            dgatedelay = gateenddelay - gatestartdelay
+            gatetimes[det] = (gatestartdelay, dgatedelay)
+        return gatetimes
+
+    def _lognl(self):
+        """Calculates the log of the noise likelihood.
+        """
+        params = self.current_params
+        # clear variables
+        lognl = 0.
+        self._det_lognls.clear()
+        # get the times of the gates
+        gate_times = self.get_gate_times()
+        for det, invpsd in self._invpsds.items():
+            norm = self.det_lognorm(det)
+            gatestartdelay, dgatedelay = gate_times[det]
             # we always filter the entire segment starting from kmin, since the
             # gated series may have high frequency components
             slc = slice(self._kmin[det], self._kmax[det])
-            if self._kmin[det] >= kmax:
+            # gate the data
+            data = self.td_data[det]
+            gated_dt = data.gate(gatestartdelay + dgatedelay/2,
+                                 window=dgatedelay/2, copy=True,
+                                 invpsd=invpsd, method='paint')
+            # convert to the frequency series
+            gated_d = gated_dt.to_frequencyseries()
+            # whiten
+            gated_d *= self._weight[det]
+            # inner product
+            dd = norm - 0.5*gated_d[slc].inner(gated_d[slc]).real  # <d, d>
+            # store
+            self._det_lognls[det] = dd
+            lognl += dd
+        return float(lognl)
+
+    def det_lognl(self, det):
+        try:
+            return self._det_lognls[det]
+        except KeyError:
+            # hasn't been calculated yet; call lognl to calculate & store
+            _ = self._lognl()
+            return self._det_lognls[det]
+
+    def _loglikelihood(self):
+        r"""Computes the log likelihood after removing the power within the
+        given time window,
+
+        .. math::
+
+            \log p(d|\Theta) = -\frac{1}{2} \sum_i
+             \left< d_i - h_i(\Theta) | d_i - h_i(\Theta) \right>,
+
+
+        at the current parameter values :math:`\Theta`.
+
+        Returns
+        -------
+        float
+            The value of the log likelihood.
+        """
+        params = self.current_params
+        # generate the template waveform
+        try:
+            wfs = self.waveform_generator.generate(**params)
+        except NoWaveformError:
+            return self._nowaveform_logl()
+        except FailedWaveformError as e:
+            if self.ignore_failed_waveforms:
+                return self._nowaveform_logl()
+            else:
+                raise e
+        # get the times of the gates
+        gate_times = self.get_gate_times()
+        # clear variables
+        logl = 0.
+        lognl = 0.
+        self._det_lognls.clear()
+        self.current_wfs = wfs
+        self.current_gated_wfs.clear()
+        self.current_gated_data.clear()
+        for det, h in wfs.items():
+            invpsd = self._invpsds[det]
+            norm = self.det_lognorm(det)
+            gatestartdelay, dgatedelay = gate_times[det]
+            # we always filter the entire segment starting from kmin, since the
+            # gated series may have high frequency components
+            slc = slice(self._kmin[det], self._kmax[det])
+            #
+            # The data
+            #
+            data = self.td_data[det]
+            gated_dt = data.gate(gatestartdelay + dgatedelay/2,
+                                 window=dgatedelay/2, copy=True,
+                                 invpsd=invpsd, method='paint')
+            self.current_gated_data[det] = gated_dt
+            # convert to the frequency series
+            gated_d = gated_dt.to_frequencyseries()
+            # whiten
+            gated_d *= self._weight[det]
+            # inner product
+            dd = gated_d[slc].inner(gated_d[slc]).real  # <d, d>
+            # store the lognls
+            self._det_lognls[det] = norm - 0.5*dd
+            lognl += norm - 0.5*dd
+            #
+            # Now the waveform
+            #
+            if self._kmin[det] >= len(h):
                 # if the waveform terminates before the filtering low frequency
-                # cutoff, then the loglr is just 0 for this detector
+                # cutoff, then the hd and hh terms are 0 for this detector
                 cplx_hd = 0j
                 hh = 0.
             else:
                 # time series of the signal
                 h.resize(len(invpsd))
                 ht = h.to_timeseries()
-                dgatedelay = gateenddelay - gatestartdelay
-                # apply the gate method "paint"
                 gated_ht = ht.gate(gatestartdelay + dgatedelay/2,
                                    window=dgatedelay/2, copy=False,
                                    invpsd=invpsd, method='paint')
-                # the data
-                data = self.td_data[det]
-                gated_dt = data.gate(gatestartdelay + dgatedelay/2,
-                                     window=dgatedelay/2, copy=False,
-                                     invpsd=invpsd, method='paint')
-                # conversion to the frequency series
+                self.current_gated_wfs[det] = gated_ht
+                # convert to the frequency series
                 gated_h = gated_ht.to_frequencyseries()
-                gated_d = gated_dt.to_frequencyseries()
-                # normalization
-                gated_d *= self._weight[det]
+                # whiten
                 gated_h *= self._weight[det]
                 # inner product
-                cplx_hd = gated_h[slc].inner(gated_d[slc])  # <h, d>
-                hh = gated_h[slc].inner(gated_h[slc]).real  # < h, h>
-            cplx_loglr = cplx_hd - 0.5*hh
-            # store
+                hd = gated_h[slc].inner(gated_d[slc]).real  # <h, d>
+                hh = gated_h[slc].inner(gated_h[slc]).real  # <h, h>
+            logl += norm + hd - 0.5*hh - 0.5*dd
+            # store the optimal snrsq
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
-            setattr(self._current_stats, '{}_cplx_loglr'.format(det),
-                    cplx_loglr)
-            lr += cplx_loglr.real
-        # also store the loglikelihood, to ensure it is populated in the
-        # current stats even if loglikelihood is never called
-        self._current_stats.loglikelihood = lr + self.lognl
-        return float(lr)
+        # also store the lognl
+        self._current_stats.lognl = float(lognl)
+        return float(logl)
 
-    def det_cplx_loglr(self, det):
-        """Returns the complex log likelihood ratio in the given detector.
+    def write_metadata(self, fp):
+        """Adds writing the psds.
 
-        Parameters
-        ----------
-        det : str
-            The name of the detector.
-
-        Returns
-        -------
-        complex float :
-            The complex log likelihood ratio.
-        """
-        # try to get it from current stats
-        try:
-            return getattr(self._current_stats, '{}_cplx_loglr'.format(det))
-        except AttributeError:
-            # hasn't been calculated yet; call loglr to do so
-            self._loglr()
-            # now try returning again
-            return getattr(self._current_stats, '{}_cplx_loglr'.format(det))
-
-    def det_optimal_snrsq(self, det):
-        """Returns the opitmal SNR squared in the given detector.
+        The analyzed detectors, their analysis segments, and the segments
+        used for psd estimation are written to the file's ``attrs``, as
+        ``analyzed_detectors``, ``{{detector}}_analysis_segment``, and
+        ``{{detector}}_psd_segment``, respectively.
 
         Parameters
         ----------
-        det : str
-            The name of the detector.
-
-        Returns
-        -------
-        float :
-            The opimtal SNR squared.
+        fp : pycbc.inference.io.BaseInferenceFile instance
+            The inference file to write to.
         """
-        # try to get it from current stats
+        super(BaseGaussianNoise, self).write_metadata(fp)
+        # write the analyzed detectors and times
+        fp.attrs['analyzed_detectors'] = self.detectors
+        for det, data in self.data.items():
+            key = '{}_analysis_segment'.format(det)
+            fp.attrs[key] = [float(data.start_time), float(data.end_time)]
+        if self._psds is not None:
+            fp.write_psd(self._psds)
+        # write the times used for psd estimation (if they were provided)
+        for det in self.psd_segments:
+            key = '{}_psd_segment'.format(det)
+            fp.attrs[key] = list(map(float, self.psd_segments[det]))
         try:
-            return getattr(self._current_stats, '{}_optimal_snrsq'.format(det))
-        except AttributeError:
-            # hasn't been calculated yet; call loglr to do so
-            self._loglr()
-            # now try returning again
-            return getattr(self._current_stats, '{}_optimal_snrsq'.format(det))
-
-
-
-
-
-
-
-
+            attrs = fp[fp.samples_group].attrs
+        except KeyError:
+            # group doesn't exist, create it
+            fp.create_group(fp.samples_group)
+            attrs = fp[fp.samples_group].attrs
+        for det in self.detectors:
+            # Save each IFO's low frequency cutoff used in the likelihood
+            # computation as an attribute
+            fp.attrs['{}_likelihood_low_freq'.format(det)] = self._f_lower[det]
+            # Save the IFO's high frequency cutoff used in the likelihood
+            # computation as an attribute if one was provided the user
+            if self._f_upper[det] is not None:
+                fp.attrs['{}_likelihood_high_freq'.format(det)] = \
+                                                        self._f_upper[det]
 
 
 #
