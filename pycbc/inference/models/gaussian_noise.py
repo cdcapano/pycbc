@@ -1132,7 +1132,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
             Gatestartdelay = t_from_freq[f_idx] + float(t_from_freq.epoch)
             gatestartdelay = min(Gatestartdelay, params['t_gate_start'])
             gatetimes[det] = (gatestartdelay, dgate)
-            print(gatetimes)
         return gatetimes
 
 
