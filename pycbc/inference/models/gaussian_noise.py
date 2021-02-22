@@ -1090,7 +1090,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
 
 
 
-    def get_gate_times_hmeco(self, detwf=None):
+    def get_gate_times_hmeco(self):
         """Gets the time to apply a gate based on the current sky position.
 
         Returns
@@ -1151,7 +1151,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
         self._det_lognls.clear()
         # get the times of the gates
         #gate_times = self.get_gate_times()###Without the hmeco
-        gate_times = self.get_gate_times_hmeco(detwf=(det,h))
+        gate_times = self.get_gate_times_hmeco()
         for det, invpsd in self._invpsds.items():
             norm = self.det_lognorm(det)
             gatestartdelay, dgatedelay = gate_times[det]
