@@ -1121,7 +1121,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
                                        spin1, spin2, qm1=None, qm2=None)
         gatetimes = {}
         for det, h in wfs.items():
-            f_low = int((self._f_lower[det]+5)/h.delta_f)
+            f_low = int((self._f_lower[det]+1)/h.delta_f)
             sample_freqs = h.sample_frequencies[f_low:].numpy()
             f_idx = numpy.where(sample_freqs <= meco_f)[0][-1]
             # find time corresponding to meco frequency
