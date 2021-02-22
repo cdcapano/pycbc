@@ -1115,10 +1115,8 @@ class GatedGaussianNoise(BaseGaussianNoise):
             else:
                 raise e
 
-        spin1 = numpy.sqrt(params['spin1x']**2 + params['spin1y']**2 
-                           + params['spin1z']**2)
-        spin2 = numpy.sqrt(params['spin2x']**2 + params['spin2y']**2 
-                           + params['spin2z']**2)
+        spin1 = params['spin1z']
+        spin2 = params['spin2z']
         meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'],
                                        spin1, spin2, qm1=None, qm2=None)
         gatetimes = {}
