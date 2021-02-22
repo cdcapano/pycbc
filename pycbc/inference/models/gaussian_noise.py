@@ -37,6 +37,8 @@ from .base_data import BaseDataModel
 from .data_utils import (data_opts_from_config, data_from_cli,
                          fd_data_from_strain_dict, gate_overwhitened_data)
 from pycbc.detector import Detector
+from pycbc.pnutils import hybrid_meco_frequency
+from pycbc.waveform.utils import time_from_frequencyseries
 
 
 @add_metaclass(ABCMeta)
@@ -1080,6 +1082,69 @@ class GatedGaussianNoise(BaseGaussianNoise):
             gatetimes[det] = (gatestartdelay, dgatedelay)
         return gatetimes
 
+
+
+
+
+
+
+
+
+    def get_gate_times_hmeco(self, detwf=None):
+        """Gets the time to apply a gate based on the current sky position.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> (gate start, gate width)
+        """
+        params = self.current_params
+        # gate input for ringdown analysis which consideres a start time
+        # and an end time
+        dgate = params['gate_window']
+        gatestart = params['t_gate_start']
+        
+        # generate the template waveform
+        try:
+            wfs = self.waveform_generator.generate(**params)
+        except NoWaveformError:
+            return self._nowaveform_logl()
+        except FailedWaveformError as e:
+            if self.ignore_failed_waveforms:
+                return self._nowaveform_logl()
+            else:
+                raise e
+
+        spin1 = numpy.sqrt(params['spin1x']**2 + params['spin1y']**2 
+                           + params['spin1z']**2)
+        spin2 = numpy.sqrt(params['spin2x']**2 + params['spin2y']**2 
+                           + params['spin2z']**2)
+        meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'],
+                                       spin1, spin2, qm1=None, qm2=None)
+        gatetimes = {}
+        for det, h in wfs.items():
+            f_low = int((self._f_lower[det]+5)/h.delta_f)
+            sample_freqs = h.sample_frequencies[f_low:].numpy()
+            f_idx = numpy.where(sample_freqs <= meco_f)[0][-1]
+            # find time corresponding to meco frequency
+            t_from_freq = time_from_frequencyseries(
+                h[f_low:], sample_frequencies=sample_freqs)
+            Gatestartdelay = t_from_freq[f_idx] + float(t_from_freq.epoch)
+            gatestartdelay = min(Gatestartdelay, params['t_gate_start'])
+            gatetimes[det] = (gatestartdelay, dgate)
+            print(gatetimes)
+        return gatetimes
+
+
+
+
+
+
+
+
+
+
+
     def _lognl(self):
         """Calculates the log of the noise likelihood.
         """
@@ -1088,7 +1153,8 @@ class GatedGaussianNoise(BaseGaussianNoise):
         lognl = 0.
         self._det_lognls.clear()
         # get the times of the gates
-        gate_times = self.get_gate_times()
+        #gate_times = self.get_gate_times()###Without the hmeco
+        gate_times = self.get_gate_times_hmeco(detwf=(det,h))
         for det, invpsd in self._invpsds.items():
             norm = self.det_lognorm(det)
             gatestartdelay, dgatedelay = gate_times[det]
@@ -1148,7 +1214,8 @@ class GatedGaussianNoise(BaseGaussianNoise):
             else:
                 raise e
         # get the times of the gates
-        gate_times = self.get_gate_times()
+        #gate_times = self.get_gate_times()
+        gate_times = self.get_gate_times_hmeco()
         # clear variables
         logl = 0.
         lognl = 0.
