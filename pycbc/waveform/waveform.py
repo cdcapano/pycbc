@@ -477,6 +477,9 @@ def get_fd_waveform_sequence(template=None, **kwds):
         The cross phase of the waveform in frequency domain evaluated at the
     frequency points.
     """
+    if kwds['approximant'] == 'EOSGW':
+        import eosgw
+        return eosgw.eosgw_fd_sequence(**kwds)
     input_params = props(template, **kwds)
     input_params['delta_f'] = -1
     input_params['f_lower'] = -1
