@@ -1061,10 +1061,18 @@ class GatedGaussianNoise(BaseGaussianNoise):
             Dictionary of detector names -> (gate start, gate width)
         """
         params = self.current_params
+        try:
+            gatefunc = self.current_params['gatefunc']
+        except KeyError:
+            gatefunc = None
+        if gatefunc == 'hmeco':
+            return self.get_gate_times_hmeco()
         # gate input for ringdown analysis which consideres a start time
         # and an end time
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
+        if gateend == 'hmeco':
+            return self.get_gate_times_hmeco()
         dgate = gateend-gatestart
         # we'll need the sky location for determining time shifts
         ra = self.current_params['ra']
@@ -1081,14 +1089,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
             dgatedelay = gateenddelay - gatestartdelay
             gatetimes[det] = (gatestartdelay, dgatedelay)
         return gatetimes
-
-
-
-
-
-
-
-
 
     def get_gate_times_hmeco(self):
         """Gets the time to apply a gate based on the current sky position.
@@ -1139,15 +1139,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
         return gatetimes
 
 
-
-
-
-
-
-
-
-
-
     def _lognl(self):
         """Calculates the log of the noise likelihood.
         """
@@ -1156,8 +1147,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
         lognl = 0.
         self._det_lognls.clear()
         # get the times of the gates
-        #gate_times = self.get_gate_times()###Without the hmeco
-        gate_times = self.get_gate_times_hmeco()
+        gate_times = self.get_gate_times()
         for det, invpsd in self._invpsds.items():
             norm = self.det_lognorm(det)
             gatestartdelay, dgatedelay = gate_times[det]
@@ -1171,10 +1161,12 @@ class GatedGaussianNoise(BaseGaussianNoise):
                                  invpsd=invpsd, method='paint')
             # convert to the frequency series
             gated_d = gated_dt.to_frequencyseries()
-            # whiten
-            gated_d *= self._weight[det]
+            # overwhiten
+            gated_d *= invpsd
+            d = self.data[det]
             # inner product
-            dd = norm - 0.5*gated_d[slc].inner(gated_d[slc]).real  # <d, d>
+            ip = 4 * invpsd.delta_f * d[slc].inner(gated_d[slc]).real # <d, d>
+            dd = norm - 0.5*ip
             # store
             self._det_lognls[det] = dd
             lognl += dd
@@ -1217,8 +1209,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
             else:
                 raise e
         # get the times of the gates
-        #gate_times = self.get_gate_times()
-        gate_times = self.get_gate_times_hmeco()
+        gate_times = self.get_gate_times()
         # clear variables
         logl = 0.
         lognl = 0.
@@ -1243,10 +1234,11 @@ class GatedGaussianNoise(BaseGaussianNoise):
             self.current_gated_data[det] = gated_dt
             # convert to the frequency series
             gated_d = gated_dt.to_frequencyseries()
-            # whiten
-            gated_d *= self._weight[det]
+            # overwhiten
+            gated_d *= invpsd
+            d = self.data[det]
             # inner product
-            dd = gated_d[slc].inner(gated_d[slc]).real  # <d, d>
+            dd = 4 * invpsd.delta_f * d[slc].inner(gated_d[slc]).real # <d, d>
             # store the lognls
             self._det_lognls[det] = norm - 0.5*dd
             lognl += norm - 0.5*dd
@@ -1268,11 +1260,11 @@ class GatedGaussianNoise(BaseGaussianNoise):
                 self.current_gated_wfs[det] = gated_ht
                 # convert to the frequency series
                 gated_h = gated_ht.to_frequencyseries()
-                # whiten
-                gated_h *= self._weight[det]
+                # overwhiten
+                gated_h *= invpsd
                 # inner product
-                hd = gated_h[slc].inner(gated_d[slc]).real  # <h, d>
-                hh = gated_h[slc].inner(gated_h[slc]).real  # <h, h>
+                hd = 4 * invpsd.delta_f * h[slc].inner(gated_d[slc]).real
+                hh = 4 * invpsd.delta_f * h[slc].inner(gated_h[slc]).real
             logl += norm + hd - 0.5*hh - 0.5*dd
             # store the optimal snrsq
             setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
