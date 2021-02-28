@@ -34,6 +34,7 @@ from scipy import special
 from pycbc.waveform import get_fd_waveform_sequence
 from pycbc.detector import Detector
 from pycbc.types import Array
+from pycbc.waveform import (NoWaveformError, FailedWaveformError)
 
 from .gaussian_noise import BaseGaussianNoise
 from .relbin_cpu import likelihood_parts, likelihood_parts_v
@@ -182,7 +183,6 @@ class Relative(BaseGaussianNoise):
         # store fiducial waveform params
         self.fid_params = self.static_params.copy()
         self.fid_params.update(fiducial_params)
-
         for ifo in data:
             # store data and frequencies
             d0 = self.data[ifo]
@@ -209,7 +209,6 @@ class Relative(BaseGaussianNoise):
                 f_lo,
                 f_hi,
             )
-
             # prune low frequency samples to avoid waveform errors
             fpoints = Array(self.f[ifo].astype(numpy.float64))
             fpoints = fpoints[self.kmin[ifo]:self.kmax[ifo]+1]
@@ -382,12 +381,15 @@ class Relative(BaseGaussianNoise):
         # get model params
         p = self.current_params.copy()
         p.update(self.static_params)
-        wfs = self.get_waveforms(p)
+        try:
+            wfs = self.get_waveforms(p)
+        except NoWaveformError:
+            # just return -inf
+            return -numpy.inf
 
         hh = 0.0
         hd = 0j
         for ifo in self.data:
-
             det = self.det[ifo]
             freqs = self.fedges[ifo]
             sdat = self.sdat[ifo]
