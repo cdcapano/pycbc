@@ -1061,10 +1061,18 @@ class GatedGaussianNoise(BaseGaussianNoise):
             Dictionary of detector names -> (gate start, gate width)
         """
         params = self.current_params
+        try:
+            gatefunc = self.current_params['gatefunc']
+        except KeyError:
+            gatefunc = None
+        if gatefunc == 'hmeco':
+            return self.get_gate_times_hmeco()
         # gate input for ringdown analysis which consideres a start time
         # and an end time
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
+        if gateend == 'hmeco':
+            return self.get_gate_times_hmeco()
         dgate = gateend-gatestart
         # we'll need the sky location for determining time shifts
         ra = self.current_params['ra']
@@ -1139,8 +1147,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
         lognl = 0.
         self._det_lognls.clear()
         # get the times of the gates
-        #gate_times = self.get_gate_times()###Without the hmeco
-        gate_times = self.get_gate_times_hmeco()
+        gate_times = self.get_gate_times()
         for det, invpsd in self._invpsds.items():
             norm = self.det_lognorm(det)
             gatestartdelay, dgatedelay = gate_times[det]
@@ -1202,8 +1209,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
             else:
                 raise e
         # get the times of the gates
-        #gate_times = self.get_gate_times()
-        gate_times = self.get_gate_times_hmeco()
+        gate_times = self.get_gate_times()
         # clear variables
         logl = 0.
         lognl = 0.
