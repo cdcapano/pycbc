@@ -183,6 +183,8 @@ class Relative(BaseGaussianNoise):
         # store fiducial waveform params
         self.fid_params = self.static_params.copy()
         self.fid_params.update(fiducial_params)
+        # set up the waveform generator
+        self.waveform_generator = FDSequenceGenerator()
         for ifo in data:
             # store data and frequencies
             d0 = self.data[ifo]
@@ -356,7 +358,8 @@ class Relative(BaseGaussianNoise):
         """
         wfs = []
         for edge in self.edge_unique:
-            hp, hc = get_fd_waveform_sequence(sample_points=edge, **params)
+            hp, hc = self.waveform_generator.generate(sample_points=edge,
+                                                      **params)
             hp = hp.numpy()
             hc = hc.numpy()
             wfs.append((hp, hc))
@@ -386,6 +389,11 @@ class Relative(BaseGaussianNoise):
         except NoWaveformError:
             # just return -inf
             return -numpy.inf
+        except FailedWaveformError as e:
+            if self.ignore_failed_waveforms:
+                return -numpy.inf
+            else:
+                raise e
 
         hh = 0.0
         hd = 0j
@@ -468,3 +476,42 @@ class Relative(BaseGaussianNoise):
         )
         args.update({"fiducial_params": fid_params, "gammas": gammas})
         return args
+
+
+class FDSequenceGenerator(object):
+    def __init__(self, record_failures=False):
+        self.record_failures = \
+            record_failures or 'PYCBC_RECORD_FAILED_WAVEFORMS' in os.environ
+        self.mpi_enabled, _, self.mpi_rank = use_mpi()
+
+     def generate(self, sample_points, **params):
+        try:
+            return get_fd_waveform_sequence(
+                sample_points=Array(self.fedges[ifo]), **params)
+        except RuntimeError as e:
+            if self.record_failures:
+                import h5py
+                from pycbc.io.hdf import dump_state
+
+                global failed_counter
+
+                if self.mpi_enabled:
+                    outname = 'failed/params_%s.hdf' % self.mpi_rank
+                else:
+                    outname = 'failed/params.hdf'
+
+                if not os.path.exists('failed'):
+                    os.makedirs('failed')
+
+                with h5py.File(outname) as f:
+                    dump_state(self.current_params, f,
+                               dsetname=str(failed_counter))
+                    failed_counter += 1
+
+            # we'll get a RuntimeError if lalsimulation failed to generate
+            # the waveform for whatever reason
+            strparams = ' | '.join(['{}: {}'.format(
+                p, str(val)) for p, val in self.current_params.items()])
+            raise FailedWaveformError("Failed to generate waveform with "
+                                      "parameters:\n{}\nError was: {}"
+                                      .format(strparams, e))
