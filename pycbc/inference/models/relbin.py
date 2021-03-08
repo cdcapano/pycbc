@@ -26,6 +26,7 @@ a relative binning likelihood for parameter estimation.
 """
 
 
+import os
 import logging
 import numpy
 from scipy.interpolate import interp1d
@@ -35,6 +36,7 @@ from pycbc.waveform import get_fd_waveform_sequence
 from pycbc.detector import Detector
 from pycbc.types import Array
 from pycbc.waveform import (NoWaveformError, FailedWaveformError)
+from pycbc.pool import use_mpi
 
 from .gaussian_noise import BaseGaussianNoise
 from .relbin_cpu import likelihood_parts, likelihood_parts_v
@@ -478,16 +480,19 @@ class Relative(BaseGaussianNoise):
         return args
 
 
+failed_counter = 0
+
+
 class FDSequenceGenerator(object):
     def __init__(self, record_failures=False):
         self.record_failures = \
             record_failures or 'PYCBC_RECORD_FAILED_WAVEFORMS' in os.environ
         self.mpi_enabled, _, self.mpi_rank = use_mpi()
 
-     def generate(self, sample_points, **params):
+    def generate(self, sample_points, **params):
         try:
             return get_fd_waveform_sequence(
-                sample_points=Array(self.fedges[ifo]), **params)
+                sample_points=sample_points, **params)
         except RuntimeError as e:
             if self.record_failures:
                 import h5py
@@ -504,14 +509,14 @@ class FDSequenceGenerator(object):
                     os.makedirs('failed')
 
                 with h5py.File(outname) as f:
-                    dump_state(self.current_params, f,
+                    dump_state(params, f,
                                dsetname=str(failed_counter))
                     failed_counter += 1
 
             # we'll get a RuntimeError if lalsimulation failed to generate
             # the waveform for whatever reason
             strparams = ' | '.join(['{}: {}'.format(
-                p, str(val)) for p, val in self.current_params.items()])
+                p, str(val)) for p, val in params.items()])
             raise FailedWaveformError("Failed to generate waveform with "
                                       "parameters:\n{}\nError was: {}"
                                       .format(strparams, e))
