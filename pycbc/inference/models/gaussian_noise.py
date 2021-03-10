@@ -1071,8 +1071,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
         # and an end time
         gatestart = params['t_gate_start']
         gateend = params['t_gate_end']
-        if gateend == 'hmeco':
-            return self.get_gate_times_hmeco()
         dgate = gateend-gatestart
         # we'll need the sky location for determining time shifts
         ra = self.current_params['ra']
