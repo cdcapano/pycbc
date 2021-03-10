@@ -466,7 +466,8 @@ class BaseGaussianNoise(BaseDataModel):
                                                         self._f_upper[det]
 
     @classmethod
-    def from_config(cls, cp, data_section='data', **kwargs):
+    def from_config(cls, cp, data_section='data', data=None, psds=None,
+                    **kwargs):
         r"""Initializes an instance of this class from the given config file.
 
         In addition to ``[model]``, a ``data_section`` (default ``[data]``)
@@ -557,25 +558,27 @@ class BaseGaussianNoise(BaseDataModel):
         # load the data
         opts = data_opts_from_config(cp, data_section,
                                      args['low_frequency_cutoff'])
-        strain_dict, psd_strain_dict = data_from_cli(opts, **data_args)
-        # convert to frequency domain and get psds
-        stilde_dict, psds = fd_data_from_strain_dict(opts, strain_dict,
-                                                     psd_strain_dict)
-        logging.info('Calculating psds using filter psd')
-        psds = {}
-        for det, d in psd_strain_dict.items():
-            psds[det] = d.filter_psd(opts.psd_segment_length[det], 
-                                     strain_dict[det].delta_f, 0.)
-        # save the psd data segments if the psd was estimated from data
-        if opts.psd_estimation is not None:
-            _tdict = psd_strain_dict or strain_dict
-            for det in psds:
-                psds[det].psd_segment = (_tdict[det].start_time,
-                                         _tdict[det].end_time)
-        # gate overwhitened if desired
-        if opts.gate_overwhitened and opts.gate is not None:
-            stilde_dict = gate_overwhitened_data(stilde_dict, psds, opts.gate)
-        args.update({'data': stilde_dict, 'psds': psds})
+        if data is None or psds is None:
+            strain_dict, psd_strain_dict = data_from_cli(opts, **data_args)
+            # convert to frequency domain and get psds
+            stilde_dict, psds = fd_data_from_strain_dict(opts, strain_dict,
+                                                         psd_strain_dict)
+            logging.info('Calculating psds using filter psd')
+            psds = {}
+            for det, d in psd_strain_dict.items():
+                psds[det] = d.filter_psd(opts.psd_segment_length[det], 
+                                         strain_dict[det].delta_f, 0.)
+            # save the psd data segments if the psd was estimated from data
+            if opts.psd_estimation is not None:
+                _tdict = psd_strain_dict or strain_dict
+                for det in psds:
+                    psds[det].psd_segment = (_tdict[det].start_time,
+                                             _tdict[det].end_time)
+            # gate overwhitened if desired
+            if opts.gate_overwhitened and opts.gate is not None:
+                stilde_dict = gate_overwhitened_data(stilde_dict, psds, opts.gate)
+            data = stilde_dict
+        args.update({'data': data, 'psds': psds})
         # any extra args
         args.update(cls.extra_args_from_config(cp, "model",
                                                skip_args=ignore_args))
