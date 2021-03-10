@@ -1218,7 +1218,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
             slc = slice(self._kmin[det], self._kmax[det])
             # calculate the residual
             data = self.td_data[det]
-            h.resize(len(self.data[det])
+            h.resize(len(self.data[det]))
             ht = h.to_timeseries()
             res = data - ht
             rtilde = res.to_frequencyseries()
