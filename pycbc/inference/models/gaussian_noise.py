@@ -1030,16 +1030,11 @@ class GatedGaussianNoise(BaseGaussianNoise):
     def _extra_stats(self):
         """Adds ``lognl``, plus ```optimal_snrsq`` in each
         detector."""
-        return ['lognl'] + \
-               ['{}_optimal_snrsq'.format(det) for det in self._data]
+        return []
 
     def _nowaveform_logl(self):
         """Convenience function to set logl values if no waveform generated.
         """
-        for det in self._data:
-            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), 0.)
-        # set the lognl
-        _ = self.lognl
         return -numpy.inf
 
     def _loglr(self):
@@ -1173,12 +1168,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
         return float(lognl)
 
     def det_lognl(self, det):
-        try:
-            return self._det_lognls[det]
-        except KeyError:
-            # hasn't been calculated yet; call lognl to calculate & store
-            _ = self._lognl()
-            return self._det_lognls[det]
+        # make sure lognl has been called
+        _ = self._trytoget('lognl', self._lognl)
+        # the det_lognls dict should have been updated, so can call it now
+        return self._det_lognls[det]
 
     def _loglikelihood(self):
         r"""Computes the log likelihood after removing the power within the
@@ -1212,12 +1205,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
         gate_times = self.get_gate_times()
         # clear variables
         logl = 0.
-        self._det_lognls.clear()
         self.current_wfs = wfs
         self.current_gated_wfs.clear()
         self.current_gated_data.clear()
         self.current_proj = {}
-        self._lognl()
         for det, h in wfs.items():
             invpsd = self._invpsds[det]
             norm = self.det_lognorm(det)
