@@ -1148,6 +1148,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
         self._det_lognls.clear()
         # get the times of the gates
         gate_times = self.get_gate_times()
+        self.current_nproj = {}
         for det, invpsd in self._invpsds.items():
             norm = self.det_lognorm(det)
             gatestartdelay, dgatedelay = gate_times[det]
@@ -1159,6 +1160,7 @@ class GatedGaussianNoise(BaseGaussianNoise):
             gated_dt = data.gate(gatestartdelay + dgatedelay/2,
                                  window=dgatedelay/2, copy=True,
                                  invpsd=invpsd, method='paint')
+            self.current_nproj[det] = (gated_dt.proj, gated_dt.projslc)
             # convert to the frequency series
             gated_d = gated_dt.to_frequencyseries()
             # overwhiten
@@ -1212,11 +1214,12 @@ class GatedGaussianNoise(BaseGaussianNoise):
         gate_times = self.get_gate_times()
         # clear variables
         logl = 0.
-        lognl = 0.
         self._det_lognls.clear()
         self.current_wfs = wfs
         self.current_gated_wfs.clear()
         self.current_gated_data.clear()
+        self.current_proj = {}
+        self._lognl()
         for det, h in wfs.items():
             invpsd = self._invpsds[det]
             norm = self.det_lognorm(det)
@@ -1224,52 +1227,20 @@ class GatedGaussianNoise(BaseGaussianNoise):
             # we always filter the entire segment starting from kmin, since the
             # gated series may have high frequency components
             slc = slice(self._kmin[det], self._kmax[det])
-            #
-            # The data
-            #
+            # calculate the residual
             data = self.td_data[det]
-            gated_dt = data.gate(gatestartdelay + dgatedelay/2,
+            ht = h.to_timeseries()
+            res = data - ht
+            rtilde = res.to_frequencyseries()
+            gated_res = res.gate(gatestartdelay + dgatedelay/2,
                                  window=dgatedelay/2, copy=True,
                                  invpsd=invpsd, method='paint')
-            self.current_gated_data[det] = gated_dt
-            # convert to the frequency series
-            gated_d = gated_dt.to_frequencyseries()
+            self.current_proj[det] = (gated_res.proj, gated_res.projslc)
+            gated_rtilde = gated_res.to_frequencyseries()
             # overwhiten
-            gated_d *= invpsd
-            d = self.data[det]
-            # inner product
-            dd = 4 * invpsd.delta_f * d[slc].inner(gated_d[slc]).real # <d, d>
-            # store the lognls
-            self._det_lognls[det] = norm - 0.5*dd
-            lognl += norm - 0.5*dd
-            #
-            # Now the waveform
-            #
-            if self._kmin[det] >= len(h):
-                # if the waveform terminates before the filtering low frequency
-                # cutoff, then the hd and hh terms are 0 for this detector
-                cplx_hd = 0j
-                hh = 0.
-            else:
-                # time series of the signal
-                h.resize(len(invpsd))
-                ht = h.to_timeseries()
-                gated_ht = ht.gate(gatestartdelay + dgatedelay/2,
-                                   window=dgatedelay/2, copy=False,
-                                   invpsd=invpsd, method='paint')
-                self.current_gated_wfs[det] = gated_ht
-                # convert to the frequency series
-                gated_h = gated_ht.to_frequencyseries()
-                # overwhiten
-                gated_h *= invpsd
-                # inner product
-                hd = 4 * invpsd.delta_f * h[slc].inner(gated_d[slc]).real
-                hh = 4 * invpsd.delta_f * h[slc].inner(gated_h[slc]).real
-            logl += norm + hd - 0.5*hh - 0.5*dd
-            # store the optimal snrsq
-            setattr(self._current_stats, '{}_optimal_snrsq'.format(det), hh)
-        # also store the lognl
-        self._current_stats.lognl = float(lognl)
+            gated_rtilde *= invpsd
+            rr = 4 * invpsd.delta_f * rtilde[slc].inner(gated_rtilde[slc]).real
+            logl += norm - 0.5*rr 
         return float(logl)
 
     def write_metadata(self, fp):
