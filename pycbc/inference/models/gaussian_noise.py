@@ -1242,7 +1242,10 @@ class GatedGaussianNoise(BaseGaussianNoise):
         if whiten:
             for det, h in wfs.items():
                 invpsd = self._invpsds[det]
-                h *= invpsd**0.5
+                if whiten == 2:
+                    h *= invpsd
+                else:
+                    h *= invpsd**0.5
                 wfs[det] = h
         return wfs
 
@@ -1257,26 +1260,69 @@ class GatedGaussianNoise(BaseGaussianNoise):
             data = self.td_data[det]
             ht = h.to_timeseries()
             res = data - ht
-            rtilde = res.to_frequencyseries()
             gated_res = res.gate(gatestartdelay + dgatedelay/2,
                                  window=dgatedelay/2, copy=True,
                                  invpsd=invpsd, method='paint')
             proj = gated_res.proj
-            slc = gated_res.projslc
-            ht[slc] *= 0.
-            ht[slc] -= proj
+            lindex, rindex = gated_res.projslc
+            ht[lindex:rindex] *= 0.
+            ht[lindex:rindex] -= proj
             h = ht.to_frequencyseries()
-            if whiten:
+            if whiten == 2:
+                h *= invpsd
+            elif whiten:
                 h *= invpsd**0.5
             wfs[det] = h
         return wfs
 
+    def get_residual(self, whiten=False):
+        params = self.current_params
+        wfs = self.waveform_generator.generate(**params)
+        out = {}
+        for det, h in wfs.items():
+            invpsd = self._invpsds[det]
+            # calculate the residual
+            d = self.data[det]
+            res = d - h
+            if whiten == 2:
+                res *= invpsd
+            elif whiten:
+                res *= invpsd**0.5
+            out[det] = res
+        return out
+
+    def get_gated_residual(self, whiten=False):
+        params = self.current_params
+        wfs = self.waveform_generator.generate(**params)
+        gate_times = self.get_gate_times()
+        out = {}
+        for det, h in wfs.items():
+            invpsd = self._invpsds[det]
+            gatestartdelay, dgatedelay = gate_times[det]
+            # calculate the residual
+            data = self.td_data[det]
+            ht = h.to_timeseries()
+            res = data - ht
+            res = res.gate(gatestartdelay + dgatedelay/2,
+                           window=dgatedelay/2, copy=True,
+                           invpsd=invpsd, method='paint')
+            res = res.to_frequencyseries()
+            if whiten == 2:
+                res *= invpsd
+            elif whiten:
+                res *= invpsd**0.5
+            out[det] = res
+        return out
+
     def get_data(self, whiten=False):
-        data = {det: d.copy() for d in self.data.items()}
+        data = {det: d.copy() for det, d in self.data.items()}
         if whiten:
             for det, dtilde in data.items():
                 invpsd = self._invpsds[det]
-                dtilde *= invpsd**0.5
+                if whiten == 2:
+                    dtilde *= invpsd
+                else:
+                    dtilde *= invpsd**0.5
                 data[det] = dtilde
         return data
         
@@ -1284,24 +1330,26 @@ class GatedGaussianNoise(BaseGaussianNoise):
         gate_times = self.get_gate_times()
         params = self.current_params
         wfs = self.waveform_generator.generate(**params)
-        data = {det: d.copy() for d in self.td_data.items()}
+        data = {det: d.copy() for det, d in self.td_data.items()}
         for det, d in data.items():
             invpsd = self._invpsds[det]
             gatestartdelay, dgatedelay = gate_times[det]
             # calculate the residual
             h = wfs[det]
             ht = h.to_timeseries()
-            res = data - ht
+            res = d - ht
             rtilde = res.to_frequencyseries()
             gated_res = res.gate(gatestartdelay + dgatedelay/2,
                                  window=dgatedelay/2, copy=True,
                                  invpsd=invpsd, method='paint')
             proj = gated_res.proj
-            slc = gated_res.projslc
-            d[slc] *= 0.
-            d[slc] -= proj
+            lindex, rindex = gated_res.projslc
+            d[lindex:rindex] *= 0.
+            d[lindex:rindex] -= proj
             dtilde = d.to_frequencyseries()
-            if whiten:
+            if whiten == 2:
+                dtilde *= invpsd
+            elif whiten:
                 dtilde *= invpsd**0.5
             data[det] = dtilde
         return data
