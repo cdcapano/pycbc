@@ -1233,6 +1233,76 @@ class GatedGaussianNoise(BaseGaussianNoise):
             logl += norm - 0.5*rr 
         return float(logl)
 
+    def get_waveforms(self, whiten=False):
+        params = self.current_params
+        wfs = self.waveform_generator.generate(**params)
+        if whiten:
+            for det, h in wfs.items():
+                invpsd = self._invpsds[det]
+                h *= invpsd**0.5
+                wfs[det] = h
+        return wfs
+
+    def get_gated_waveforms(self, whiten=False):
+        params = self.current_params
+        wfs = self.waveform_generator.generate(**params)
+        gate_times = self.get_gate_times()
+        for det, h in wfs.items():
+            invpsd = self._invpsds[det]
+            gatestartdelay, dgatedelay = gate_times[det]
+            # calculate the residual
+            data = self.td_data[det]
+            ht = h.to_timeseries()
+            res = data - ht
+            rtilde = res.to_frequencyseries()
+            gated_res = res.gate(gatestartdelay + dgatedelay/2,
+                                 window=dgatedelay/2, copy=True,
+                                 invpsd=invpsd, method='paint')
+            proj = gated_res.proj
+            slc = gated_res.projslc
+            ht[slc] *= 0.
+            ht[slc] -= proj
+            h = ht.to_frequencyseries()
+            if whiten:
+                h *= invpsd**0.5
+            wfs[det] = h
+        return wfs
+
+    def get_data(self, whiten=False):
+        data = {det: d.copy() for d in self.data.items()}
+        if whiten:
+            for det, dtilde in data.items():
+                invpsd = self._invpsds[det]
+                dtilde *= invpsd**0.5
+                data[det] = dtilde
+        return data
+        
+    def get_gated_data(self, whiten=False):
+        gate_times = self.get_gate_times()
+        params = self.current_params
+        wfs = self.waveform_generator.generate(**params)
+        data = {det: d.copy() for d in self.td_data.items()}
+        for det, d in data.items():
+            invpsd = self._invpsds[det]
+            gatestartdelay, dgatedelay = gate_times[det]
+            # calculate the residual
+            h = wfs[det]
+            ht = h.to_timeseries()
+            res = data - ht
+            rtilde = res.to_frequencyseries()
+            gated_res = res.gate(gatestartdelay + dgatedelay/2,
+                                 window=dgatedelay/2, copy=True,
+                                 invpsd=invpsd, method='paint')
+            proj = gated_res.proj
+            slc = gated_res.projslc
+            d[slc] *= 0.
+            d[slc] -= proj
+            dtilde = d.to_frequencyseries()
+            if whiten:
+                dtilde *= invpsd**0.5
+            data[det] = dtilde
+        return data
+
     def write_metadata(self, fp):
         """Adds writing the psds.
 
