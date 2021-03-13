@@ -1,0 +1,200 @@
+#! /usr/bin/env python
+
+# Copyright (C) 2020 Collin Capano
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the
+# Free Software Foundation; either version 3 of the License, or (at your
+# option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+# Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+"""Makes a plot of recovered waveforms from an inference analysis."""
+
+
+import argparse
+import logging
+import sys
+
+import numpy
+
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot
+
+import pycbc
+import pycbc.version
+from pycbc.results.plot import (add_style_opt_to_parser, set_style_from_cli)
+from pycbc.results import metadata
+from pycbc import __version__
+from pycbc.inference import (io, models)
+
+# add options to command line
+parser = argparse.ArgumentParser()
+# program-specific
+parser.add_argument("--input-file", required=True,
+                    help="Path to input file. Must be either an inference "
+                         "file or a posterior file.")
+parser.add_argument("--output-file", type=str, required=True,
+                    help="Path to output plot.")
+parser.add_argument("--plot", required=True, nargs="+",
+                    choices=["waveforms", "data", "residual", "injection",
+                             "gated_waveforms", "gated_data", "gated_residual",
+                             "gated_injection"],
+                    help="What to plot: a waveform, the data, and/or the "
+                         "injection (if it exists). In addition, if the "
+                         "model used is GatedGaussian, can also plot gated "
+                         "versions.")
+group = parser.add_mutually_exclusive_group()
+group.add_argument("--whiten", action="store_true", default=False,
+                   help="Plot whitened data/waveforms/injection.")
+group.add_argument("--overwhiten", action="store_true", default=False,
+                   help="Plot over-whitened data/waveforms/injection.")
+parser.add_argument("--waveform-selection", choices=["maxl"], default="maxl",
+                    help="How to select the waveform for plotting. Default is "
+                         "maxl (= maximum likelihood).")
+parser.add_argument("--reference-time",
+                    help="Reference time for the x-axis. Can either specify a "
+                         "GPS time, 'trigger-time', or 'maxltc'. If not "
+                         "provided, the x-axis will just be in terms of GPS " 
+                         "seconds.")
+parser.add_argument("--xmin", type=float)
+parser.add_argument("--xmax", type=float)
+parser.add_argument("--ymin", type=float)
+parser.add_argument("--ymax", type=float)
+parser.add_argument('--dpi', type=int, default=200,
+                    help="Set the DPI of the plot. Default is 200.")
+# boiler plate stuff
+parser.add_argument("--version", action="version", version=__version__,
+                    help="Prints version information.")
+parser.add_argument("--verbose", action="store_true", default=False,
+                    help="Be verbose")
+# style option
+add_style_opt_to_parser(parser)
+
+# parse command line
+opts = parser.parse_args()
+
+# set mpl style
+set_style_from_cli(opts)
+
+# set logging
+pycbc.init_logging(opts.verbose)
+
+if opts.whiten:
+    whiten = 1
+elif opts.overwhiten:
+    whiten = 2
+else:
+    whiten = False
+    
+logging.info("Setting up the model")
+fp = io.loadfile(opts.input_file, 'r')
+data = fp.read_data()
+psds = fp.read_psds()
+cp = fp.read_config_file()
+
+model = models.read_from_config(cp, data=data, psds=psds)
+
+if not (opts.plot == ["data"] and opts.reference_time != "maxltc"):
+    # load samples
+    logging.info("Loading samples")
+    samples = fp.read_samples(list(fp['samples'].keys()))
+    if opts.waveform_selection == "maxl":
+        idx = samples['loglikelihood'].argmax()
+    else:
+        raise ValueError("Unrecoganized waveform selection option {}"
+                         .format(opts.waveform_selection))
+    params = {p: samples[p][idx] for p in samples.fieldnames}
+    # ensure sampling transforms are turned off
+    model.sampling_transforms = None
+    model.update(**params)
+    # call the likelihood to trigger any sort of waveform transforms
+    _ = model.loglikelihood
+fp.close()
+
+if opts.reference_time == "maxltc":
+    tref = model.current_params['tc']
+elif opts.reference_time == "trigger_time":
+    # try to get the trigger time from the config file
+    tref = float(cp.get("data", "trigger-time"))
+elif opts.reference_time is not None:
+    tref = float(opts.reference_time)
+else:
+    tref = 0
+
+# load the waveforms and data
+logging.info("Loading time series")
+timeseries = {}
+for plttype in opts.plot:
+    thists = {}
+    if plttype == "injection":
+        injset = inject.InjectionSet(opts.input_file, hdf_group='injections')
+        inj = injset.table[0]
+        for det, d in data.items():
+            h = injset.make_strain_from_inj_object(inj, d.delta_t, det)
+            thists[det] = h
+    else:
+        fds = getattr(model, 'get_{}'.format(plttype))(whiten=whiten)
+        for det, dtilde in fds.items():
+            d = dtilde.to_timeseries()
+            thists[det] = d 
+    timeseries[plttype] = thists
+
+logging.info("Plotting")
+nrows = len(data.keys())
+fheight = nrows*3
+fig, axes = pyplot.subplots(nrows=nrows, figsize=(8, fheight))
+for ii, det in enumerate(data.keys()):
+    logging.info(det)
+    ax = axes[ii]
+    for plttype in timeseries:
+        lbl = plttype.replace('_', ' ')
+        lbl = lbl.replace("waveforms", opts.waveform_selection)
+        x = timeseries[plttype][det]
+        if opts.xmin is not None or opts.xmax is not None:
+            xmin = opts.xmin
+            xmax = opts.xmax
+            if xmin is None:
+                xmin = x.start_time
+            if xmax is None:
+                xmax = x.end_time
+            x = x.time_slice(xmin+tref, xmax+tref)
+        ax.plot(x.sample_times-tref, x, lw=2, label=lbl)
+        if opts.xmin is not None or opts.xmax is not None:
+            ax.set_xlim(xmin=opts.xmin, xmax=opts.xmax)
+        if opts.ymin is not None or opts.ymax is not None:
+            ax.set_ylim(ymin=opts.ymin, ymax=opts.ymax)
+    if whiten == 1:
+        ax.set_ylabel("{} whitened strain".format(det))
+    elif whiten == 2:
+        ax.set_ylabel("{} over-whitened strain".format(det))
+    else:
+        ax.set_ylabel("{} strain".format(det))
+    if ii == 0:
+        ax.legend()
+# add the xlabel to the last axis
+if tref:
+    ax.set_xlabel("GPS time - {} (s)".format(tref))
+else:
+    ax.set_label("time (s)")
+
+# set DPI
+fig.set_dpi(opts.dpi)
+
+# save
+metadata.save_fig_with_metadata(
+                 fig, opts.output_file,
+                 cmd=" ".join(sys.argv),
+                 title="Waveforms",
+                 caption="Waveforms and data.",
+                 fig_kwds={'bbox_inches': 'tight'})
+
+# finish
+logging.info("Done")
