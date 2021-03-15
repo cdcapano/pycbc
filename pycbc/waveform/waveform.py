@@ -42,7 +42,7 @@ from .spa_tmplt import spa_tmplt, spa_tmplt_norm, spa_tmplt_end, \
                       spa_tmplt_precondition, spa_amplitude_factor, \
                       spa_length_in_time
 from six.moves import range as xrange
-
+from . import phenomhm 
 
 class NoWaveformError(Exception):
     """This should be raised if generating a waveform would just result in all
@@ -600,11 +600,11 @@ def get_fd_waveform_from_td(**params):
     """
 
     # determine the duration to use
-    full_duration = duration = get_waveform_filter_length_in_time(**params)
+    full_duration = duration = max(0.1, get_waveform_filter_length_in_time(**params))
     nparams = params.copy()
 
     while full_duration < duration * 1.5:
-        full_duration = get_waveform_filter_length_in_time(**nparams)
+        full_duration = max(0, get_waveform_filter_length_in_time(**nparams))
         nparams['f_lower'] -= 1
 
     if 'f_fref' not in nparams:
@@ -948,6 +948,12 @@ if 'PYCBC_WAVEFORM' in os.environ:
                        cpu_td=cpu_td,
                        filter_time_lengths=_filter_time_lengths)
 
+# Approximants with higher modes
+hm_approximants = {"IMRPhenomHM_modes": phenomhm.all_modes}
+
+cpu_fd.update(phenomhm.phenomhm_approximants)
+
+# We can do interpolation for waveforms that have a time length
 for apx in copy.copy(_filter_time_lengths):
     fd_apx = list(cpu_fd.keys())
     td_apx = list(cpu_td.keys())
@@ -980,6 +986,42 @@ def get_waveform_filter(out, template=None, **kwargs):
     n = len(out)
 
     input_params = props(template, **kwargs)
+
+    try:
+        generate_modes = input_params['generate_modes']
+    except KeyError:
+        generate_modes = None
+    if generate_modes is not None:
+        # check that we can
+        if input_params['approximant'] not in hm_approximants:
+            raise ValueError("cannot generate individual modes for approximant"
+                             " {}".format(input_params['approximant']))
+        modes = {}
+        try:
+            modes_out = input_params['modes_out']
+        except KeyError:
+            # memory space for modes doesn't exist, so create it
+            modes_out = {lm: out.copy() for lm in generate_modes}
+        # copy the kwargs, but with generate modes disabled
+        mode_kwargs = kwargs.copy()
+        mode_kwargs.pop('generate_modes')
+        # zero-out 'out' for summing up the modes
+        out.clear()
+        for mode in generate_modes:
+            mode_kwargs['modes'] = [mode]
+            hlm = modes_out[mode]
+            hlm.clear()
+            hp = get_waveform_filter(hlm, template=template, **mode_kwargs)
+            modes[mode] = FrequencySeries(hlm, delta_f=hp.delta_f, copy=False)
+            kmax = min(n, len(hlm))
+            # create the full waveform
+            out[:kmax] += hlm[:kmax]
+        htilde = FrequencySeries(out, delta_f=hp.delta_f, copy=False)
+        htilde.length_in_time = hp.length_in_time
+        htilde.chirp_length = hp.chirp_length
+        # attach the modes to the full waveform
+        htilde.modes = modes
+        return htilde
 
     if input_params['approximant'] in filter_approximants(_scheme.mgr.state):
         wav_gen = filter_wav[type(_scheme.mgr.state)]
@@ -1207,4 +1249,5 @@ __all__ = ["get_td_waveform", "get_fd_waveform", "get_fd_waveform_sequence",
            "print_sgburst_approximants", "sgburst_approximants",
            "td_waveform_to_fd_waveform", "get_two_pol_waveform_filter",
            "NoWaveformError", "FailedWaveformError", "get_td_waveform_from_fd",
+           'hm_approximants',
            'cpu_fd', 'cpu_td', 'fd_sequence', '_filter_time_lengths']

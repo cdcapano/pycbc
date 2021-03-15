@@ -481,6 +481,8 @@ def fd_taper(out, start, end, beta=8, side='left'):
     window = Array(signal.get_window(('kaiser', beta), winlen))
     kmin = int(start / out.delta_f)
     kmax = kmin + winlen//2
+    if kmin == kmax:
+        raise ValueError("zero window length provided")
     if side == 'left':
         out[kmin:kmax] *= window[:winlen//2]
         out[:kmin] *= 0.
