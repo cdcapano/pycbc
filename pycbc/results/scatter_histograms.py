@@ -282,7 +282,7 @@ def create_density_plot(xparam, yparam, samples, plot_density=True,
         else:
             lw = 2
         ct = ax.contour(X, Y, Z, s, colors=contour_color, linewidths=lw,
-                        zorder=3)
+                        linestyles=['dashed', 'solid'], zorder=3)
         # label contours
         lbls = ['{p}%'.format(p=int(p)) for p in (100. - percentiles)]
         fmt = dict(zip(ct.levels, lbls))
