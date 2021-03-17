@@ -942,7 +942,8 @@ def get_lm_f0tau_allmodes(mass, spin, modes):
     return f0, tau
 
 
-def freq_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1):
+def freq_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1,
+                              n=None):
     """Returns QNM frequency for the given mass and spin and mode.
 
     Parameters
@@ -957,6 +958,8 @@ def freq_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1):
         m-index of the harmonic. Default is 2.
     nmodes : int, optional
         The number of overtones to generate. Default is 1.
+    n : int, optional
+        Only retrieve the specified overtone. Overrides the ``nmodes``.
 
     Returns
     -------
@@ -967,10 +970,16 @@ def freq_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1):
         ``[input shape x] nmodes``, where ``input shape`` is the broadcasted
         shape of the inputs.
     """
-    return get_lm_f0tau(final_mass, final_spin, l, m, nmodes)[0]
+    if n is not None:
+        nmodes = n + 1
+    out = get_lm_f0tau(final_mass, final_spin, l, m, nmodes)[0]
+    if n is not None:
+        out = out[..., n]
+    return out
 
 
-def tau_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1):
+def tau_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1,
+                             n=None):
     """Returns QNM damping time for the given mass and spin and mode.
 
     Parameters
@@ -995,7 +1004,12 @@ def tau_from_final_mass_spin(final_mass, final_spin, l=2, m=2, nmodes=1):
         ``[input shape x] nmodes``, where ``input shape`` is the broadcasted
         shape of the inputs.
     """
-    return get_lm_f0tau(final_mass, final_spin, l, m, nmodes)[1]
+    if n is not None:
+        nmodes = n + 1
+    out = get_lm_f0tau(final_mass, final_spin, l, m, nmodes)[1]
+    if n is not None:
+        out = out[..., n]
+    return out
 
 
 # The following are from Table VIII, IX, X of Berti et al.,
