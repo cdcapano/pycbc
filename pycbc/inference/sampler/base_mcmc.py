@@ -828,7 +828,13 @@ class EnsembleSupport(object):
         acls = self.raw_acls
         if acls is None:
             return None
-        return numpy.array(list(acls.values())).max()
+        acl = numpy.array(list(acls.values()))
+        if acl.ndim == 2:
+            # parallel tempered
+            acl = acl[:, 0].max()
+        else:
+            acl = acl.max()
+        return acl
 
     @property
     def effective_nsamples(self):
