@@ -617,8 +617,8 @@ class MultiTemperedMCMCBurnInTests(MCMCBurnInTests):
         """
         acls = super(MultiTemperedMCMCBurnInTests, self)._getacls(
             filename, start_index)
-        # acls will have shape ntemps x nchains, flatten to nchains
-        return {param: vals.max(axis=0) for (param, vals) in acls.items()}
+        # acls will have shape ntemps, just pull out the coldest
+        return {param: vals[0] for (param, vals) in acls.items()}
 
     def _getlogposts(self, filename):
         """Convenience function for retrieving log posteriors.
@@ -773,8 +773,8 @@ class EnsembleMultiTemperedMCMCBurnInTests(EnsembleMCMCBurnInTests):
         """
         acls = super(EnsembleMultiTemperedMCMCBurnInTests, self)._getacls(
             filename, start_index)
-        # return the max for each parameter
-        return {param: vals.max() for (param, vals) in acls.items()}
+        # return the coldest temp for each parameter
+        return {param: vals[0] for (param, vals) in acls.items()}
 
     def _getlogposts(self, filename):
         """Convenience function for retrieving log posteriors.
