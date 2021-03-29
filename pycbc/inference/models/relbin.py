@@ -460,12 +460,16 @@ class Relative(BaseGaussianNoise):
         )
 
         # get fiducial params from config
-        fid_params = {
-            p.replace("_ref", ""): float(cp.get("model", p))
-            for p in cp.options("model")
-            if p.endswith("_ref")
-        }
-
+        fid_params = {}
+        ps = [p for p in cp.options("model") if p.endswith("_ref")]
+        for p in ps:
+            val = cp.get("model", p)
+            try:
+                val = float(val)
+            except ValueError:
+                # could be a string, just pass
+                pass
+            fid_params[p.replace("_ref", "")] = val
         # add optional params with default values if not specified
         opt_params = {
             "ra": numpy.pi,
