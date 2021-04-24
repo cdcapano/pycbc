@@ -287,6 +287,7 @@ for num_event, event in enumerate(events):
     # create the posterior file and plots
     posterior_file, summary_files, _, _ = inffu.make_posterior_workflow(
         sub_workflow, samples_files, config_file, event, rdir,
+        samples_file_dir=samples_file_dir,
         posterior_file_dir=posterior_file_dir, tags=opts.tags)
 
     # create the diagnostic plots

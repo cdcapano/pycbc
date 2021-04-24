@@ -141,6 +141,61 @@ def make_inference_prior_plot(workflow, config_file, output_dir,
     return node.output_files
 
 
+def add_model_stats(workflow, samples_files, output_dir,
+                    name="model_stats",
+                    analysis_seg=None, tags=None):
+    """Adds a model stats job if it is specified in the config file.
+
+    Model stats jobs add additional statistics to an inference file. See
+    ``pycbc_inference_model_stats`` for details.
+
+    This job is optional. It will only be executed if a ``model_stats``
+    executable is specified in the ``[executables]`` section. If not, this
+    function just passes back the given list of samples files.
+
+    Parameters
+    ----------
+    workflow: pycbc.workflow.Workflow
+        The workflow instance we are populating
+    samples_files : str or list of str
+        One or more files to add stats to.
+    output_dir: str
+        The directory to store the output files.
+    name: str, optional
+        The name in the [executables] section of the configuration file
+        to use, and the section to read for additional arguments to pass to
+        the executable. Default is ``model_stats``.
+    analysis_segs: ligo.segments.Segment, optional
+       The segment this job encompasses. If None then use the total analysis
+       time from the workflow.
+    tags: list, optional
+        Tags to add to the inference executables.
+
+    Returns
+    -------
+    pycbc.workflow.FileList
+        A list of output files.
+    """
+    # check if the name is in the executables directory; if not, just return
+    # the samples files
+    if name not in workflow.cp.options("executables"):
+        return samples_files
+    if analysis_seg is None:
+        analysis_seg = workflow.analysis_time
+    if tags is None:
+        tags = []
+    model_stats_exe = Executable(workflow.cp, name, ifos=workflow.ifos,
+                                 out_dir=output_dir)
+    node = model_stats_exe.create_node()
+    if not isinstance(samples_files, list):
+        samples_files = [samples_files]
+    node.add_input_list_opt("--input-file", samples_files)
+    node.new_output_file_opt(analysis_seg, ".hdf", "--output-file", tags=tags)
+    # add node to workflow
+    workflow += node
+    return node.output_files
+
+
 def create_posterior_files(workflow, samples_files, output_dir,
                            parameters=None, name="extract_posterior",
                            analysis_seg=None, tags=None):
@@ -837,10 +892,17 @@ def make_diagnostic_plots(workflow, diagnostics, samples_file, label, rdir,
 
 def make_posterior_workflow(workflow, samples_files, config_file, label,
                             rdir, posterior_file_dir='posterior_files',
+                            samples_file_dir='samples_files',
                             tags=None):
     """Adds jobs to a workflow that make a posterior file and subsequent plots.
 
-    A posterior file is first created from the given samples file(s). The
+    If a ``model_stats`` executable is specified in the workflow config file,
+    a ``model_stats`` job will be run to add additional statistics to the
+    samples files produced by ``pycbc_inference``. These files will be written
+    to the ``samples_file_dir``. If no ``model_stats`` executable is
+    specified, the inference samples file will be used.
+
+    A posterior file is then created from the given samples file(s). The
     settings for extracting the posterior are set by the
     ``[extract_posterior]`` section. If that section has a ``parameters``
     argument, then the parameters in the posterior file (and for use in all
@@ -901,6 +963,10 @@ def make_posterior_workflow(workflow, samples_files, config_file, label,
         Unique label for the plots. Used in file names.
     rdir : pycbc.results.layout.SectionNumber
         The results directory to save the plots to.
+    samples_file_dir : str, optional
+        The name of the directory the samples files are in. Used to save
+        samples files after a model stats job, if it is specified in the
+        config file. Default is ``samples_files``.
     posterior_file_dir : str, optional
         The name of the directory to save the posterior file to. Default is
         ``posterior_files``.
@@ -947,6 +1013,11 @@ def make_posterior_workflow(workflow, samples_files, config_file, label,
     # figure out if we are making a skymap
     make_skymap = ("create_fits_file" in workflow.cp.options("executables") and
                    "plot_skymap" in workflow.cp.options("executables"))
+
+    # make optional node for adding model stats
+    samples_files = add_model_stats(workflow, samples_files, samples_file_dir,
+                                    analysis_seg=analysis_seg,
+                                    tags=tags+[label])
 
     # make node for running extract samples
     posterior_file = create_posterior_files(
