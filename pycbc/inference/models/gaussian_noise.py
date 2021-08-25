@@ -563,13 +563,13 @@ class BaseGaussianNoise(BaseDataModel):
             # convert to frequency domain and get psds
             stilde_dict, psds = fd_data_from_strain_dict(opts, strain_dict,
                                                          psd_strain_dict)
-            logging.info('Calculating psds using filter psd')
-            psds = {}
-            for det, d in psd_strain_dict.items():
-                psds[det] = d.filter_psd(opts.psd_segment_length[det], 
-                                         strain_dict[det].delta_f, 0.)
-            # save the psd data segments if the psd was estimated from data
-            if opts.psd_estimation is not None:
+            if cp.has_option('data', 'psd-estimation'):
+                logging.info('Calculating psds using filter psd')
+                psds = {}
+                for det, d in psd_strain_dict.items():
+                    psds[det] = d.filter_psd(opts.psd_segment_length[det], 
+                                             strain_dict[det].delta_f, 0.)
+                # save the psd data segments if the psd was estimated from data
                 _tdict = psd_strain_dict or strain_dict
                 for det in psds:
                     psds[det].psd_segment = (_tdict[det].start_time,
@@ -1194,7 +1194,6 @@ class GatedGaussianNoise(BaseGaussianNoise):
             The value of the log likelihood.
         """
         params = self.current_params
-        # generate the template waveform
         try:
             wfs = self.waveform_generator.generate(**params)
         except NoWaveformError:
