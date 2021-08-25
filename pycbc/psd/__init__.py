@@ -101,7 +101,8 @@ def from_cli(opt, length, delta_f, low_frequency_cutoff,
                                root_name=opt.psd_file_xml_root_name)
         # Set values < flow to the value at flow
         kmin = int(low_frequency_cutoff / psd.delta_f)
-        psd[0:kmin] = psd[kmin]
+        if kmin > 0:
+            psd[0:kmin] = psd[kmin]
 
         psd *= dyn_range_factor ** 2
 
