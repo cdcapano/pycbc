@@ -24,10 +24,17 @@
 
 """Utilities for plugin model discovery."""
 
-
-def retrieve_model_plugins(model_dict):
+_autoinit = False
+def retrieve_model_plugins(model_dict, autoinit=False):
     """Retrieves and processes external model plugins.
     """
+    # Avoid circular auto initialization
+    global _autoinit
+    if autoinit and _autoinit:
+        return
+    elif autoinit:
+        _autoinit = True
+
     import pkg_resources
     # Check for fd waveforms
     for plugin in pkg_resources.iter_entry_points('pycbc.inference.models'):
@@ -57,4 +64,4 @@ def add_custom_model(model, models, force=False):
     if model.name in models and not force:
         raise RuntimeError("Cannot load plugin model {}; the name is already "
                            "in use.".format(model.name))
-    models[model.name] = model 
+    models[model.name] = model
