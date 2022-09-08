@@ -133,8 +133,6 @@ class BaseGatedGaussian(BaseGaussianNoise):
             self._cov[det] = cov
         self._overwhitened_data = self.whiten(self.data, 2, inplace=False)
     
-    # write a method to calculate samples and do the fit (use eigenvals for full cov), save the fit and 4 points; call that function in psds()
-    
     def gate_indices(self, det):
         """Calculate the indices corresponding to start and end of gate.
         """
@@ -160,8 +158,7 @@ class BaseGatedGaussian(BaseGaussianNoise):
         # delete gated rows and columns
         trunc = numpy.delete(numpy.delete(cov, slice(start_index, end_index), 0), slice(start_index, end_index), 1)
         return trunc/2, start_index, end_index
-    
-    # here estimate the values from the fit and the size instead of calculating
+
     def det_lognorm(self, det, start_index=None, end_index=None):
         """Calculate the normalization term from the truncated covariance matrix.
         """
@@ -514,11 +511,10 @@ class BaseGatedGaussian(BaseGaussianNoise):
             by group, i.e., to ``fp[group].attrs``. Otherwise, metadata is
             written to the top-level attrs (``fp.attrs``).
         """
-        # write sample points, residuals, and fit from linear regression to checkpoint
         BaseDataModel.write_metadata(self, fp)
         attrs = fp.getattrs(group=group)
         # write the analyzed detectors and times
-        attrs['analyzed_detectors'] = self.detectors # store fitting values here
+        attrs['analyzed_detectors'] = self.detectors
         for det, data in self.data.items():
             key = '{}_analysis_segment'.format(det)
             attrs[key] = [float(data.start_time), float(data.end_time)]
