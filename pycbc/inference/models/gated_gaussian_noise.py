@@ -511,8 +511,8 @@ class BaseGatedGaussian(BaseGaussianNoise):
         self.current_nproj.clear()
         for det, invpsd in self._invpsds.items():
             start_index, end_index = self.gate_indices(det)
-            #norm = self.det_lognorm_linext(det, start_index, end_index) # linear estimation
-            norm = self.det_lognorm(det, start_index, end_index) # exact calculation
+            norm = self.det_lognorm_linext(det, start_index, end_index) # linear estimation
+            #norm = self.det_lognorm(det, start_index, end_index) # exact calculation
             gatestartdelay, dgatedelay = gate_times[det]
             # we always filter the entire segment starting from kmin, since the
             # gated series may have high frequency components
@@ -683,7 +683,8 @@ class GatedGaussianNoise(BaseGatedGaussian):
         for det, h in wfs.items():
             invpsd = self._invpsds[det]
             start_index, end_index = self.gate_indices(det)
-            norm = self.det_lognorm(det, start_index, end_index)
+            #norm = self.det_lognorm(det, start_index, end_index)
+            norm = self.det_lognorm_linext(det, start_index, end_index)
             gatestartdelay, dgatedelay = gate_times[det]
             # we always filter the entire segment starting from kmin, since the
             # gated series may have high frequency components
@@ -861,7 +862,8 @@ class GatedGaussianMargPol(BaseGatedGaussian):
                                                     self.pol,
                                                     self.current_params['tc'])
             start_index, end_index = self.gate_indices(det)
-            norm = self.det_lognorm(det, start_index, end_index)
+            # norm = self.det_lognorm(det, start_index, end_index)
+            norm = self.det_lognorm_linext(det, start_index, end_index)
             # we always filter the entire segment starting from kmin, since the
             # gated series may have high frequency components
             slc = slice(self._kmin[det], self._kmax[det])
