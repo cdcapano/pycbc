@@ -348,10 +348,10 @@ class HierarchicalModel(BaseModel):
 
             # extra any kwargs to pass
             subkwargs = {}
-            for p, kwarg in kwargs:
+            for p, kwarg in list(kwargs.items()):
                 if p.startswith(lbl+'__'):
                     val = kwargs.pop(p)
-                    subkwargs[p.replace(lbl+'__', 1)] = val
+                    subkwargs[p.replace(lbl+'__', '', 1)] = val
             # initialize
             submodel = read_from_config(subcp, **subkwargs)
             # move the static params back to variable
