@@ -523,3 +523,34 @@ def redshift_waveform(srch, z, tref=0):
         # convert back to frequency domain
         redshifted = redshifted.to_frequencyseries()
     return redshifted
+
+
+def remove_td_zero_pad(hp, hc, rel_threshold=1e-6):
+    """Removes leading/trailing zeros from time domain waveforms.
+
+    Parameters
+    ----------
+    hp: TimeSeries
+        Plus polarization.
+    hc: TimeSeries
+        Cross polarization.
+    rel_threshold : float
+        The relative amplitude threshold to remove. Points in time in which the
+        amplitude is < rel_threshold * max amplitude are considered zero.
+        Default is 1e-6.
+
+    Returns
+    -------
+    hp : TimeSeries
+        Plus polarization in which the first/last points with that are
+        below the amplitude threshold are removed.
+    hc : TimeSeries
+        Cross polarization in which the first/last points with that are
+        below the amplitude threshold are removed.
+    """
+    power = hp.numpy()**2 + hc.numpy()**2
+    maxpower = power.max()
+    mask = power > (rel_threshold**2 * maxpower)
+    minidx = numpy.argmax(mask)
+    maxidx = len(mask) - numpy.argmax(mask[::-1]) - 1
+    return hp[minidx:maxidx], hc[minidx:maxidx]

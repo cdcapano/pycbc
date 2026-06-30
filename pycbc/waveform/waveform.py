@@ -577,6 +577,7 @@ get_fd_det_waveform_sequence.__doc__ = get_fd_det_waveform_sequence.__doc__.form
     params=parameters.fd_waveform_sequence_params.docstr(prefix="    ",
            include_label=False))
 
+
 def get_td_waveform(template=None, **kwargs):
     """Return the plus and cross polarizations of a time domain waveform.
 
@@ -585,6 +586,12 @@ def get_td_waveform(template=None, **kwargs):
     template: object
         An object that has attached properties. This can be used to subsitute
         for keyword arguments. A common example would be a row in an xml table.
+    remove_zeros : bool, optional
+        If True, leading/trailing zeros will be removed using
+        `waveform.utils.remove_td_zero_pad`. Default is False.
+    rel_amp_threshold : float, optional
+        The relative amplitude threshold to use for removing zero pads. Default
+        is 1e-6. See `waveform.utils.remove_td_zero_pad` for details.
 
     {params}
 
@@ -606,7 +613,13 @@ def get_td_waveform(template=None, **kwargs):
     else:
         required = parameters.td_required
     check_args(input_params, required)
-    return wav_gen(**input_params)
+    hp, hc = wav_gen(**input_params)
+    remove_zeros = input_params.get('remove_zeros', False)
+    if remove_zeros:
+        threshold = input_params.get('rel_amp_threshold', 1e-6)
+        hp, hc = wfutils.remove_td_zero_pad(hp, hc, threshold)
+    return hp, hc
+
 
 get_td_waveform.__doc__ = get_td_waveform.__doc__.format(
     params=parameters.td_waveform_params.docstr(prefix="    ",
