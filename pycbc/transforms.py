@@ -321,6 +321,15 @@ class CustomTransform(BaseTransform):
         return cls(inputs, outputs, transform_functions, jacobian=jacobian)
 
 
+class CustomTransformStringOutput(CustomTransform):
+    """Allows for a custom transform that outputs strings."""
+    name = "custom_string"
+
+    def _getslice(self, maps):
+        """Forces the slice to get everything so that a string can be returned."""
+        return slice(None, None)
+
+
 class CustomTransformMultiOutputs(CustomTransform):
     """Allows for any transform to be defined. Based on CustomTransform,
     but also supports multi-returning value functions.
@@ -2816,6 +2825,7 @@ LISAToGEO.inverse = GEOToLISA
 # dictionary of all transforms
 transforms = {
     CustomTransform.name: CustomTransform,
+    CustomTransformStringOutput.name: CustomTransformStringOutput,
     CustomTransformMultiOutputs.name: CustomTransformMultiOutputs,
     MchirpQToMass1Mass2.name: MchirpQToMass1Mass2,
     Mass1Mass2ToMchirpQ.name: Mass1Mass2ToMchirpQ,
