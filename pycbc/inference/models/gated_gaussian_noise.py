@@ -31,7 +31,7 @@ from pycbc.detector import Detector
 from pycbc.pnutils import hybrid_meco_frequency
 from pycbc import types
 from pycbc.waveform.utils import time_from_frequencyseries
-from pycbc.waveform import generator
+from pycbc.waveform import generator, FailedWaveformError
 from pycbc.filter import highpass
 from pycbc.strain.gate import invert_covariance
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
@@ -1548,6 +1548,11 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
             for mode in wfs[det]:
                 thishc, thishs = deepcopy(wfs[det][mode])
                 thisgatedhc, thisgatedhs = deepcopy(gated_wfs[det][mode])
+                # scale and overwhiten waveforms
+                if numpy.isnan(scale_factors[mode]):
+                    # a negative showed up somewhere in the snr calcs;
+                    # reject this waveform
+                    raise FailedWaveformError
                 # scale and overwhiten waveforms
                 thishc *= scale_factors[mode]
                 thishs *= scale_factors[mode]
