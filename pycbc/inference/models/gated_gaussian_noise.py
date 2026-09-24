@@ -33,7 +33,7 @@ from pycbc import types
 from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.waveform import generator, FailedWaveformError
 from pycbc.filter import highpass
-from pycbc.strain.gate import invert_covariance
+from pycbc.strain.gate import invert_covariance, batch_gate_and_paint_fd
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
                              catch_waveform_error)
 from .base_data import BaseDataModel
@@ -1778,19 +1778,12 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         gate_times = self.get_gate_times()
         out = {}
         for det, terms in wfs.items():
-            invpsd = self._invpsds[det]
             gatestartdelay, dgatedelay = gate_times[det]
-            invmat = self.invert_covariance(det)
-            gated = []
-            for h in terms:
-                ht = h.to_timeseries()
-                ht = ht.gate(gatestartdelay + dgatedelay/2,
-                             window=dgatedelay/2, copy=False,
-                             invpsd=invpsd, method='paint',
-                             paint_method=self.paint_method,
-                             paint_invmat=invmat)
-                gated.append(ht.to_frequencyseries())
-            out[det] = tuple(gated)
+            # all four terms share the same gate, so gate them together
+            out[det] = tuple(batch_gate_and_paint_fd(
+                terms, gatestartdelay + dgatedelay/2, dgatedelay/2,
+                self._invpsds[det], paint_method=self.paint_method,
+                invmat=self.invert_covariance(det)))
         return out
 
     def get_gate_times_hmeco(self):

@@ -32,6 +32,7 @@ import numpy
 from scipy.special import logsumexp
 
 from pycbc.inference import models
+from pycbc.strain.gate import batch_gate_and_paint_fd
 from pycbc.workflow import WorkflowConfigParser
 from utils import simple_exit
 
@@ -95,6 +96,30 @@ class TestGatedMargPhasePol(unittest.TestCase):
         self.assertTrue(self.stats['maxl_logl'] >= self.marglogl)
         # the loglr should be large, since there's a loud signal
         self.assertTrue(self.model.loglr > 100)
+
+    def test_batch_gating(self):
+        """Checks that batched gating matches gating each series."""
+        wfs = self.model.get_waveforms()
+        gate_times = self.model.get_gate_times()
+        for paint_method in ['matmul', 'toeplitz']:
+            for det, terms in wfs.items():
+                invpsd = self.model._invpsds[det]
+                gatestart, dgate = gate_times[det]
+                invmat = None
+                if paint_method == 'matmul':
+                    invmat = self.model.invert_covariance(det)
+                batched = batch_gate_and_paint_fd(
+                    terms, gatestart + dgate/2, dgate/2, invpsd,
+                    paint_method=paint_method, invmat=invmat)
+                for h, bh in zip(terms, batched):
+                    expected = h.to_timeseries().gate(
+                        gatestart + dgate/2, window=dgate/2, invpsd=invpsd,
+                        method='paint', paint_method=paint_method,
+                        paint_invmat=invmat).to_frequencyseries()
+                    self.assertEqual(len(bh), len(expected))
+                    self.assertEqual(bh.epoch, expected.epoch)
+                    err = abs(bh.numpy() - expected.numpy()).max()
+                    self.assertTrue(err < 1e-12 * abs(expected.numpy()).max())
 
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
