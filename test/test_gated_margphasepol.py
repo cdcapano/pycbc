@@ -102,7 +102,8 @@ class TestGatedMargPhasePol(unittest.TestCase):
         wfs = self.model.get_waveforms()
         gate_times = self.model.get_gate_times()
         for paint_method in ['matmul', 'toeplitz']:
-            for det, terms in wfs.items():
+            for det, modes in wfs.items():
+                terms = [x for mode in modes.values() for x in mode]
                 invpsd = self.model._invpsds[det]
                 gatestart, dgate = gate_times[det]
                 invmat = None
@@ -167,6 +168,64 @@ class TestGatedMargPhasePol(unittest.TestCase):
         marglogl = logsumexp(logls) - numpy.log(len(logls))
         self.assertAlmostEqual(marglogl, self.marglogl, delta=1e-8)
         self.assertAlmostEqual(maxl, self.stats['maxl_logl'], delta=1e-8)
+
+    @classmethod
+    def snr_config(cls, model_name):
+        """Config for sampling in the SNR of the 220 mode."""
+        cp = cls.config()
+        cp.set('model', 'name', model_name)
+        cp.remove_option('variable_params', 'amp220')
+        cp.remove_section('prior-amp220')
+        cp.set('variable_params', 'amp220_snr', '')
+        cp.add_section('prior-amp220_snr')
+        cp.set('prior-amp220_snr', 'name', 'uniform')
+        cp.set('prior-amp220_snr', 'min-amp220_snr', '0')
+        cp.set('prior-amp220_snr', 'max-amp220_snr', '50')
+        cp.set('model', 'sample_snrs', '')
+        cp.set('model', 'amp_names', 'amp220')
+        # the 221 amplitude is relative to the 220
+        cp.set('model', 'ref_amp', 'amp220')
+        return cp
+
+    def test_multimargphase_brute_pol_snr(self):
+        """Marginalizes gated_gaussian_multimargphase over polarization when
+        sampling in the SNR of the 220 mode."""
+        params = {p: val for p, val in TEMPLATE_PARAMS.items()
+                  if p != 'amp220'}
+        params['amp220_snr'] = 15.
+        # use fewer polarizations to keep the run time down
+        cp = self.snr_config('gated_gaussian_multimargphasepol')
+        cp.set('model', 'polarization_samples', '250')
+        model = models.read_from_config(cp)
+        model.update(**params)
+        expected = model.loglikelihood
+        stats = model.current_stats
+        self.assertTrue(numpy.isfinite(expected))
+        # brute force
+        cp = self.snr_config('gated_gaussian_multimargphase')
+        cp.remove_option('model', 'polarization_samples')
+        cp.set('static_params', 'phi220', '0')
+        cp.set('variable_params', 'polarization', '')
+        cp.add_section('prior-polarization')
+        cp.set('prior-polarization', 'name', 'uniform_angle')
+        brute = models.read_from_config(cp)
+        numpy.testing.assert_array_equal(brute.phases, model.phases)
+        logls = []
+        maxls = []
+        scales = []
+        for pol in model.pol:
+            brute.update(**dict(params, polarization=pol))
+            logls.append(brute.loglikelihood)
+            maxls.append(brute.current_stats['maxl_logl'])
+            scales.append(brute.current_stats['scale_factor_220'])
+        marglogl = logsumexp(logls) - numpy.log(len(logls))
+        self.assertAlmostEqual(marglogl, expected, delta=1e-8)
+        self.assertAlmostEqual(max(maxls), stats['maxl_logl'], delta=1e-8)
+        # the scale factor at the maxL polarization should be the same
+        idx = numpy.argmax(maxls)
+        self.assertEqual(model.pol[idx], stats['maxl_polarization'])
+        self.assertAlmostEqual(scales[idx] / stats['scale_factor_220'], 1.,
+                               delta=1e-10)
 
 
 suite = unittest.TestSuite()

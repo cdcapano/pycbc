@@ -1636,23 +1636,26 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
 
     .. math::
 
-        h_i(\phi, \psi) = F^i_{+}(\psi)\left[P_c\cos\phi + P_s\sin\phi\right]
-            + F^i_{\times}(\psi)\left[X_c\cos\phi + X_s\sin\phi\right],
+        h_i(\phi, \psi) = \sum_m s_m(\psi) \left\{
+            F^i_{+}(\psi)\left[P^m_c\cos\phi + P^m_s\sin\phi\right]
+            + F^i_{\times}(\psi)\left[X^m_c\cos\phi + X^m_s\sin\phi\right]
+            \right\},
 
-    where :math:`P_{c,s}` (:math:`X_{c,s}`) are the plus (cross) polarizations
-    summed over all modes, with the reference phase set to 0 (:math:`c`)
-    and :math:`\pi/2` (:math:`s`). All other mode phases are shifted by the
-    same amount as the reference phase, so that the non-reference phases act
-    as phases relative to the reference mode. The phase :math:`\phi` and the
-    polarization :math:`\psi` are then marginalized over numerically using
-    a fixed grid of points uniformly distributed between 0 and
+    where :math:`P^m_{c,s}` (:math:`X^m_{c,s}`) are the plus (cross)
+    polarizations of mode :math:`m`, with the reference phase set to 0
+    (:math:`c`) and :math:`\pi/2` (:math:`s`), and :math:`s_m` is an optional
+    amplitude scale factor (see below). All other mode phases are shifted by
+    the same amount as the reference phase, so that the non-reference phases
+    act as phases relative to the reference mode. The phase :math:`\phi` and
+    the polarization :math:`\psi` are then marginalized over numerically
+    using a fixed grid of points uniformly distributed between 0 and
     :math:`2\pi` in each.
 
-    Expanding the gated inner products gives a log likelihood ratio that
-    is a bilinear form in :math:`(F_+, F_\times, F_+^2, F_\times^2,
-    F_+F_\times)` and :math:`(\cos\phi, \sin\phi, \cos^2\phi, \sin^2\phi,
-    \cos\phi\sin\phi)`, so that the likelihood over the entire grid can be
-    evaluated with a pair of small matrix products.
+    Expanding the gated inner products gives a log likelihood ratio that is
+    linear in :math:`(\cos\phi, \sin\phi, \cos^2\phi, \sin^2\phi,
+    \cos\phi\sin\phi)`, with coefficients that are (quadratic) functions of
+    the polarization. The likelihood over the entire grid can therefore be
+    evaluated with a single matrix product.
 
     The phase to marginalize over is set with the ``ref_phase`` argument. The
     reference phase is always set to zero for waveform generation, so it
@@ -1665,6 +1668,22 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
     with the ``phase_samples`` and ``polarization_samples`` arguments,
     respectively. By default, 1000 points are used in each.
 
+    As with :py:class:`GatedGaussianMultimodeMargPhase`, the optimal SNR of
+    modes may be sampled instead of their amplitude by setting
+    ``sample_snrs`` and listing the amplitude parameters in ``amp_names``.
+    The waveform is generated with those amplitudes set to
+    ``fiducial_amp_value``, and each mode is then rescaled by
+    :math:`s_m = \rho_m / \rho^{\rm fid}_m` so that it has the network SNR
+    given by the ``{amp_name}_snr`` parameter. The fiducial SNR
+    :math:`\rho^{\rm fid}_m` is computed from the cosine (reference phase = 0)
+    term. Since it depends on the polarization, the scale factor is computed
+    for every polarization in the marginalization grid. If ``ref_amp`` is
+    provided, modes whose SNR is not sampled are scaled by the scale factor of
+    the ``ref_amp`` mode, so that their amplitude remains relative to it.
+
+    If SNRs are not sampled, the modes are summed before gating, since they
+    all share the same scale.
+
     This model requires a waveform approximant that returns the individual
     modes (e.g., ``TdModesfromFinalMassSpin``).
     """
@@ -1674,7 +1693,9 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                  high_frequency_cutoff=None, normalize=False,
                  static_params=None,
                  phase_samples=1000, polarization_samples=1000,
-                 phase_names=None, ref_phase=None, **kwargs):
+                 phase_names=None, ref_phase=None, sample_snrs=False,
+                 amp_names=None, fiducial_amp_value=1., ref_amp=None,
+                 **kwargs):
         # set up the boiler-plate attributes
         super().__init__(
             variable_params, data, low_frequency_cutoff, psds=psds,
@@ -1715,6 +1736,35 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         sphi = numpy.sin(self.phases)
         self._phase_terms = numpy.array([cphi, sphi, cphi*cphi, sphi*sphi,
                                          cphi*sphi])
+        # SNR sampling; an empty string (e.g., ``sample_snrs =`` in a config
+        # file) is interpreted as True
+        if sample_snrs == '':
+            sample_snrs = True
+        self.sample_snrs = bool(sample_snrs)
+        self.fiducial_amp_value = float(fiducial_amp_value)
+        if self.sample_snrs:
+            if amp_names is None:
+                raise ValueError('Must provide names of amplitude parameters '
+                                 'if specifying sample_snrs')
+            elif isinstance(amp_names, list):
+                self.amp_names = amp_names
+            elif isinstance(amp_names, str):
+                self.amp_names = amp_names.split(' ')
+            else:
+                raise TypeError('Unrecognized format for amp_names. '
+                                'Accepts string or list')
+            # the amplitude parameters are named amp{mode}
+            self.sampled_mode_names = [amp[3:] for amp in self.amp_names]
+            self.snr_names = [f'{amp}_snr' for amp in self.amp_names]
+        else:
+            self.amp_names = []
+            self.sampled_mode_names = []
+            self.snr_names = []
+        if ref_amp is not None and ref_amp not in self.amp_names:
+            raise ValueError(f'ref_amp {ref_amp} not in amp_names '
+                             f'{self.amp_names}')
+        self.ref_amp = ref_amp
+        self.ref_mode_name = None if ref_amp is None else ref_amp[3:]
         # create the waveform generator
         gen_class = generator.FDomainDetFrameTwoPolTwoPhaseModesGenerator
         self.waveform_generator = create_waveform_generator(
@@ -1727,42 +1777,56 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
     def get_waveforms(self):
         r"""Generate the waveforms.
 
+        If SNRs are sampled, the amplitudes listed in ``amp_names`` are set
+        to the fiducial value.
+
         Returns
         -------
         dict :
-            Dictionary of detector names -> (hp_c, hp_s, hc_c, hc_s), where
-            ``hp_c, hp_s`` (``hc_c, hc_s``) are the cosine and sine terms of
-            the plus (cross) polarization, summed over all modes. The time
-            shift to each detector has been applied, but not the antenna
-            patterns.
+            Dictionary of detector names -> modes -> (hp_c, hp_s, hc_c, hc_s),
+            where ``hp_c, hp_s`` (``hc_c, hc_s``) are the cosine and sine
+            terms of the plus (cross) polarization. The time shift to each
+            detector has been applied, but not the antenna patterns. If SNRs
+            are not being sampled, the modes are summed together and stored
+            under a single ``'summed'`` key.
         """
         if self._current_wfs is None:
             params = self.current_params.copy()
             # the reference phase is marginalized over
             params[self.ref_phase] = 0.
+            # set specified amplitudes to the fiducial value
+            for amp in self.amp_names:
+                params[amp] = self.fiducial_amp_value
             wfs = self.waveform_generator.generate(phases=self.phase_names,
                                                    ref_phase=self.ref_phase,
                                                    **params)
             out = {}
             for det, modes in wfs.items():
-                summed = None
-                for terms in modes.values():
+                out[det] = {}
+                for mode, terms in modes.items():
                     terms = [x.copy() for x in terms]
                     for x in terms:
                         # make the same length as the data
                         x.resize(len(self.data[det]))
-                    if summed is None:
-                        summed = terms
-                    else:
+                    out[det][mode] = terms
+                if not self.sample_snrs:
+                    # all modes have the same scale, so sum them now to
+                    # reduce the number of series that need to be highpassed
+                    # and gated
+                    modeterms = list(out[det].values())
+                    summed = modeterms[0]
+                    for terms in modeterms[1:]:
                         for x, y in zip(summed, terms):
                             x += y
-                if self.highpass_waveforms:
-                    summed = [
-                        highpass(x.to_timeseries(),
-                                 frequency=self.highpass_waveforms
-                                 ).to_frequencyseries()
-                        for x in summed]
-                out[det] = tuple(summed)
+                    out[det] = {'summed': summed}
+                for mode, terms in out[det].items():
+                    if self.highpass_waveforms:
+                        terms = [
+                            highpass(x.to_timeseries(),
+                                     frequency=self.highpass_waveforms
+                                     ).to_frequencyseries()
+                            for x in terms]
+                    out[det][mode] = tuple(terms)
             self._current_wfs = out
         return self._current_wfs
 
@@ -1772,24 +1836,30 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         Returns
         -------
         dict :
-            Dictionary of detector names -> gated (hp_c, hp_s, hc_c, hc_s).
+            Dictionary of detector names -> modes -> gated
+            (hp_c, hp_s, hc_c, hc_s).
         """
         wfs = self.get_waveforms()
         gate_times = self.get_gate_times()
         out = {}
-        for det, terms in wfs.items():
+        for det, modes in wfs.items():
             gatestartdelay, dgatedelay = gate_times[det]
-            # all four terms share the same gate, so gate them together
-            out[det] = tuple(batch_gate_and_paint_fd(
+            # all of the series share the same gate, so gate them together
+            names = list(modes.keys())
+            terms = [x for mode in names for x in modes[mode]]
+            gated = batch_gate_and_paint_fd(
                 terms, gatestartdelay + dgatedelay/2, dgatedelay/2,
                 self._invpsds[det], paint_method=self.paint_method,
-                invmat=self.invert_covariance(det)))
+                invmat=self.invert_covariance(det))
+            out[det] = {mode: tuple(gated[4*ii:4*(ii+1)])
+                        for ii, mode in enumerate(names)}
         return out
 
     def get_gate_times_hmeco(self):
         """Gets the time to apply a gate based on the current sky position.
 
-        The time is calculated from the cosine term of the plus polarization.
+        The time is calculated from the cosine term of the plus polarization,
+        summed over modes.
 
         Returns
         -------
@@ -1807,8 +1877,8 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                                        spin2)
         # figure out the gate times
         gatetimes = {}
-        for det, terms in wfs.items():
-            hp = terms[0]
+        for det, modes in wfs.items():
+            hp = sum(terms[0] for terms in modes.values())
             ht = hp.to_timeseries()
             f_low = int((self._f_lower[det]+1)/hp.delta_f)
             sample_freqs = hp.sample_frequencies[f_low:].numpy()
@@ -1826,38 +1896,49 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
 
     @property
     def _extra_stats(self):
-        """Adds the maxL phase, polarization, and corresponding likelihood."""
-        return ['maxl_phase', 'maxl_polarization', 'maxl_logl']
+        """Adds the maxL phase, polarization, and corresponding likelihood,
+        and the scale factor of each mode whose SNR is sampled (at the maxL
+        polarization)."""
+        return ['maxl_phase', 'maxl_polarization', 'maxl_logl'] + \
+            [f'scale_factor_{mode}' for mode in self.sampled_mode_names]
 
     def _nowaveform_handler(self):
         """Sets the extra stats to nan if no waveform was generated."""
         for stat in ['maxl_phase', 'maxl_polarization']:
             setattr(self._current_stats, stat, numpy.nan)
+        for mode in self.sampled_mode_names:
+            setattr(self._current_stats, f'scale_factor_{mode}', numpy.nan)
         setattr(self._current_stats, 'maxl_logl', -numpy.inf)
         return -numpy.inf
 
-    def _det_coefficients(self, det, wfs, gated_wfs, gated_data):
+    def _det_inner_products(self, det, modes, wfs, gated_wfs, gated_data):
         r"""Computes the inner products in the given detector.
 
-        Returns the 5x5 matrix :math:`M` such that the log likelihood ratio
-        in the detector is :math:`\mathbf{f}(\psi) M \mathbf{\tau}(\phi)`,
-        where :math:`\mathbf{f} = (F_+, F_\times, F_+^2, F_\times^2,
-        F_+ F_\times)` and :math:`\mathbf{\tau} = (\cos\phi, \sin\phi,
-        \cos^2\phi, \sin^2\phi, \cos\phi \sin\phi)`. Also returns
-        :math:`-\left<d, d\right>/2`.
+        The inner products are computed between all of the terms
+        :math:`u_k`, where :math:`k` runs over the modes and, for each mode,
+        :math:`(P_c, P_s, X_c, X_s)`. The second argument of each inner
+        product is gated.
+
+        Returns
+        -------
+        uv : array
+            The ``4M x 4M`` array of :math:`\left<u_k, u_l\right>`.
+        ud : array
+            The length ``4M`` array of
+            :math:`\left<u_k, d\right> + \left<d, u_k\right>`.
+        dd : float
+            :math:`\left<d, d\right>`.
         """
         # we always filter the entire segment starting from kmin, since the
         # gated series may have high frequency components
         slc = slice(self._kmin[det], self._kmax[det])
         invpsd = self._invpsds[det]
         fac = 4 * invpsd.delta_f
-        # overwhiten the ungated data and waveforms; the second argument of
-        # every inner product is gated
+        # overwhiten the ungated data and waveforms
         d = self._overwhitened_data[det][slc]
         gated_d = gated_data[det][slc]
-        # order is pc, ps, xc, xs
-        hs = [(h*invpsd)[slc] for h in wfs[det]]
-        gated_hs = [h[slc] for h in gated_wfs[det]]
+        hs = [(h*invpsd)[slc] for mode in modes for h in wfs[det][mode]]
+        gated_hs = [h[slc] for mode in modes for h in gated_wfs[det][mode]]
         # <u, v> for all u, v; note that this is not symmetric
         uv = numpy.array([[fac * u.inner(v).real for v in gated_hs]
                           for u in hs])
@@ -1866,27 +1947,42 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                           for u, gu in zip(hs, gated_hs)])
         # <d, d>
         dd = fac * d.inner(gated_d).real
-        # symmetrized signal-signal products
-        suv = uv + uv.T
-        pc, ps, xc, xs = range(4)
-        mat = numpy.zeros((5, 5))
-        # linear terms: rows fp, fc; columns cos, sin
-        mat[0, 0] = 0.5 * ud[pc]
-        mat[0, 1] = 0.5 * ud[ps]
-        mat[1, 0] = 0.5 * ud[xc]
-        mat[1, 1] = 0.5 * ud[xs]
-        # quadratic terms: rows fp^2, fc^2, fp*fc;
-        # columns cos^2, sin^2, cos*sin
-        mat[2, 2] = -0.5 * uv[pc, pc]
-        mat[2, 3] = -0.5 * uv[ps, ps]
-        mat[2, 4] = -0.5 * suv[pc, ps]
-        mat[3, 2] = -0.5 * uv[xc, xc]
-        mat[3, 3] = -0.5 * uv[xs, xs]
-        mat[3, 4] = -0.5 * suv[xc, xs]
-        mat[4, 2] = -0.5 * suv[pc, xc]
-        mat[4, 3] = -0.5 * suv[ps, xs]
-        mat[4, 4] = -0.5 * (suv[pc, xs] + suv[ps, xc])
-        return mat, -0.5 * dd
+        return uv, ud, dd
+
+    def _scale_factors(self, modes, fpfc, uvs):
+        """Computes the scale factor of every mode at every polarization.
+
+        Returns
+        -------
+        dict :
+            Dictionary of mode -> array of scale factors, one for each
+            polarization.
+        """
+        scales = {}
+        if not self.sample_snrs:
+            return {mode: numpy.ones(self.polarization_samples)
+                    for mode in modes}
+        # the fiducial SNR^2 of each mode from the cosine term; this is
+        # <h_c, h_c> with h_c = fp*P_c + fc*X_c, summed over detectors
+        for ii, mode in enumerate(modes):
+            snr = self.current_params.get(f'amp{mode}_snr')
+            if snr is None:
+                scales[mode] = numpy.ones(self.polarization_samples)
+                continue
+            pc, xc = 4*ii, 4*ii + 2
+            fid_snrsq = 0.
+            for det in self.det_names:
+                fp, fc = fpfc[det]
+                uv = uvs[det]
+                fid_snrsq += fp*fp*uv[pc, pc] + fc*fc*uv[xc, xc] \
+                    + fp*fc*(uv[pc, xc] + uv[xc, pc])
+            scales[mode] = snr / fid_snrsq**0.5
+        # scale all other modes by the reference mode's scale factor
+        if self.ref_mode_name is not None:
+            for mode in modes:
+                if mode not in self.sampled_mode_names:
+                    scales[mode] = scales[mode] * scales[self.ref_mode_name]
+        return scales
 
     @catch_waveform_error
     def _loglikelihood(self):
@@ -1907,8 +2003,11 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         ref_tc = self.current_params['tc']
         ra = self.current_params['ra']
         dec = self.current_params['dec']
-        # the log likelihood ratio over the polarization x phase grid
-        loglr = 0.
+        modes = list(wfs[self.det_names[0]].keys())
+        # compute the antenna patterns and inner products in each detector
+        fpfc = {}
+        uvs = {}
+        uds = {}
         lognl = 0.
         for det in self.det_names:
             if det not in self.dets:
@@ -1916,21 +2015,60 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
             # calculate tc in frame
             tc = self.dets[det].arrival_time(ref_tc, ra, dec, refframe)
             # evaluate antenna pattern
-            fp, fc = self.dets[det].antenna_pattern(ra, dec, self.pol, tc)
-            fterms = numpy.array([fp, fc, fp*fp, fc*fc, fp*fc]).T
-            mat, detlognl = self._det_coefficients(det, wfs, gated_wfs,
-                                                   gated_data)
-            loglr += fterms @ (mat @ self._phase_terms)
+            fpfc[det] = self.dets[det].antenna_pattern(ra, dec, self.pol, tc)
+            uvs[det], uds[det], dd = self._det_inner_products(
+                det, modes, wfs, gated_wfs, gated_data)
             # get the normalization in this detector
             start_index, end_index = self.gate_indices(det)
             norm = self.det_lognorm(det, start_index, end_index)
-            lognl += norm + detlognl
+            lognl += norm - 0.5*dd
+        # get the scale factor of each mode at each polarization
+        scales = self._scale_factors(modes, fpfc, uvs)
+        if any(numpy.isnan(s).any() for s in scales.values()):
+            # a negative showed up somewhere in the snr calcs;
+            # reject this waveform
+            raise FailedWaveformError
+        # indices of the cosine (P_c, X_c) and sine (P_s, X_s) terms
+        cidx = numpy.array([4*ii + jj for ii in range(len(modes))
+                            for jj in (0, 2)])
+        sidx = cidx + 1
+        # the coefficients of (cos, sin, cos^2, sin^2, cos*sin) at each
+        # polarization, summed over detectors
+        coeffs = numpy.zeros((self.polarization_samples, 5))
+        for det in self.det_names:
+            fp, fc = fpfc[det]
+            uv = uvs[det]
+            ud = uds[det]
+            # the weight of each term u_k at each polarization is the mode
+            # scale factor times fp (for plus terms) or fc (for cross terms);
+            # this is a polarization_samples x 4M array
+            weights = numpy.stack(
+                [scales[mode] * f for mode in modes
+                 for f in (fp, fp, fc, fc)], axis=1)
+            wc = weights[:, cidx]
+            ws = weights[:, sidx]
+            # <h, d>/2 + <d, h>/2
+            coeffs[:, 0] += 0.5 * wc @ ud[cidx]
+            coeffs[:, 1] += 0.5 * ws @ ud[sidx]
+            # -<h, h>/2
+            coeffs[:, 2] -= 0.5 * numpy.einsum(
+                'pk,kl,pl->p', wc, uv[numpy.ix_(cidx, cidx)], wc)
+            coeffs[:, 3] -= 0.5 * numpy.einsum(
+                'pk,kl,pl->p', ws, uv[numpy.ix_(sidx, sidx)], ws)
+            coeffs[:, 4] -= 0.5 * numpy.einsum(
+                'pk,kl,pl->p', wc,
+                uv[numpy.ix_(cidx, sidx)] + uv[numpy.ix_(sidx, cidx)].T, ws)
+        # the log likelihood ratio over the polarization x phase grid
+        loglr = coeffs @ self._phase_terms
         # store the maxl phase and polarization
         polidx, phaseidx = numpy.unravel_index(loglr.argmax(), loglr.shape)
         setattr(self._current_stats, 'maxl_phase', self.phases[phaseidx])
         setattr(self._current_stats, 'maxl_polarization', self.pol[polidx])
         setattr(self._current_stats, 'maxl_logl',
                 loglr[polidx, phaseidx] + lognl)
+        for mode in self.sampled_mode_names:
+            setattr(self._current_stats, f'scale_factor_{mode}',
+                    scales[mode][polidx])
         # compute the marginalized log likelihood
         marglogl = special.logsumexp(loglr) + lognl - numpy.log(loglr.size)
         return float(marglogl)
@@ -1946,18 +2084,22 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
     def multi_loglikelihood(self, models):
         """ Calculate a multi-model (signal) likelihood
         """
-        # Generate the waveforms for each submodel
+        if any(m.sample_snrs for m in models + [self]):
+            raise NotImplementedError("multi-signal likelihoods are not "
+                                      "supported when sampling SNRs")
+        # Generate the waveforms for each submodel; since SNRs are not
+        # sampled, each only has a single (summed) mode
         wfs = [m.get_waveforms() for m in models + [self]]
         # combine into a single waveform
         combine = {}
         for det in self.data:
-            mlen = max(len(x) for wf in wfs for x in wf[det])
+            mlen = max(len(x) for wf in wfs for x in wf[det]['summed'])
             summed = []
             for idx in range(4):
-                terms = [wf[det][idx].copy() for wf in wfs]
+                terms = [wf[det]['summed'][idx].copy() for wf in wfs]
                 for x in terms:
                     x.resize(mlen)
                 summed.append(sum(terms))
-            combine[det] = tuple(summed)
+            combine[det] = {'summed': tuple(summed)}
         self._current_wfs = combine
         return self._loglikelihood()
