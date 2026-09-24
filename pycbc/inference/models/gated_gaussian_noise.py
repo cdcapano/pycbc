@@ -882,7 +882,7 @@ class GatedGaussianMargPol(BaseGatedGaussian):
             high_frequency_cutoff=high_frequency_cutoff, normalize=normalize,
             static_params=static_params, **kwargs)
         # the polarization parameters
-        self.polarization_samples = polarization_samples
+        self.polarization_samples = int(polarization_samples)
         self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples)
         self.dets = {}
         # create the waveform generator
@@ -1395,6 +1395,10 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
             self.snr_names = [i + '_snr' for i in self.amp_names]
             ### FIXME: should be a more agnostic way to get the mode names
             self.sampled_mode_names = [i[3:] for i in self.amp_names]
+        else:
+            self.amp_names = []
+            self.snr_names = []
+            self.sampled_mode_names = []
         self.ref_amp = ref_amp
         if self.ref_amp is not None and self.ref_amp not in self.amp_names:
             raise ValueError(f'ref_amp {ref_amp} not in amp_names {amp_names}')
@@ -1618,5 +1622,349 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
             mlen = max([len(x[det]) for x in wfs])
             [x[det].resize(mlen) for x in wfs]
             combine[det] = sum([x[det] for x in wfs])
+        self._current_wfs = combine
+        return self._loglikelihood()
+
+
+class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
+    r"""Gated Gaussian noise model that numerically marginalizes over both
+    polarization and the phase of a (multimode) signal.
+
+    This combines :py:class:`GatedGaussianMargPol` and
+    :py:class:`GatedGaussianMultimodeMargPhase`. The waveform in detector
+    :math:`i` is written as
+
+    .. math::
+
+        h_i(\phi, \psi) = F^i_{+}(\psi)\left[P_c\cos\phi + P_s\sin\phi\right]
+            + F^i_{\times}(\psi)\left[X_c\cos\phi + X_s\sin\phi\right],
+
+    where :math:`P_{c,s}` (:math:`X_{c,s}`) are the plus (cross) polarizations
+    summed over all modes, with the reference phase set to 0 (:math:`c`)
+    and :math:`\pi/2` (:math:`s`). All other mode phases are shifted by the
+    same amount as the reference phase, so that the non-reference phases act
+    as phases relative to the reference mode. The phase :math:`\phi` and the
+    polarization :math:`\psi` are then marginalized over numerically using
+    a fixed grid of points uniformly distributed between 0 and
+    :math:`2\pi` in each.
+
+    Expanding the gated inner products gives a log likelihood ratio that
+    is a bilinear form in :math:`(F_+, F_\times, F_+^2, F_\times^2,
+    F_+F_\times)` and :math:`(\cos\phi, \sin\phi, \cos^2\phi, \sin^2\phi,
+    \cos\phi\sin\phi)`, so that the likelihood over the entire grid can be
+    evaluated with a pair of small matrix products.
+
+    The phase to marginalize over is set with the ``ref_phase`` argument. The
+    reference phase is always set to zero for waveform generation, so it
+    should not be a variable parameter. All of the phase parameters of the
+    waveform must be listed with the ``phase_names`` argument. This can be
+    passed as a list or a string delimited by spaces (e.g.
+    'phase1 phase2 phase3').
+
+    The number of integration points in phase and polarization can be set
+    with the ``phase_samples`` and ``polarization_samples`` arguments,
+    respectively. By default, 1000 points are used in each.
+
+    This model requires a waveform approximant that returns the individual
+    modes (e.g., ``TdModesfromFinalMassSpin``).
+    """
+    name = 'gated_gaussian_multimargphasepol'
+
+    def __init__(self, variable_params, data, low_frequency_cutoff, psds=None,
+                 high_frequency_cutoff=None, normalize=False,
+                 static_params=None,
+                 phase_samples=1000, polarization_samples=1000,
+                 phase_names=None, ref_phase=None, **kwargs):
+        # set up the boiler-plate attributes
+        super().__init__(
+            variable_params, data, low_frequency_cutoff, psds=psds,
+            high_frequency_cutoff=high_frequency_cutoff, normalize=normalize,
+            static_params=static_params, **kwargs)
+        self.det_names = list(self.data.keys())
+        self.dets = {}
+        # phase marginalization parameters
+        if ref_phase is None:
+            raise KeyError('ref_phase is set to None. Please specify the '
+                           'name of the phase parameter to marginalize '
+                           'over')
+        if ref_phase in self.variable_params:
+            raise ValueError(f'ref_phase {ref_phase} is marginalized over; '
+                             'it should not be a variable parameter')
+        self.ref_phase = ref_phase
+        if phase_names is None:
+            logging.warning('No phase_names provided. Assuming single mode '
+                            f'specified by ref_phase {ref_phase}')
+            self.phase_names = [ref_phase]
+        elif isinstance(phase_names, list):
+            self.phase_names = phase_names
+        elif isinstance(phase_names, str):
+            self.phase_names = phase_names.split(' ')
+        else:
+            raise TypeError('Unrecognized format for phase_names arg. Accepts '
+                            'string, list, or None')
+        if self.ref_phase not in self.phase_names:
+            self.phase_names.append(self.ref_phase)
+        self.phase_samples = int(phase_samples)
+        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples)
+        # polarization marginalization parameters
+        self.polarization_samples = int(polarization_samples)
+        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples)
+        # the phase dependence of the log likelihood ratio; this is a
+        # 5 x phase_samples array of cos, sin, cos^2, sin^2, cos*sin
+        cphi = numpy.cos(self.phases)
+        sphi = numpy.sin(self.phases)
+        self._phase_terms = numpy.array([cphi, sphi, cphi*cphi, sphi*sphi,
+                                         cphi*sphi])
+        # create the waveform generator
+        gen_class = generator.FDomainDetFrameTwoPolTwoPhaseModesGenerator
+        self.waveform_generator = create_waveform_generator(
+            self.variable_params, self.data,
+            waveform_transforms=self.waveform_transforms,
+            recalibration=self.recalibration,
+            generator_class=gen_class,
+            **self.static_params)
+
+    def get_waveforms(self):
+        r"""Generate the waveforms.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> (hp_c, hp_s, hc_c, hc_s), where
+            ``hp_c, hp_s`` (``hc_c, hc_s``) are the cosine and sine terms of
+            the plus (cross) polarization, summed over all modes. The time
+            shift to each detector has been applied, but not the antenna
+            patterns.
+        """
+        if self._current_wfs is None:
+            params = self.current_params.copy()
+            # the reference phase is marginalized over
+            params[self.ref_phase] = 0.
+            wfs = self.waveform_generator.generate(phases=self.phase_names,
+                                                   ref_phase=self.ref_phase,
+                                                   **params)
+            out = {}
+            for det, modes in wfs.items():
+                summed = None
+                for terms in modes.values():
+                    terms = [x.copy() for x in terms]
+                    for x in terms:
+                        # make the same length as the data
+                        x.resize(len(self.data[det]))
+                    if summed is None:
+                        summed = terms
+                    else:
+                        for x, y in zip(summed, terms):
+                            x += y
+                if self.highpass_waveforms:
+                    summed = [
+                        highpass(x.to_timeseries(),
+                                 frequency=self.highpass_waveforms
+                                 ).to_frequencyseries()
+                        for x in summed]
+                out[det] = tuple(summed)
+            self._current_wfs = out
+        return self._current_wfs
+
+    def get_gated_waveforms(self):
+        r"""Generate the gated waveforms.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> gated (hp_c, hp_s, hc_c, hc_s).
+        """
+        wfs = self.get_waveforms()
+        gate_times = self.get_gate_times()
+        out = {}
+        for det, terms in wfs.items():
+            invpsd = self._invpsds[det]
+            gatestartdelay, dgatedelay = gate_times[det]
+            invmat = self.invert_covariance(det)
+            gated = []
+            for h in terms:
+                ht = h.to_timeseries()
+                ht = ht.gate(gatestartdelay + dgatedelay/2,
+                             window=dgatedelay/2, copy=False,
+                             invpsd=invpsd, method='paint',
+                             paint_method=self.paint_method,
+                             paint_invmat=invmat)
+                gated.append(ht.to_frequencyseries())
+            out[det] = tuple(gated)
+        return out
+
+    def get_gate_times_hmeco(self):
+        """Gets the time to apply a gate based on the current sky position.
+
+        The time is calculated from the cosine term of the plus polarization.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> (gate start, gate width)
+        """
+        # generate the template waveform
+        wfs = self.get_waveforms()
+        # get waveform parameters
+        params = self.current_params
+        spin1 = params['spin1z']
+        spin2 = params['spin2z']
+        dgate = params['gate_window']
+        meco_f = hybrid_meco_frequency(params['mass1'], params['mass2'], spin1,
+                                       spin2)
+        # figure out the gate times
+        gatetimes = {}
+        for det, terms in wfs.items():
+            hp = terms[0]
+            ht = hp.to_timeseries()
+            f_low = int((self._f_lower[det]+1)/hp.delta_f)
+            sample_freqs = hp.sample_frequencies[f_low:].numpy()
+            f_idx = numpy.where(sample_freqs <= meco_f)[0][-1]
+            # find time corresponding to meco frequency
+            t_from_freq = time_from_frequencyseries(
+                hp[f_low:], sample_frequencies=sample_freqs)
+            if t_from_freq[f_idx] > 0:
+                gatestartdelay = t_from_freq[f_idx] + float(t_from_freq.epoch)
+            else:
+                gatestartdelay = t_from_freq[f_idx] + ht.sample_times[-1]
+            gatestartdelay = min(gatestartdelay, params['t_gate_start'])
+            gatetimes[det] = (gatestartdelay, dgate)
+        return gatetimes
+
+    @property
+    def _extra_stats(self):
+        """Adds the maxL phase, polarization, and corresponding likelihood."""
+        return ['maxl_phase', 'maxl_polarization', 'maxl_logl']
+
+    def _nowaveform_handler(self):
+        """Sets the extra stats to nan if no waveform was generated."""
+        for stat in ['maxl_phase', 'maxl_polarization']:
+            setattr(self._current_stats, stat, numpy.nan)
+        setattr(self._current_stats, 'maxl_logl', -numpy.inf)
+        return -numpy.inf
+
+    def _det_coefficients(self, det, wfs, gated_wfs, gated_data):
+        r"""Computes the inner products in the given detector.
+
+        Returns the 5x5 matrix :math:`M` such that the log likelihood ratio
+        in the detector is :math:`\mathbf{f}(\psi) M \mathbf{\tau}(\phi)`,
+        where :math:`\mathbf{f} = (F_+, F_\times, F_+^2, F_\times^2,
+        F_+ F_\times)` and :math:`\mathbf{\tau} = (\cos\phi, \sin\phi,
+        \cos^2\phi, \sin^2\phi, \cos\phi \sin\phi)`. Also returns
+        :math:`-\left<d, d\right>/2`.
+        """
+        # we always filter the entire segment starting from kmin, since the
+        # gated series may have high frequency components
+        slc = slice(self._kmin[det], self._kmax[det])
+        invpsd = self._invpsds[det]
+        fac = 4 * invpsd.delta_f
+        # overwhiten the ungated data and waveforms; the second argument of
+        # every inner product is gated
+        d = self._overwhitened_data[det][slc]
+        gated_d = gated_data[det][slc]
+        # order is pc, ps, xc, xs
+        hs = [(h*invpsd)[slc] for h in wfs[det]]
+        gated_hs = [h[slc] for h in gated_wfs[det]]
+        # <u, v> for all u, v; note that this is not symmetric
+        uv = numpy.array([[fac * u.inner(v).real for v in gated_hs]
+                          for u in hs])
+        # <u, d> + <d, u>
+        ud = numpy.array([fac * (u.inner(gated_d).real + d.inner(gu).real)
+                          for u, gu in zip(hs, gated_hs)])
+        # <d, d>
+        dd = fac * d.inner(gated_d).real
+        # symmetrized signal-signal products
+        suv = uv + uv.T
+        pc, ps, xc, xs = range(4)
+        mat = numpy.zeros((5, 5))
+        # linear terms: rows fp, fc; columns cos, sin
+        mat[0, 0] = 0.5 * ud[pc]
+        mat[0, 1] = 0.5 * ud[ps]
+        mat[1, 0] = 0.5 * ud[xc]
+        mat[1, 1] = 0.5 * ud[xs]
+        # quadratic terms: rows fp^2, fc^2, fp*fc;
+        # columns cos^2, sin^2, cos*sin
+        mat[2, 2] = -0.5 * uv[pc, pc]
+        mat[2, 3] = -0.5 * uv[ps, ps]
+        mat[2, 4] = -0.5 * suv[pc, ps]
+        mat[3, 2] = -0.5 * uv[xc, xc]
+        mat[3, 3] = -0.5 * uv[xs, xs]
+        mat[3, 4] = -0.5 * suv[xc, xs]
+        mat[4, 2] = -0.5 * suv[pc, xc]
+        mat[4, 3] = -0.5 * suv[ps, xs]
+        mat[4, 4] = -0.5 * (suv[pc, xs] + suv[ps, xc])
+        return mat, -0.5 * dd
+
+    @catch_waveform_error
+    def _loglikelihood(self):
+        r"""Computes the log likelihood marginalized over phase and
+        polarization.
+
+        Returns
+        -------
+        float
+            The value of the marginalized log likelihood.
+        """
+        # get waveforms
+        wfs = self.get_waveforms()
+        gated_wfs = self.get_gated_waveforms()
+        # get data
+        gated_data = self.get_gated_data()
+        refframe = self.current_params.get('tc_ref_frame', 'geocentric')
+        ref_tc = self.current_params['tc']
+        ra = self.current_params['ra']
+        dec = self.current_params['dec']
+        # the log likelihood ratio over the polarization x phase grid
+        loglr = 0.
+        lognl = 0.
+        for det in self.det_names:
+            if det not in self.dets:
+                self.dets[det] = Detector(det)
+            # calculate tc in frame
+            tc = self.dets[det].arrival_time(ref_tc, ra, dec, refframe)
+            # evaluate antenna pattern
+            fp, fc = self.dets[det].antenna_pattern(ra, dec, self.pol, tc)
+            fterms = numpy.array([fp, fc, fp*fp, fc*fc, fp*fc]).T
+            mat, detlognl = self._det_coefficients(det, wfs, gated_wfs,
+                                                   gated_data)
+            loglr += fterms @ (mat @ self._phase_terms)
+            # get the normalization in this detector
+            start_index, end_index = self.gate_indices(det)
+            norm = self.det_lognorm(det, start_index, end_index)
+            lognl += norm + detlognl
+        # store the maxl phase and polarization
+        polidx, phaseidx = numpy.unravel_index(loglr.argmax(), loglr.shape)
+        setattr(self._current_stats, 'maxl_phase', self.phases[phaseidx])
+        setattr(self._current_stats, 'maxl_polarization', self.pol[polidx])
+        setattr(self._current_stats, 'maxl_logl',
+                loglr[polidx, phaseidx] + lognl)
+        # compute the marginalized log likelihood
+        marglogl = special.logsumexp(loglr) + lognl - numpy.log(loglr.size)
+        return float(marglogl)
+
+    @property
+    def multi_signal_support(self):
+        """ The list of classes that this model supports in a multi-signal
+        likelihood
+        """
+        return [type(self)]
+
+    @catch_waveform_error
+    def multi_loglikelihood(self, models):
+        """ Calculate a multi-model (signal) likelihood
+        """
+        # Generate the waveforms for each submodel
+        wfs = [m.get_waveforms() for m in models + [self]]
+        # combine into a single waveform
+        combine = {}
+        for det in self.data:
+            mlen = max(len(x) for wf in wfs for x in wf[det])
+            summed = []
+            for idx in range(4):
+                terms = [wf[det][idx].copy() for wf in wfs]
+                for x in terms:
+                    x.resize(mlen)
+                summed.append(sum(terms))
+            combine[det] = tuple(summed)
         self._current_wfs = combine
         return self._loglikelihood()
