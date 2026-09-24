@@ -36,7 +36,8 @@ from .brute_marg import BruteParallelGaussianMarginalize
 from .brute_marg import BruteLISASkyModesMarginalize
 from .gated_gaussian_noise import (GatedGaussianNoise, GatedGaussianMargPol,
                                    GatedGaussianMargPhase,
-                                   GatedGaussianMultimodeMargPhase)
+                                   GatedGaussianMultimodeMargPhase,
+                                   GatedGaussianMultimodeMargPhasePol)
 from .single_template import SingleTemplate
 from .relbin import Relative, RelativeTime, RelativeTimeDom
 from .hierarchical import (HierarchicalModel, MultiSignalModel,
@@ -206,6 +207,7 @@ _models = {_cls.name: _cls for _cls in (
     GatedGaussianMargPol,
     GatedGaussianMargPhase,
     GatedGaussianMultimodeMargPhase,
+    GatedGaussianMultimodeMargPhasePol,
     SingleTemplate,
     Relative,
     RelativeTime,
