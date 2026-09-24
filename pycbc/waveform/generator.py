@@ -1492,7 +1492,178 @@ class FDomainDetFrameTwoPhaseModesGenerator(BaseFDomainDetFrameGenerator):
                 for det in hlm:
                     hlm[det][mode] = (hclm[det], hslm[det])
         return hlm
-    
+
+    @staticmethod
+    def select_rframe_generator(approximant, domain):
+        """Returns a radiation frame generator class based on the approximant
+        string.
+        """
+        return select_waveform_modes_generator(approximant, domain)
+
+
+class FDomainDetFrameTwoPolTwoPhaseModesGenerator(
+        BaseFDomainDetFrameGenerator):
+    r"""Generates the cosine and sine terms of the plus and cross
+    polarizations of every waveform mode in the detector frame.
+
+    This class assumes that the plus and cross polarizations of each
+    radiation-frame waveform mode can be decomposed in terms of an overall
+    phase :math:`\phi` as
+
+    .. math::
+
+        h^{m}_{+} = h^{m}_{+,c} \cos\phi + h^{m}_{+,s} \sin\phi, \\
+        h^{m}_{\times} = h^{m}_{\times,c} \cos\phi
+            + h^{m}_{\times,s} \sin\phi,
+
+    where the :math:`c` (:math:`s`) terms are the waveform evaluated with the
+    reference phase set to 0 (:math:`\pi/2`). All other phases are shifted by
+    the same amount, so that the relative phase between modes is maintained.
+    For example, if a waveform has two phases ``phi1 = 0`` and
+    ``phi2 = pi/6``, with ``phi1`` set as the reference, the cosine terms will
+    be generated with ``phi1 = 0, phi2 = pi/6``, and the sine terms with
+    ``phi1 = pi/2, phi2 = 2pi/3``.
+
+    The time shift to each detector is applied, but the antenna patterns are
+    not. This allows a model to numerically marginalize over both the phase
+    and the polarization.
+
+    Parameters
+    ----------
+    rFrameGeneratorClass : class
+        The class to use for generating the waveform modes in the radiation
+        frame, e.g., :py:class:`TDomainMassSpinRingdownGenerator` with a modes
+        approximant. This should be the class, not an instance of the class
+        (the class will be initialized with the appropriate arguments
+        internally). The class should have a generate function that returns a
+        dictionary of mode -> (plus, cross) polarizations.
+    epoch : float
+        The epoch start time to set the waveform to. A time shift = tc - epoch
+        is applied to waveforms before returning.
+    detectors : {None, list of strings}
+        The names of the detectors to use. If provided, all location parameters
+        must be included in either the variable args or the frozen params. If
+        None, the generate function will return the radiation-frame waveforms
+        shifted by any desired time shift.
+    variable_args : {(), list or tuple}
+        A list or tuple of strings giving the names and order of parameters
+        that will be passed to the generate function.
+    \**frozen_params
+        Keyword arguments setting the parameters that will not be changed from
+        call-to-call of the generate function.
+    """
+    location_args = set(['tc', 'ra', 'dec'])
+    """ set(['tc', 'ra', 'dec']):
+        The set of location parameters. These are not passed to the rFrame
+        generator class; instead, they are used to shift the waveform in time.
+        The parameters are:
+
+          * tc: The GPS time of coalescence (should be geocentric time).
+          * ra: Right ascension.
+          * dec: declination
+          * tc_ref_frame (optional): reference frame in which tc is defined.
+            Must be one of: 'geocentric', for geocentric time, or one of the
+            detector names. Default 'geocentric.'
+    """
+
+    def generate(self, phases=None, ref_phase=None, **kwargs):
+        r"""Generates the cosine and sine terms of every mode.
+
+        Parameters
+        ----------
+        phases : list of str, optional
+            The names of all of the phase parameters. All of these are shifted
+            by pi/2 to generate the sine terms. If None, will just use
+            ``[ref_phase]``.
+        ref_phase : str
+            The name of the reference phase. This must be zero in the
+            parameters.
+        \**kwargs :
+            The parameters to generate the waveform with.
+
+        Returns
+        -------
+        dict :
+            Dictionary of ``detector names -> modes -> (hp_c, hp_s, hc_c,
+            hc_s)``, where ``hp_c, hp_s`` (``hc_c, hc_s``) are the
+            cosine and sine terms of the plus (cross) polarization.
+        """
+        if ref_phase is None:
+            raise ValueError("must provide a ref_phase")
+        if phases is None:
+            phases = [ref_phase]
+        self.current_params.update(kwargs)
+        # the polarization is not used since antenna patterns are not applied
+        rfparams = {param: self.current_params[param]
+                    for param in self.current_params
+                    if param not in self.location_args | {'polarization'}}
+        # generate the cosine terms: ref_phase = 0
+        if rfparams[ref_phase] != 0.:
+            raise ValueError(f'Reference phase {ref_phase}='
+                             f'{rfparams[ref_phase]} is not zero')
+        hlms_cos = self.rframe_generator.generate(**rfparams)
+        # generate the sine terms: shift all phases by pi/2
+        sin_params = rfparams.copy()
+        for p in phases:
+            sin_params[p] = rfparams[p] + pi/2
+        hlms_sin = self.rframe_generator.generate(**sin_params)
+        h = {det: {} for det in self.detectors}
+        for mode in hlms_cos:
+            hpc, hcc = hlms_cos[mode]
+            hps, hcs = hlms_sin[mode]
+            if isinstance(hpc, TimeSeries):
+                df = self.current_params['delta_f']
+                hpc = hpc.to_frequencyseries(delta_f=df)
+                hcc = hcc.to_frequencyseries(delta_f=df)
+                hps = hps.to_frequencyseries(delta_f=df)
+                hcs = hcs.to_frequencyseries(delta_f=df)
+                # time-domain waveforms will not be shifted so that the peak
+                # amplitude happens at the end of the time series (as they are
+                # for f-domain), so we add an additional shift to account for
+                # it
+                tshift = 1./df - abs(hpc._epoch)
+            else:
+                tshift = 0.
+            hpc._epoch = hcc._epoch = hps._epoch = hcs._epoch = self._epoch
+            terms = (hpc, hps, hcc, hcs)
+            if self.detector_names != ['RF']:
+                ra = self.current_params['ra']
+                dec = self.current_params['dec']
+                ref_tc = self.current_params['tc']
+                refframe = self.current_params.get('tc_ref_frame',
+                                                   'geocentric')
+                for detname, det in self.detectors.items():
+                    tc = det.arrival_time(ref_tc, ra, dec, refframe)
+                    # apply time shift
+                    detterms = [apply_fd_time_shift(x, tc+tshift, copy=True)
+                                for x in terms]
+                    if self.recalib:
+                        # recalibrate with given calibration model
+                        detterms = [self.recalib[detname].map_to_adjust(
+                                    x, **self.current_params)
+                                    for x in detterms]
+                    h[detname][mode] = tuple(detterms)
+            else:
+                # no detector response, just apply time shift
+                if 'tc' in self.current_params:
+                    tc = self.current_params['tc']
+                    terms = [apply_fd_time_shift(x, tc+tshift, copy=False)
+                             for x in terms]
+                h['RF'][mode] = tuple(terms)
+            if self.gates is not None:
+                # resize all to nearest power of 2, then apply the gates to
+                # each term
+                for det in h:
+                    for x in h[det][mode]:
+                        x.resize(ceilpow2(len(x)-1) + 1)
+                gated = []
+                for idx in range(4):
+                    gated.append(strain.apply_gates_to_fd(
+                        {det: h[det][mode][idx] for det in h}, self.gates))
+                for det in h:
+                    h[det][mode] = tuple(g[det] for g in gated)
+        return h
+
     @staticmethod
     def select_rframe_generator(approximant, domain):
         """Returns a radiation frame generator class based on the approximant
@@ -1627,7 +1798,7 @@ def get_fd_generator(approximant, modes=False):
         return FDomainCBCModesGenerator
 
     if approximant in ringdown.ringdown_fd_approximants:
-        if approximant == ['FdQNMfromFinalMassSpin', 'FdModesfromFinalMassSpin']:
+        if approximant in ['FdQNMfromFinalMassSpin', 'FdModesfromFinalMassSpin']:
             return FDomainMassSpinRingdownGenerator
         return FDomainFreqTauRingdownGenerator
 
