@@ -16,7 +16,9 @@
 """ Functions for applying gates to data.
 """
 
+import numpy
 from scipy import linalg
+from pycbc.types import FrequencySeries
 from . import strain
 
 
@@ -239,3 +241,87 @@ def gate_and_paint_matmul(data, lindex, rindex, invpsd, invmat=None, copy=True):
     proj = invmat @ owhgated_data[lindex:rindex]
     data[lindex:rindex] -= proj
     return data
+
+
+def batch_gate_and_paint_fd(htildes, time, window, invpsd,
+                            paint_method='toeplitz', invmat=None):
+    """Gates and in-paints several frequency series at once.
+
+    This gives the same result as calling
+    ``h.to_timeseries().gate(time, window=window, method='paint', ...)``
+    followed by ``to_frequencyseries()`` on each of the given frequency
+    series, but does all of the FFTs along a single axis and the
+    in-painting as a single matrix-matrix product (or a single Toeplitz
+    solve with multiple right-hand sides). This is substantially faster when
+    many series need to be gated with the same gate, since the covariance
+    matrix only needs to be traversed once.
+
+    Parameters
+    ----------
+    htildes : list of FrequencySeries
+        The frequency series to gate. All must have the same length,
+        ``delta_f``, and epoch.
+    time : float
+        Central time of the gate in seconds.
+    window : float
+        Half-length in seconds of the gate.
+    invpsd : FrequencySeries
+        The inverse of the PSD. Must be the same length as the series.
+    paint_method : {'toeplitz', 'matmul'}
+        Which method to use for in-painting the gated region.
+    invmat : array, optional
+        The inverted covariance matrix to use if ``paint_method='matmul'``.
+        If None, it will be calculated from ``invpsd``.
+
+    Returns
+    -------
+    list of FrequencySeries :
+        The gated and in-painted series, in the same order as ``htildes``.
+    """
+    h0 = htildes[0]
+    nfreq = len(h0)
+    delta_f = float(h0.delta_f)
+    tlen = 2 * (nfreq - 1)
+    delta_t = 1. / (tlen * delta_f)
+    start_time = float(h0.start_time)
+    # same as TimeSeries.get_gate_indices
+    lindex = max(int((time - window - start_time) / delta_t), 0)
+    rindex = min(int((time + window - start_time) / delta_t), tlen)
+    # time shift so that the end of the gate lands on a sample, as is done
+    # in TimeSeries.gate
+    offset = start_time + rindex * delta_t - (time + window)
+    fdata = numpy.array([h.numpy() for h in htildes])
+    if offset != 0:
+        shift = numpy.exp(-2j * numpy.pi * offset
+                          * h0.sample_frequencies.numpy())
+        fdata = fdata * shift
+    # to the time domain; tlen * delta_f * delta_t = 1 converts between
+    # numpy's and pycbc's FFT normalizations
+    tdata = numpy.fft.irfft(fdata, n=tlen, axis=1) * (tlen * delta_f)
+    tdata[:, lindex:rindex] = 0
+    # the over-whitened gated data
+    owhgated = numpy.fft.irfft(numpy.fft.rfft(tdata, axis=1)
+                               * invpsd.numpy(), n=tlen, axis=1)
+    owhgated = owhgated[:, lindex:rindex].T
+    # remove the projection into the null space
+    if paint_method == 'toeplitz':
+        tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
+        proj = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
+                                     owhgated)
+    elif paint_method == 'matmul':
+        if invmat is None:
+            invmat = invert_covariance(invpsd, lindex, rindex)
+        proj = invmat @ owhgated
+    else:
+        raise ValueError(f'Unrecognized paint_method input {paint_method}')
+    tdata[:, lindex:rindex] -= proj.T
+    # back to the frequency domain
+    fdata = numpy.fft.rfft(tdata, axis=1) * delta_t
+    if offset != 0:
+        fdata *= shift.conj()
+        # TimeSeries.gate returns a time series, which is real; this makes
+        # the DC and Nyquist bins real after undoing the time shift
+        fdata[:, 0] = fdata[:, 0].real
+        fdata[:, -1] = fdata[:, -1].real
+    return [FrequencySeries(fd, delta_f=h.delta_f, epoch=h.epoch)
+            for fd, h in zip(fdata, htildes)]
