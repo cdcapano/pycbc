@@ -1669,7 +1669,15 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
 
     The number of integration points in phase and polarization can be set
     with the ``phase_samples`` and ``polarization_samples`` arguments,
-    respectively. By default, 1000 points are used in each.
+    respectively. By default, 512 points are used in each. This is sufficient
+    for ringdown SNRs of ~30, for which the marginalized log likelihood is
+    converged to numerical precision. The number of points needed grows
+    linearly with the SNR, since the width of the likelihood peak in phase
+    and polarization shrinks as ~1/SNR. Using roughly 5 x SNR points in each
+    (e.g., 512 for an SNR of ~100, or 4096 for an SNR of ~1000) keeps the
+    error in the marginalized log likelihood below ~1e-4. Polarization is the
+    more demanding of the two, since the antenna patterns vary as twice the
+    polarization angle.
 
     As with :py:class:`GatedGaussianMultimodeMargPhase`, the optimal SNR of
     modes may be sampled instead of their amplitude by setting
@@ -1695,7 +1703,7 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
     def __init__(self, variable_params, data, low_frequency_cutoff, psds=None,
                  high_frequency_cutoff=None, normalize=False,
                  static_params=None,
-                 phase_samples=1000, polarization_samples=1000,
+                 phase_samples=512, polarization_samples=512,
                  phase_names=None, ref_phase=None, sample_snrs=False,
                  amp_names=None, fiducial_amp_value=1., ref_amp=None,
                  **kwargs):
