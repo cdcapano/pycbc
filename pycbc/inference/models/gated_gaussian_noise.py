@@ -865,8 +865,8 @@ class GatedGaussianMargPol(BaseGatedGaussian):
 
     This implements the GatedGaussian likelihood with an explicit numerical
     marginalization over polarization angle. This is accomplished using
-    a fixed set of integration points distribution uniformation between
-    0 and 2pi. By default, 1000 integration points are used.
+    a fixed set of integration points distributed uniformly in [0, 2pi).
+    By default, 1000 integration points are used.
     The 'polarization_samples' argument can be passed to set an alternate
     number of integration points.
     """
@@ -883,7 +883,8 @@ class GatedGaussianMargPol(BaseGatedGaussian):
             static_params=static_params, **kwargs)
         # the polarization parameters
         self.polarization_samples = int(polarization_samples)
-        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples)
+        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples,
+                                  endpoint=False)
         self.dets = {}
         # create the waveform generator
         self.waveform_generator = create_waveform_generator(
@@ -1133,7 +1134,8 @@ class GatedGaussianMargPhase(BaseGatedGaussian):
         self.dets = {}
         # phase marginalization parameters
         self.phase_samples = int(phase_samples)
-        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples)
+        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples,
+                                     endpoint=False)
         if ref_phase is None:
             raise KeyError('ref_phase is set to None. Please specify the '
                            'name of the phase parameter to marginalize '
@@ -1356,7 +1358,8 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
         self.dets = {}
         # phase marginalization parameters
         self.phase_samples = int(phase_samples)
-        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples)
+        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples,
+                                     endpoint=False)
         if ref_phase is None:
             raise KeyError('ref_phase is set to None. Please specify the '
                            'name of the phase parameter to marginalize '
@@ -1648,8 +1651,8 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
     the same amount as the reference phase, so that the non-reference phases
     act as phases relative to the reference mode. The phase :math:`\phi` and
     the polarization :math:`\psi` are then marginalized over numerically
-    using a fixed grid of points uniformly distributed between 0 and
-    :math:`2\pi` in each.
+    using a fixed grid of points uniformly distributed in :math:`[0, 2\pi)`
+    in each (:math:`2\pi` is excluded, since it is the same angle as 0).
 
     Expanding the gated inner products gives a log likelihood ratio that is
     linear in :math:`(\cos\phi, \sin\phi, \cos^2\phi, \sin^2\phi,
@@ -1726,10 +1729,12 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         if self.ref_phase not in self.phase_names:
             self.phase_names.append(self.ref_phase)
         self.phase_samples = int(phase_samples)
-        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples)
+        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples,
+                                     endpoint=False)
         # polarization marginalization parameters
         self.polarization_samples = int(polarization_samples)
-        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples)
+        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples,
+                                  endpoint=False)
         # the phase dependence of the log likelihood ratio; this is a
         # 5 x phase_samples array of cos, sin, cos^2, sin^2, cos*sin
         cphi = numpy.cos(self.phases)
