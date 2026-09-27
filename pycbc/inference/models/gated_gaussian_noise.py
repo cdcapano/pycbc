@@ -2163,16 +2163,22 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         # the log likelihood ratio over the polarization x phase grid
         loglr = coeffs @ self._phase_terms
         # store the maxl phase and polarization
-        polidx, phaseidx = numpy.unravel_index(loglr.argmax(), loglr.shape)
+        maxidx = loglr.argmax()
+        maxloglr = loglr.flat[maxidx]
+        polidx, phaseidx = numpy.unravel_index(maxidx, loglr.shape)
         setattr(self._current_stats, 'maxl_phase', self.phases[phaseidx])
         setattr(self._current_stats, 'maxl_polarization', self.pol[polidx])
-        setattr(self._current_stats, 'maxl_logl',
-                loglr[polidx, phaseidx] + lognl)
+        setattr(self._current_stats, 'maxl_logl', maxloglr + lognl)
         for mode in self.mode_names:
             setattr(self._current_stats, f'scale_factor_{mode}',
                     scales[mode][polidx])
-        # compute the marginalized log likelihood
-        marglogl = special.logsumexp(loglr) + lognl - numpy.log(loglr.size)
+        # compute the marginalized log likelihood; this is the same as
+        # special.logsumexp(loglr), but is faster since we already have the
+        # max
+        loglr -= maxloglr
+        numpy.exp(loglr, out=loglr)
+        marglogl = maxloglr + numpy.log(loglr.sum()) + lognl \
+            - numpy.log(loglr.size)
         return float(marglogl)
 
     @property
