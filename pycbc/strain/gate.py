@@ -472,20 +472,31 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
         shift = numpy.exp(-2j * numpy.pi * offset
                           * (numpy.arange(nfreq) * delta_f))
         fdata = fdata * shift
-    # to the time domain; tlen * delta_f * delta_t = 1 converts between
-    # numpy's and pycbc's FFT normalizations
-    tdata = numpy.fft.irfft(fdata, n=tlen, axis=1) * (tlen * delta_f)
-    tdata[:, lindex:rindex] = 0
-    # the over-whitened gated data
-    owhgated = numpy.fft.irfft(numpy.fft.rfft(tdata, axis=1)
-                               * invpsd.numpy(), n=tlen, axis=1)
-    owhgated = owhgated[:, lindex:rindex]
-    # remove the projection into the null space; the projection is computed
-    # as a (number of series) x (gate length) array
+    else:
+        fdata = fdata.copy()
+    # the series are real in the time domain, so the DC and Nyquist terms
+    # are real
+    fdata[:, 0] = fdata[:, 0].real
+    fdata[:, -1] = fdata[:, -1].real
+    # Gating and in-painting a series v gives v' = z - E T^{-1} (K z)_g,
+    # where z is v with the gated samples zeroed, K is the over-whitening
+    # operator (a circulant matrix), (.)_g takes the samples in the gate,
+    # E puts a vector of gate samples back into a full-length series, and
+    # T = K_gg is the (Toeplitz) matrix that is inverted by the in-painting
+    # methods. Since (K z)_g = (K v)_g - T v_g, this simplifies to
+    # v' = v - E T^{-1} (K v)_g. This only needs the over-whitened
+    # (ungated) series in the gate, and an FFT of the correction, rather
+    # than the FFTs to the time domain and back of the zeroed series.
+    # Note that tlen * delta_f * delta_t = 1 converts between numpy's and
+    # pycbc's FFT normalizations.
+    owh = numpy.fft.irfft(fdata * invpsd.numpy(), n=tlen, axis=1)
+    owh = owh[:, lindex:rindex] * (tlen * delta_f)
+    # apply T^{-1} to get the correction in the gate as a
+    # (number of series) x (gate length) array
     if paint_method == 'toeplitz':
         tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
-        proj = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
-                                     owhgated.T).T
+        corr = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
+                                     owh.T).T
     elif paint_method == 'matmul':
         if invmat is None:
             invmat = invert_covariance(invpsd, lindex, rindex)
@@ -494,18 +505,21 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
         # returned by invert_covariance is Fortran ordered, so its transpose
         # is C ordered
         if invmat.flags.c_contiguous:
-            proj = (invmat @ owhgated.T).T
+            corr = (invmat @ owh.T).T
         else:
-            proj = owhgated @ invmat.T
+            corr = owh @ invmat.T
     elif paint_method == 'gs':
         if invmat is None:
             invmat = toeplitz_inverse(invpsd, lindex, rindex)
-        proj = invmat.apply(owhgated)
+        corr = invmat.apply(owh)
     else:
         raise ValueError(f'Unrecognized paint_method input {paint_method}')
-    tdata[:, lindex:rindex] -= proj
-    # back to the frequency domain
-    fdata = numpy.fft.rfft(tdata, axis=1) * delta_t
+    # subtract the correction in the frequency domain
+    tcorr = numpy.zeros((fdata.shape[0], tlen))
+    tcorr[:, lindex:rindex] = corr
+    fcorr = numpy.fft.rfft(tcorr, axis=1)
+    fcorr *= delta_t
+    fdata -= fcorr
     if offset != 0:
         fdata *= shift.conj()
         # TimeSeries.gate returns a time series, which is real; this makes
