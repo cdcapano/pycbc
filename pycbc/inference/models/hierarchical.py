@@ -25,12 +25,14 @@
 
 """Hierarchical model definitions."""
 
+import functools
 import shlex
 import logging
 import numpy
 from pycbc import transforms
 from pycbc.workflow import WorkflowConfigParser
-from .base import BaseModel
+from pycbc.io import FieldArray
+from .base import BaseModel, apply_transforms_to_samples
 
 #
 # =============================================================================
@@ -100,6 +102,12 @@ class HierarchicalModel(BaseModel):
                                                list(self.submodels.keys())))
             for lbl, pset in derived_params.items():
                 self.param_map.setdefault(lbl, set()).update(pset)
+        # have the submodels draw from this model's prior; since the
+        # submodels do not have priors of their own, this gives them access
+        # to prior samples of their parameters (e.g., for their warmup)
+        for lbl, model in self.submodels.items():
+            model.prior_rvs = functools.partial(self._submodel_prior_rvs,
+                                                lbl)
         # make sure the static parameters of all submodels are set correctly
         self.static_param_map = map_params(self.hstatic_params.keys())
         # also create a map of model label -> extra stats created by each model
@@ -152,6 +160,46 @@ class HierarchicalModel(BaseModel):
             variable_params = [variable_params]
         self._variable_params = tuple(HierarchicalParam(p, self.submodels)
                                       for p in variable_params)
+
+    def _submodel_prior_rvs(self, lbl, size=1, prior=None):
+        """Draws samples from this model's prior for the given submodel.
+
+        This replaces the ``prior_rvs`` method of each submodel. Samples are
+        drawn with this model's :py:meth:`prior_rvs`, the sampling transforms
+        are inverted, and the waveform transforms are applied. The
+        parameters of the given submodel are then returned, with their
+        submodel names. These are the same parameters that the submodel is
+        updated with when the likelihood is evaluated, i.e., the submodel's
+        variable parameters and the outputs of any waveform transforms for
+        it.
+
+        Parameters
+        ----------
+        lbl : str
+            The label of the submodel.
+        size : int, optional
+            The number of samples to draw. Default is 1.
+        prior : JointDistribution, optional
+            Use the given prior to draw values rather than this model's
+            prior.
+
+        Returns
+        -------
+        FieldArray :
+            The samples of the submodel's parameters.
+        """
+        draws = self.prior_rvs(size=size, prior=prior)
+        if self.sampling_transforms is not None:
+            draws = self.sampling_transforms.apply(draws, inverse=True)
+        samples = {p: draws[p] for p in draws.fieldnames}
+        for p, val in self.static_params.items():
+            samples.setdefault(p, val)
+        if self.waveform_transforms is not None:
+            samples = apply_transforms_to_samples(samples,
+                                                  self.waveform_transforms)
+        return FieldArray.from_kwargs(**{
+            p.subname: numpy.asarray(samples[p.fullname])
+            for p in self.param_map[lbl]})
 
     @property
     def hstatic_params(self):
