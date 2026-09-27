@@ -468,16 +468,16 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
     # time shift so that the end of the gate lands on a sample, as is done
     # in TimeSeries.gate
     offset = start_time + rindex * delta_t - (time + window)
+    # the time shift is applied to the over-whitening filter and to the
+    # correction, rather than to the series, since the output is the
+    # series minus the (unshifted) correction
     if offset != 0:
         shift = numpy.exp(-2j * numpy.pi * offset
                           * (numpy.arange(nfreq) * delta_f))
-        fdata = fdata * shift
+        owhfilter = shift * invpsd.numpy()
     else:
-        fdata = fdata.copy()
-    # the series are real in the time domain, so the DC and Nyquist terms
-    # are real
-    fdata[:, 0] = fdata[:, 0].real
-    fdata[:, -1] = fdata[:, -1].real
+        shift = None
+        owhfilter = invpsd.numpy()
     # Gating and in-painting a series v gives v' = z - E T^{-1} (K z)_g,
     # where z is v with the gated samples zeroed, K is the over-whitening
     # operator (a circulant matrix), (.)_g takes the samples in the gate,
@@ -489,7 +489,7 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
     # than the FFTs to the time domain and back of the zeroed series.
     # Note that tlen * delta_f * delta_t = 1 converts between numpy's and
     # pycbc's FFT normalizations.
-    owh = numpy.fft.irfft(fdata * invpsd.numpy(), n=tlen, axis=1)
+    owh = numpy.fft.irfft(fdata * owhfilter, n=tlen, axis=1)
     owh = owh[:, lindex:rindex] * (tlen * delta_f)
     # apply T^{-1} to get the correction in the gate as a
     # (number of series) x (gate length) array
@@ -519,11 +519,19 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
     tcorr[:, lindex:rindex] = corr
     fcorr = numpy.fft.rfft(tcorr, axis=1)
     fcorr *= delta_t
-    fdata -= fcorr
-    if offset != 0:
-        fdata *= shift.conj()
-        # TimeSeries.gate returns a time series, which is real; this makes
-        # the DC and Nyquist bins real after undoing the time shift
-        fdata[:, 0] = fdata[:, 0].real
-        fdata[:, -1] = fdata[:, -1].real
-    return fdata
+    if shift is not None:
+        fcorr *= shift.conj()
+        # the Nyquist term of the shifted series is made real before the
+        # correction is subtracted (since the series is real in the time
+        # domain); this is the same as what is done by TimeSeries.gate
+        nyq = fdata[:, -1] * shift[-1]
+        nyq = (nyq.real - fcorr[:, -1] * shift[-1]) * shift[-1].conj()
+    out = fdata - fcorr
+    # TimeSeries.gate returns a time series, which is real; this makes the
+    # DC and Nyquist bins real
+    out[:, 0] = out[:, 0].real
+    if shift is not None:
+        out[:, -1] = nyq.real
+    else:
+        out[:, -1] = out[:, -1].real
+    return out
