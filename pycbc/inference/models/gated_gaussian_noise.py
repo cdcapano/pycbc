@@ -1927,14 +1927,25 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         gate_times = self.get_gate_times()
         out = {}
         for det, modes in wfs.items():
-            gatestartdelay, dgatedelay = gate_times[det]
+            gate = gate_times[det]
+            gatestartdelay, dgatedelay = gate
             # all of the series share the same gate, so gate them together
             names = list(modes.keys())
             terms = [x for mode in names for x in modes[mode]]
+            # the data has the same gate, so if it hasn't been gated yet with
+            # this gate, gate it along with the waveforms; the result is
+            # stored to the same cache that get_gated_data uses
+            cache = self._gated_data.setdefault(det, {})
+            gate_data = gate not in cache
+            if gate_data:
+                terms.append(self.data[det])
             gated = batch_gate_and_paint_fd(
                 terms, gatestartdelay + dgatedelay/2, dgatedelay/2,
                 self._invpsds[det], paint_method=self.paint_method,
                 invmat=self.invert_covariance(det))
+            if gate_data:
+                cache.clear()
+                cache[gate] = gated.pop()
             out[det] = {mode: tuple(gated[4*ii:4*(ii+1)])
                         for ii, mode in enumerate(names)}
         return out
