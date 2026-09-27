@@ -17,6 +17,7 @@
 """
 
 import numpy
+import scipy.fft
 from scipy import linalg
 from pycbc.types import FrequencySeries
 from . import strain
@@ -203,6 +204,137 @@ def invert_covariance(invpsd, lindex, rindex):
     invmat = linalg.inv(mat)
     return invmat
 
+class ToeplitzInverse(object):
+    """Applies the inverse of a symmetric, positive-definite Toeplitz matrix.
+
+    This uses the Gohberg-Semencul formula, which writes the inverse of an
+    ``n x n`` symmetric Toeplitz matrix :math:`T` in terms of the first column
+    :math:`x = T^{-1} e_0` of the inverse:
+
+    .. math::
+
+        T^{-1} = \\frac{1}{x_0}\\left[L(x)L(x)^T - L(ZJx)L(ZJx)^T\\right],
+
+    where :math:`L(v)` is the lower-triangular Toeplitz matrix with first
+    column :math:`v`, :math:`J` reverses the order of a vector, and :math:`Z`
+    shifts it down by one element. Since products with triangular Toeplitz
+    matrices are convolutions, :math:`T^{-1}` can be applied with FFTs in
+    :math:`O(n \\log n)` operations, rather than the :math:`O(n^2)` needed
+    for a product with the explicit inverse. Only the first column needs to
+    be stored, and it is obtained with a single (Cholesky) solve.
+
+    Parameters
+    ----------
+    col : array
+        The first column of the Toeplitz matrix.
+    """
+    def __init__(self, col):
+        col = numpy.asarray(col).real
+        n = len(col)
+        self.n = n
+        e0 = numpy.zeros(n)
+        e0[0] = 1.
+        x = linalg.solve(linalg.toeplitz(col), e0, assume_a='pos')
+        self.x0 = x[0]
+        zjx = numpy.zeros(n)
+        zjx[1:] = x[:0:-1]
+        # zero padding to at least 2n - 1 makes the circular convolutions
+        # linear
+        self.nfft = scipy.fft.next_fast_len(2*n - 1, real=True)
+        self._fx = scipy.fft.rfft(x, self.nfft)
+        self._fzjx = scipy.fft.rfft(zjx, self.nfft)
+
+    def apply(self, b):
+        """Returns :math:`T^{-1} b` for every row :math:`b` of ``b``.
+
+        Parameters
+        ----------
+        b : array
+            A ``(number of vectors) x n`` array, or a single vector of length
+            ``n``.
+
+        Returns
+        -------
+        numpy.ndarray :
+            Array with the same shape as ``b``.
+        """
+        n = self.n
+        nfft = self.nfft
+        # L(v)^T y is the reverse of L(v) applied to the reversed y
+        fb = scipy.fft.rfft(b[..., ::-1], nfft, axis=-1)
+        r1 = scipy.fft.irfft(fb * self._fx, nfft, axis=-1)[..., n-1::-1]
+        r2 = scipy.fft.irfft(fb * self._fzjx, nfft, axis=-1)[..., n-1::-1]
+        out = scipy.fft.irfft(scipy.fft.rfft(r1, nfft, axis=-1) * self._fx
+                              - scipy.fft.rfft(r2, nfft, axis=-1) * self._fzjx,
+                              nfft, axis=-1)[..., :n]
+        out /= self.x0
+        return out
+
+
+def toeplitz_inverse(invpsd, lindex, rindex):
+    """Returns a :py:class:`ToeplitzInverse` of the covariance matrix.
+
+    This is the same (uninverted) covariance matrix that is explicitly
+    inverted by :py:func:`invert_covariance`.
+
+    Parameters
+    ----------
+    invpsd : FrequencySeries
+        The inverse of the PSD.
+    lindex : int
+        The start index of the gate.
+    rindex : int
+        The end index of the gate.
+
+    Returns
+    -------
+    ToeplitzInverse :
+        Object that applies the inverse of the matrix.
+    """
+    tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
+    return ToeplitzInverse(tdfilter[:(rindex-lindex)].numpy())
+
+
+def gate_and_paint_gs(data, lindex, rindex, invpsd, invmat=None, copy=True):
+    """Gates and in-paints data using the Gohberg-Semencul formula.
+
+    This gives the same result as :py:func:`gate_and_paint_matmul`, but
+    uses a :py:class:`ToeplitzInverse` rather than the explicit inverse.
+
+    Parameters
+    ----------
+    data : TimeSeries
+        The data to gate.
+    lindex : int
+        The start index of the gate.
+    rindex : int
+        The end index of the gate.
+    invpsd : FrequencySeries
+        The inverse of the PSD.
+    invmat : ToeplitzInverse, optional
+        The inverse to use. If None, calculate on function call.
+    copy : bool, optional
+        Copy the data before applying the gate. Otherwise, the gate will
+        be applied in-place. Default is True.
+
+    Returns
+    -------
+    TimeSeries :
+        The gated and in-painted time series.
+    """
+    if copy:
+        data = data.copy()
+    data[lindex:rindex] = 0
+    # get the over-whitened gated data
+    owhgated_data = (data.to_frequencyseries() * invpsd).to_timeseries()
+    if invmat is None:
+        invmat = toeplitz_inverse(invpsd, lindex, rindex)
+    # remove the projection into the null space
+    proj = invmat.apply(owhgated_data.numpy()[lindex:rindex])
+    data[lindex:rindex] -= proj
+    return data
+
+
 def gate_and_paint_matmul(data, lindex, rindex, invpsd, invmat=None, copy=True):
     """Gates and in-paints data using explicit matrix multiplication.
 
@@ -267,10 +399,13 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
         Half-length in seconds of the gate.
     invpsd : FrequencySeries
         The inverse of the PSD. Must be the same length as the series.
-    paint_method : {'toeplitz', 'matmul'}
-        Which method to use for in-painting the gated region.
-    invmat : array, optional
-        The inverted covariance matrix to use if ``paint_method='matmul'``.
+    paint_method : {'toeplitz', 'matmul', 'gs'}
+        Which method to use for in-painting the gated region. The ``'gs'``
+        method applies the inverse of the covariance matrix with the
+        Gohberg-Semencul formula; see :py:class:`ToeplitzInverse`.
+    invmat : array or ToeplitzInverse, optional
+        The inverted covariance matrix to use if ``paint_method='matmul'``,
+        or the :py:class:`ToeplitzInverse` to use if ``paint_method='gs'``.
         If None, it will be calculated from ``invpsd``.
 
     Returns
@@ -310,10 +445,13 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
         Half-length in seconds of the gate.
     invpsd : FrequencySeries
         The inverse of the PSD. Must be the same length as the series.
-    paint_method : {'toeplitz', 'matmul'}
-        Which method to use for in-painting the gated region.
-    invmat : array, optional
-        The inverted covariance matrix to use if ``paint_method='matmul'``.
+    paint_method : {'toeplitz', 'matmul', 'gs'}
+        Which method to use for in-painting the gated region. The ``'gs'``
+        method applies the inverse of the covariance matrix with the
+        Gohberg-Semencul formula; see :py:class:`ToeplitzInverse`.
+    invmat : array or ToeplitzInverse, optional
+        The inverted covariance matrix to use if ``paint_method='matmul'``,
+        or the :py:class:`ToeplitzInverse` to use if ``paint_method='gs'``.
         If None, it will be calculated from ``invpsd``.
 
     Returns
@@ -359,6 +497,10 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
             proj = (invmat @ owhgated.T).T
         else:
             proj = owhgated @ invmat.T
+    elif paint_method == 'gs':
+        if invmat is None:
+            invmat = toeplitz_inverse(invpsd, lindex, rindex)
+        proj = invmat.apply(owhgated)
     else:
         raise ValueError(f'Unrecognized paint_method input {paint_method}')
     tdata[:, lindex:rindex] -= proj

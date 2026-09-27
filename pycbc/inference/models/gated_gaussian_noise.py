@@ -34,7 +34,7 @@ from pycbc import types
 from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.waveform import generator, FailedWaveformError
 from pycbc.filter import highpass_fd, highpass_response
-from pycbc.strain.gate import (invert_covariance,
+from pycbc.strain.gate import (invert_covariance, toeplitz_inverse,
                                batch_gate_and_paint_fd_array)
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
                              catch_waveform_error)
@@ -328,7 +328,9 @@ class BaseGatedGaussian(BaseGaussianNoise):
         """Get the uninverted covariance matrix for the model's inverse PSDs.
         Once the inverse matrix is calculated for a given gate time in this
         detector, store to cache; future calls of this function will pull from
-        that cache instead.
+        that cache instead. If the paint method is ``'gs'``, a
+        :py:class:`pycbc.strain.gate.ToeplitzInverse` is returned instead of
+        the explicit inverse.
         """
         # don't bother with covariance matrix if we're using toeplitz solver
         if self.paint_method == 'toeplitz':
@@ -344,8 +346,12 @@ class BaseGatedGaussian(BaseGaussianNoise):
             invmat = cov_matrices[det]
         except KeyError:
             invpsd = self._invpsds[det]
-            # construct and invert covariance matrix
-            invmat = invert_covariance(invpsd, lindex, rindex)
+            if self.paint_method == 'gs':
+                # set up the Gohberg-Semencul representation of the inverse
+                invmat = toeplitz_inverse(invpsd, lindex, rindex)
+            else:
+                # construct and invert covariance matrix
+                invmat = invert_covariance(invpsd, lindex, rindex)
             cov_matrices[det] = invmat
             # cache results
             self._cov_matrices[int(rindex-lindex)] = cov_matrices

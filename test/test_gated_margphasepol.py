@@ -32,7 +32,8 @@ import numpy
 from scipy.special import logsumexp
 
 from pycbc.inference import models
-from pycbc.strain.gate import batch_gate_and_paint_fd
+from pycbc.strain.gate import (batch_gate_and_paint_fd, invert_covariance,
+                               toeplitz_inverse)
 from pycbc.workflow import WorkflowConfigParser
 from utils import simple_exit
 
@@ -101,7 +102,7 @@ class TestGatedMargPhasePol(unittest.TestCase):
         """Checks that batched gating matches gating each series."""
         wfs = self.model.get_waveforms()
         gate_times = self.model.get_gate_times()
-        for paint_method in ['matmul', 'toeplitz']:
+        for paint_method in ['matmul', 'toeplitz', 'gs']:
             for det, modes in wfs.items():
                 terms = [x for mode in modes.values() for x in mode]
                 invpsd = self.model._invpsds[det]
@@ -121,6 +122,35 @@ class TestGatedMargPhasePol(unittest.TestCase):
                     self.assertEqual(bh.epoch, expected.epoch)
                     err = abs(bh.numpy() - expected.numpy()).max()
                     self.assertTrue(err < 1e-12 * abs(expected.numpy()).max())
+
+    def test_toeplitz_inverse(self):
+        """Checks that the Gohberg-Semencul inverse matches the explicit
+        inverse of the covariance matrix."""
+        det = self.model.det_names[0]
+        invpsd = self.model._invpsds[det]
+        lindex, rindex = self.model.gate_indices(det)
+        invmat = invert_covariance(invpsd, lindex, rindex)
+        tinv = toeplitz_inverse(invpsd, lindex, rindex)
+        vecs = numpy.random.default_rng(0).standard_normal(
+            (3, rindex - lindex))
+        expected = vecs @ invmat.T
+        for got in [tinv.apply(vecs),
+                    numpy.array([tinv.apply(v) for v in vecs])]:
+            err = abs(got - expected).max()
+            self.assertTrue(err < 1e-9 * abs(expected).max())
+
+    def test_gs_paint_method(self):
+        """Checks that the model gives the same likelihood when in-painting
+        with the Gohberg-Semencul method as with the explicit inverse."""
+        cp = self.config()
+        cp.set('model', 'paint-method', 'gs')
+        model = models.read_from_config(cp)
+        model.update(**TEMPLATE_PARAMS)
+        self.assertAlmostEqual(model.loglikelihood, self.marglogl,
+                               delta=1e-8 * abs(self.marglogl))
+        self.assertAlmostEqual(model.current_stats['maxl_logl'],
+                               self.stats['maxl_logl'],
+                               delta=1e-8 * abs(self.stats['maxl_logl']))
 
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
