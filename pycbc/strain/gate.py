@@ -302,19 +302,27 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
     # the over-whitened gated data
     owhgated = numpy.fft.irfft(numpy.fft.rfft(tdata, axis=1)
                                * invpsd.numpy(), n=tlen, axis=1)
-    owhgated = owhgated[:, lindex:rindex].T
-    # remove the projection into the null space
+    owhgated = owhgated[:, lindex:rindex]
+    # remove the projection into the null space; the projection is computed
+    # as a (number of series) x (gate length) array
     if paint_method == 'toeplitz':
         tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
         proj = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
-                                     owhgated)
+                                     owhgated.T).T
     elif paint_method == 'matmul':
         if invmat is None:
             invmat = invert_covariance(invpsd, lindex, rindex)
-        proj = invmat @ owhgated
+        # BLAS is several times faster multiplying the (thin) gated series by
+        # a C-ordered matrix than by a Fortran-ordered one; the matrix
+        # returned by invert_covariance is Fortran ordered, so its transpose
+        # is C ordered
+        if invmat.flags.c_contiguous:
+            proj = (invmat @ owhgated.T).T
+        else:
+            proj = owhgated @ invmat.T
     else:
         raise ValueError(f'Unrecognized paint_method input {paint_method}')
-    tdata[:, lindex:rindex] -= proj.T
+    tdata[:, lindex:rindex] -= proj
     # back to the frequency domain
     fdata = numpy.fft.rfft(tdata, axis=1) * delta_t
     if offset != 0:
