@@ -92,7 +92,7 @@ class FrequencySeries(Array):
     def get_sample_frequencies(self):
         """Return an Array containing the sample frequencies.
         """
-        return Array(range(len(self))) * self._delta_f
+        return Array(_numpy.arange(len(self))) * self._delta_f
     sample_frequencies = property(get_sample_frequencies,
                                   doc="Array of the sample frequencies.")
 

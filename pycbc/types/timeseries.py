@@ -229,9 +229,9 @@ class TimeSeries(Array):
         """Return an Array containing the sample times.
         """
         if self._epoch is None:
-            return Array(range(len(self))) * self._delta_t
+            return Array(_numpy.arange(len(self))) * self._delta_t
         else:
-            return Array(range(len(self))) * self._delta_t + float(self._epoch)
+            return Array(_numpy.arange(len(self))) * self._delta_t + float(self._epoch)
     sample_times = property(get_sample_times,
                             doc="Array containing the sample times.")
 
