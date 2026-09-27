@@ -221,9 +221,13 @@ class TestGatedMargPhasePol(unittest.TestCase):
         marglogl = logsumexp(logls) - numpy.log(len(logls))
         self.assertAlmostEqual(marglogl, expected, delta=1e-8)
         self.assertAlmostEqual(max(maxls), stats['maxl_logl'], delta=1e-8)
-        # the scale factor at the maxL polarization should be the same
+        # the scale factor at the maxL polarization should be the same; the
+        # antenna patterns are periodic in polarization with period pi, so
+        # the likelihood at pol and pol + pi is the same up to round-off,
+        # and which of the two is the max is arbitrary
         idx = numpy.argmax(maxls)
-        self.assertEqual(model.pol[idx], stats['maxl_polarization'])
+        dpol = (model.pol[idx] - stats['maxl_polarization']) % numpy.pi
+        self.assertAlmostEqual(min(dpol, numpy.pi - dpol), 0., delta=1e-10)
         self.assertAlmostEqual(scales[idx] / stats['scale_factor_220'], 1.,
                                delta=1e-10)
 
