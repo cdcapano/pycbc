@@ -2029,19 +2029,23 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         slc = slice(self._kmin[det], self._kmax[det])
         invpsd = self._invpsds[det]
         fac = 4 * invpsd.delta_f
-        # overwhiten the ungated data and waveforms
-        d = self._overwhitened_data[det][slc]
-        gated_d = gated_data[det][slc]
-        hs = [(h*invpsd)[slc] for mode in modes for h in wfs[det][mode]]
-        gated_hs = [h[slc] for mode in modes for h in gated_wfs[det][mode]]
+        # overwhiten the ungated data and waveforms; the terms are stacked
+        # into (number of terms) x (number of frequencies) arrays, so that
+        # all of the inner products can be done with matrix products
+        d = self._overwhitened_data[det].numpy()[slc]
+        gated_d = gated_data[det].numpy()[slc]
+        hs = numpy.array([h.numpy()[slc] for mode in modes
+                          for h in wfs[det][mode]])
+        hs *= invpsd.numpy()[slc]
+        hs = hs.conj()
+        gated_hs = numpy.array([h.numpy()[slc] for mode in modes
+                                for h in gated_wfs[det][mode]])
         # <u, v> for all u, v; note that this is not symmetric
-        uv = numpy.array([[fac * u.inner(v).real for v in gated_hs]
-                          for u in hs])
+        uv = fac * (hs @ gated_hs.T).real
         # <u, d> + <d, u>
-        ud = numpy.array([fac * (u.inner(gated_d).real + d.inner(gu).real)
-                          for u, gu in zip(hs, gated_hs)])
+        ud = fac * ((hs @ gated_d).real + (gated_hs @ d.conj()).real)
         # <d, d>
-        dd = fac * d.inner(gated_d).real
+        dd = fac * numpy.vdot(d, gated_d).real
         return uv, ud, dd
 
     def _scale_factors(self, modes, fpfc, uvs):
