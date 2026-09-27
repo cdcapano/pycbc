@@ -33,8 +33,9 @@ from pycbc.pnutils import hybrid_meco_frequency
 from pycbc import types
 from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.waveform import generator, FailedWaveformError
-from pycbc.filter import highpass_fd
-from pycbc.strain.gate import invert_covariance, batch_gate_and_paint_fd
+from pycbc.filter import highpass_fd, highpass_response
+from pycbc.strain.gate import (invert_covariance,
+                               batch_gate_and_paint_fd_array)
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
                              catch_waveform_error)
 from .base_data import BaseDataModel
@@ -1757,6 +1758,10 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                  phase_names=None, ref_phase=None, sample_snrs=False,
                  snr_mode_map=None, fiducial_amp_value=1., ref_mode=False,
                  **kwargs):
+        # caches of the current waveforms and gated waveforms, stacked into
+        # 2D arrays; see _stacked
+        self._current_wf_stacks = None
+        self._current_gated_stacks = None
         # set up the boiler-plate attributes
         super().__init__(
             variable_params, data, low_frequency_cutoff, psds=psds,
@@ -1888,29 +1893,42 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                                                    ref_phase=self.ref_phase,
                                                    **params)
             out = {}
+            stacks = {}
             for det, modes in wfs.items():
-                out[det] = {}
-                for mode, terms in modes.items():
-                    terms = [x.copy() for x in terms]
-                    for x in terms:
-                        # make the same length as the data
-                        x.resize(len(self.data[det]))
-                    out[det][mode] = terms
+                # all of the terms are stored in a single
+                # (number of terms) x (number of frequencies) array, so
+                # that operations on them can be done all at once
+                names = list(modes.keys())
+                x0 = modes[names[0]][0]
+                nfreq = len(self.data[det])
+                stack = numpy.zeros((4*len(names), nfreq), dtype=x0.dtype)
+                for ii, mode in enumerate(names):
+                    for jj, x in enumerate(modes[mode]):
+                        # this is the same as resizing to the length of the
+                        # data
+                        n = min(len(x), nfreq)
+                        stack[4*ii+jj, :n] = x.numpy()[:n]
                 if not self.sample_snrs:
                     # all modes have the same scale, so sum them now to
                     # reduce the number of series that need to be highpassed
                     # and gated
-                    modeterms = list(out[det].values())
-                    summed = modeterms[0]
-                    for terms in modeterms[1:]:
-                        for x, y in zip(summed, terms):
-                            x += y
-                    out[det] = {'summed': summed}
-                for mode, terms in out[det].items():
-                    if self.highpass_waveforms:
-                        terms = [highpass_fd(x, self.highpass_waveforms)
-                                 for x in terms]
-                    out[det][mode] = tuple(terms)
+                    stack = stack.reshape(len(names), 4, nfreq).sum(axis=0)
+                    names = ['summed']
+                if self.highpass_waveforms:
+                    tlen = 2 * (nfreq - 1)
+                    stack *= highpass_response(
+                        tlen, 1. / (tlen * float(x0.delta_f)),
+                        self.highpass_waveforms)
+                    # same as highpass_fd
+                    stack[:, 0] = stack[:, 0].real
+                    stack[:, -1] = stack[:, -1].real
+                stacks[det] = stack
+                out[det] = {mode: tuple(
+                    FrequencySeries(stack[4*ii+jj], delta_f=x0.delta_f,
+                                    epoch=x0.epoch, copy=False)
+                    for jj in range(4))
+                    for ii, mode in enumerate(names)}
+            self._current_wf_stacks = (out, stacks)
             self._current_wfs = out
         return self._current_wfs
 
@@ -1924,31 +1942,61 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
             (hp_c, hp_s, hc_c, hc_s).
         """
         wfs = self.get_waveforms()
+        stacks = self._stacked(wfs)
         gate_times = self.get_gate_times()
         out = {}
+        gated_stacks = {}
         for det, modes in wfs.items():
             gate = gate_times[det]
             gatestartdelay, dgatedelay = gate
             # all of the series share the same gate, so gate them together
             names = list(modes.keys())
-            terms = [x for mode in names for x in modes[mode]]
+            fdata = stacks[det]
             # the data has the same gate, so if it hasn't been gated yet with
             # this gate, gate it along with the waveforms; the result is
             # stored to the same cache that get_gated_data uses
             cache = self._gated_data.setdefault(det, {})
             gate_data = gate not in cache
             if gate_data:
-                terms.append(self.data[det])
-            gated = batch_gate_and_paint_fd(
-                terms, gatestartdelay + dgatedelay/2, dgatedelay/2,
+                fdata = numpy.concatenate(
+                    [fdata, self.data[det].numpy()[None, :]])
+            x0 = modes[names[0]][0]
+            gated = batch_gate_and_paint_fd_array(
+                fdata, float(x0.delta_f), float(x0.start_time),
+                gatestartdelay + dgatedelay/2, dgatedelay/2,
                 self._invpsds[det], paint_method=self.paint_method,
                 invmat=self.invert_covariance(det))
             if gate_data:
+                d = self.data[det]
                 cache.clear()
-                cache[gate] = gated.pop()
-            out[det] = {mode: tuple(gated[4*ii:4*(ii+1)])
-                        for ii, mode in enumerate(names)}
+                cache[gate] = FrequencySeries(gated[-1], delta_f=d.delta_f,
+                                              epoch=d.epoch, copy=False)
+                gated = gated[:-1]
+            gated_stacks[det] = gated
+            out[det] = {mode: tuple(
+                FrequencySeries(gated[4*ii+jj], delta_f=x0.delta_f,
+                                epoch=x0.epoch, copy=False)
+                for jj in range(4))
+                for ii, mode in enumerate(names)}
+        self._current_gated_stacks = (out, gated_stacks)
         return out
+
+    def _stacked(self, wfs):
+        """Returns the terms of the given waveforms, stacked into a
+        ``(number of terms) x (number of frequencies)`` array for each
+        detector.
+
+        If the waveforms are the ones that were created by
+        :py:meth:`get_waveforms` or :py:meth:`get_gated_waveforms`, the
+        arrays that were stored when they were created are returned.
+        Otherwise, the arrays are created.
+        """
+        for cached in (self._current_wf_stacks, self._current_gated_stacks):
+            if cached is not None and cached[0] is wfs:
+                return cached[1]
+        return {det: numpy.array([x.numpy() for terms in modes.values()
+                                  for x in terms])
+                for det, modes in wfs.items()}
 
     def get_gate_times_hmeco(self):
         """Gets the time to apply a gate based on the current sky position.
@@ -2034,12 +2082,11 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
         # all of the inner products can be done with matrix products
         d = self._overwhitened_data[det].numpy()[slc]
         gated_d = gated_data[det].numpy()[slc]
-        hs = numpy.array([h.numpy()[slc] for mode in modes
-                          for h in wfs[det][mode]])
-        hs *= invpsd.numpy()[slc]
+        # the terms are stacked in the same order as the modes, since the
+        # modes are the keys of the waveform dictionaries
+        hs = self._stacked(wfs)[det][:, slc] * invpsd.numpy()[slc]
         hs = hs.conj()
-        gated_hs = numpy.array([h.numpy()[slc] for mode in modes
-                                for h in gated_wfs[det][mode]])
+        gated_hs = self._stacked(gated_wfs)[det][:, slc]
         # <u, v> for all u, v; note that this is not symmetric
         uv = fac * (hs @ gated_hs.T).real
         # <u, d> + <d, u>
