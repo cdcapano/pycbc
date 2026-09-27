@@ -61,6 +61,7 @@ class BaseGatedGaussian(BaseGaussianNoise):
         self._Rss = {}
         self._lognorm = {}
         self._gatetimes = {}
+        self._gate_detectors = {}
         self._det_lognls = {}
         # cache condition number calculations
         self.check_condition_number = bool(kwargs.get('check-condition-number',
@@ -490,7 +491,10 @@ class BaseGatedGaussian(BaseGaussianNoise):
         """
         gatetimes = {}
         for det in self._invpsds:
-            thisdet = Detector(det)
+            try:
+                thisdet = self._gate_detectors[det]
+            except KeyError:
+                thisdet = self._gate_detectors[det] = Detector(det)
             # account for the time delay between the waveforms of the
             # different detectors
             refdet = self.current_params.get('tc_ref_frame', 'geocentric')

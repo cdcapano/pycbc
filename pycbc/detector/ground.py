@@ -48,6 +48,9 @@ logger = logging.getLogger('pycbc.detector')
 # Response functions are modelled after those in lalsuite and as also
 # presented in https://arxiv.org/pdf/gr-qc/0008066.pdf
 
+# cache of the reference detectors used by Detector.arrival_time
+_arrival_time_ref_detectors = {}
+
 def get_available_detectors():
     """ List the available detectors """
     dets = list(_ground_detectors.keys())
@@ -523,9 +526,14 @@ class Detector(object):
         elif ref_frame == self.name:
             # no time shift; sampling in current det
             tc = ref_tc
-        elif ref_frame in get_available_detectors():
-            # from sampling det
-            refdet = Detector(ref_frame)
+        elif ref_frame in _ground_detectors:
+            # from sampling det; the detector is cached, since creating it is
+            # much more expensive than computing the time delay
+            try:
+                refdet = _arrival_time_ref_detectors[ref_frame]
+            except KeyError:
+                refdet = _arrival_time_ref_detectors[ref_frame] = \
+                    Detector(ref_frame)
             tc = ref_tc + \
                 self.time_delay_from_detector(refdet, ra, dec, ref_tc)
         else:
