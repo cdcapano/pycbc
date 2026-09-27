@@ -220,8 +220,8 @@ class ToeplitzInverse(object):
     shifts it down by one element. Since products with triangular Toeplitz
     matrices are convolutions, :math:`T^{-1}` can be applied with FFTs in
     :math:`O(n \\log n)` operations, rather than the :math:`O(n^2)` needed
-    for a product with the explicit inverse. Only the first column needs to
-    be stored. It is obtained with the Levinson recursion (which takes
+    for a product with the explicit inverse. Only the (real) first column
+    needs to be stored. It is obtained with the Levinson recursion (which takes
     :math:`O(n^2)` operations and :math:`O(n)` memory), followed by a step
     of iterative refinement, which brings the residual down to round-off.
 
@@ -267,12 +267,35 @@ class ToeplitzInverse(object):
             self._set_column(x)
 
     def _set_column(self, x):
-        """Sets the first column of the inverse."""
-        self.x0 = x[0]
-        zjx = numpy.zeros(self.n)
-        zjx[1:] = x[:0:-1]
-        self._fx = scipy.fft.rfft(x, self.nfft)
-        self._fzjx = scipy.fft.rfft(zjx, self.nfft)
+        """Sets the first column of the inverse.
+
+        Only the (real) first column is stored; the FFTs of it that are
+        needed to apply the inverse are computed when it is applied. This
+        halves the memory needed compared to storing the FFTs.
+        """
+        self.x = numpy.array(x, dtype=float)
+
+    @property
+    def x0(self):
+        """The first element of the first column of the inverse."""
+        return self.x[0]
+
+    def _column_ffts(self):
+        """The FFTs of the first column of the inverse, x, and of ZJx.
+
+        Returns
+        -------
+        fx : numpy.ndarray
+            The FFT of x (zero padded to ``nfft``).
+        fzjx : numpy.ndarray
+            The FFT of ZJx (zero padded to ``nfft``), where J reverses x and
+            Z shifts it down by one element.
+        """
+        cols = numpy.zeros((2, self.n))
+        cols[0] = self.x
+        cols[1, 1:] = self.x[:0:-1]
+        fcols = scipy.fft.rfft(cols, self.nfft, axis=-1)
+        return fcols[0], fcols[1]
 
     def apply(self, b):
         """Returns :math:`T^{-1} b` for every row :math:`b` of ``b``.
@@ -290,12 +313,13 @@ class ToeplitzInverse(object):
         """
         n = self.n
         nfft = self.nfft
+        fx, fzjx = self._column_ffts()
         # L(v)^T y is the reverse of L(v) applied to the reversed y
         fb = scipy.fft.rfft(b[..., ::-1], nfft, axis=-1)
-        r1 = scipy.fft.irfft(fb * self._fx, nfft, axis=-1)[..., n-1::-1]
-        r2 = scipy.fft.irfft(fb * self._fzjx, nfft, axis=-1)[..., n-1::-1]
-        out = scipy.fft.irfft(scipy.fft.rfft(r1, nfft, axis=-1) * self._fx
-                              - scipy.fft.rfft(r2, nfft, axis=-1) * self._fzjx,
+        r1 = scipy.fft.irfft(fb * fx, nfft, axis=-1)[..., n-1::-1]
+        r2 = scipy.fft.irfft(fb * fzjx, nfft, axis=-1)[..., n-1::-1]
+        out = scipy.fft.irfft(scipy.fft.rfft(r1, nfft, axis=-1) * fx
+                              - scipy.fft.rfft(r2, nfft, axis=-1) * fzjx,
                               nfft, axis=-1)[..., :n]
         out /= self.x0
         return out
