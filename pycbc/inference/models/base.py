@@ -25,6 +25,7 @@
 """Base class for models.
 """
 
+import copy
 import numpy
 import logging
 from abc import (ABCMeta, abstractmethod)
@@ -40,6 +41,57 @@ from pycbc.io import FieldArray
 #
 # =============================================================================
 #
+
+
+def apply_transforms_to_samples(samples, transform_list):
+    """Applies transforms to a set of samples without modifying the
+    transforms.
+
+    Some transforms (e.g., custom transforms) store scratch space sized to
+    the last input they were given, so applying them to arrays of samples
+    would change their output for later (scalar) inputs. This applies
+    copies of the transforms instead. Numerical scalars in ``samples`` are
+    broadcast to the size of the samples first. If the transforms cannot be
+    applied to all of the samples at once, they are applied to each sample
+    separately. Array outputs are returned as 1D arrays.
+
+    Parameters
+    ----------
+    samples : dict
+        Dictionary of parameter names -> arrays (or scalars) of samples.
+    transform_list : list
+        The transforms to apply.
+
+    Returns
+    -------
+    dict :
+        Dictionary of parameter names -> arrays of transformed samples.
+    """
+    size = max(numpy.size(val) for val in samples.values()
+               if not isinstance(val, str))
+    samples = {p: (numpy.full(size, val)
+                   if numpy.ndim(val) == 0 and not isinstance(val, str)
+                   else val)
+               for p, val in samples.items()}
+    try:
+        out = transforms.apply_transforms(dict(samples),
+                                          copy.deepcopy(transform_list))
+    except (TypeError, ValueError):
+        pass
+    else:
+        # some transforms return arrays with extra dimensions (e.g., the
+        # custom_multi transform returns 1 x size arrays), so flatten them
+        return {p: (val.reshape(size)
+                    if isinstance(val, numpy.ndarray) and val.size == size
+                    else val)
+                for p, val in out.items()}
+    transform_list = copy.deepcopy(transform_list)
+    out = []
+    for ii in range(size):
+        sample = {p: (val if isinstance(val, str) else val[ii])
+                  for p, val in samples.items()}
+        out.append(transforms.apply_transforms(sample, transform_list))
+    return {p: numpy.array([o[p] for o in out]) for p in out[0]}
 
 
 class _NoPrior(object):
