@@ -221,26 +221,45 @@ class ToeplitzInverse(object):
     matrices are convolutions, :math:`T^{-1}` can be applied with FFTs in
     :math:`O(n \\log n)` operations, rather than the :math:`O(n^2)` needed
     for a product with the explicit inverse. Only the first column needs to
-    be stored, and it is obtained with a single (Cholesky) solve.
+    be stored. It is obtained with the Levinson recursion (which takes
+    :math:`O(n^2)` operations and :math:`O(n)` memory), followed by a couple
+    of steps of iterative refinement, which bring the residual down to
+    round-off.
 
     Parameters
     ----------
     col : array
         The first column of the Toeplitz matrix.
+    refinement_steps : int, optional
+        The number of steps of iterative refinement of the first column of
+        the inverse. Default is 2.
     """
-    def __init__(self, col):
+    def __init__(self, col, refinement_steps=2):
         col = numpy.asarray(col).real
         n = len(col)
         self.n = n
-        e0 = numpy.zeros(n)
-        e0[0] = 1.
-        x = linalg.solve(linalg.toeplitz(col), e0, assume_a='pos')
-        self.x0 = x[0]
-        zjx = numpy.zeros(n)
-        zjx[1:] = x[:0:-1]
         # zero padding to at least 2n - 1 makes the circular convolutions
         # linear
         self.nfft = scipy.fft.next_fast_len(2*n - 1, real=True)
+        e0 = numpy.zeros(n)
+        e0[0] = 1.
+        x = linalg.solve_toeplitz(col, e0)
+        self._set_column(x)
+        # iterative refinement; T is applied as a circular convolution with
+        # the symmetric extension of its first column
+        fcol = scipy.fft.rfft(numpy.concatenate(
+            [col, numpy.zeros(self.nfft - 2*n + 1), col[:0:-1]]))
+        for _ in range(refinement_steps):
+            resid = e0 - scipy.fft.irfft(fcol * scipy.fft.rfft(x, self.nfft),
+                                         self.nfft)[:n]
+            x = x + self.apply(resid)
+            self._set_column(x)
+
+    def _set_column(self, x):
+        """Sets the first column of the inverse."""
+        self.x0 = x[0]
+        zjx = numpy.zeros(self.n)
+        zjx[1:] = x[:0:-1]
         self._fx = scipy.fft.rfft(x, self.nfft)
         self._fzjx = scipy.fft.rfft(zjx, self.nfft)
 
