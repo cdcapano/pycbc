@@ -29,6 +29,7 @@ import tempfile
 import unittest
 
 import numpy
+import scipy.linalg
 from scipy.special import logsumexp
 
 from pycbc.inference import models
@@ -251,6 +252,27 @@ class TestGatedMargPhasePol(unittest.TestCase):
             self.assertIn(det, submodel._cov_matrices[rindex - lindex])
         self.assertAlmostEqual(logl, self.marglogl,
                                delta=1e-8 * abs(self.marglogl))
+
+    def test_logdet_fit(self):
+        """Checks that the determinants used for the normalization, which
+        are computed from truncated covariance matrices constructed directly
+        from the autocorrelation, match those of the matrices obtained by
+        removing rows and columns from the full covariance matrix."""
+        det = self.model.det_names[0]
+        psd = self.model.psds[det]
+        # use a short (decaying) autocorrelation so the full matrix is small
+        col = self.model._Rss[det].numpy()[:256] / 2
+        col = col * numpy.exp(-numpy.arange(len(col)) / 32.)
+        (sizes, logdets), _ = self.model.logdet_fit(col, psd)
+        cov = scipy.linalg.toeplitz(col)
+        s = len(col)
+        for size, logdet in zip(sizes[1:], logdets[1:]):
+            start = size // 2
+            end = start + s - size
+            tc = numpy.delete(numpy.delete(cov, slice(start, end), 0),
+                              slice(start, end), 1)
+            self.assertAlmostEqual(logdet, numpy.linalg.slogdet(tc)[1],
+                                   delta=1e-8 * abs(logdet))
 
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
