@@ -161,6 +161,24 @@ class HierarchicalModel(BaseModel):
         self._variable_params = tuple(HierarchicalParam(p, self.submodels)
                                       for p in variable_params)
 
+    def _warmup(self, pool):
+        """Runs the warmup of each of the submodels.
+
+        The submodels' ``_warmup`` methods are called with the given pool,
+        so that a single pool is used for all of them. Since the submodels'
+        ``prior_rvs`` draw from this model's prior (see
+        :py:meth:`_submodel_prior_rvs`), the submodels can use prior samples
+        of their parameters in their warmups.
+
+        Parameters
+        ----------
+        pool : pool object
+            The pool to pass to the submodels' warmups.
+        """
+        for lbl, model in self.submodels.items():
+            logging.info("Warming up submodel %s", lbl)
+            model._warmup(pool)
+
     def _submodel_prior_rvs(self, lbl, size=1, prior=None):
         """Draws samples from this model's prior for the given submodel.
 

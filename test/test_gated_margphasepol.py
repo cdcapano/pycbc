@@ -213,6 +213,45 @@ class TestGatedMargPhasePol(unittest.TestCase):
         model.warmup()
         self.assertEqual(len(model._cov_matrices), 0)
 
+    def test_hierarchical_warmup(self):
+        """Checks that the submodels of a hierarchical model draw their
+        parameters from the hierarchical prior, and that the hierarchical
+        warmup fills the submodels' gate caches."""
+        cp = self.config()
+        # make a hierarchical model with the model as its only submodel
+        lbl = 'rd'
+        for sec in ['model', 'data']:
+            cp.add_section(f'{lbl}__{sec}')
+            for opt, val in cp.items(sec):
+                cp.set(f'{lbl}__{sec}', opt, val)
+            cp.remove_section(sec)
+        cp.add_section('model')
+        cp.set('model', 'name', 'hierarchical')
+        cp.set('model', 'submodels', lbl)
+        cp.set(f'{lbl}__model', 'paint-method', 'gs')
+        cp.set(f'{lbl}__model', 'gate-cache-samples', '1000')
+        model = models.read_from_config(cp)
+        submodel = model.submodels[lbl]
+        # the submodel's prior samples should include the outputs of the
+        # waveform transforms
+        samples = submodel.prior_rvs(size=10)
+        self.assertEqual(len(samples), 10)
+        for p in list(submodel.variable_params) + ['t_gate_start',
+                                                   't_gate_end']:
+            self.assertIn(p, samples.fieldnames)
+            self.assertEqual(samples[p].shape, (10,))
+        # the warmup should fill the submodel's cache
+        self.assertEqual(len(submodel._cov_matrices), 0)
+        model.warmup()
+        self.assertTrue(len(submodel._cov_matrices) > 0)
+        model.update(**TEMPLATE_PARAMS)
+        logl = model.loglikelihood
+        for det in submodel.det_names:
+            lindex, rindex = submodel.gate_indices(det)
+            self.assertIn(det, submodel._cov_matrices[rindex - lindex])
+        self.assertAlmostEqual(logl, self.marglogl,
+                               delta=1e-8 * abs(self.marglogl))
+
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
         cp = self.config()
