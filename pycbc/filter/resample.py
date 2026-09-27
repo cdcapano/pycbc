@@ -351,6 +351,81 @@ def highpass(timeseries, frequency, filter_order=8, attenuation=0.1):
     return TimeSeries(lal_data.data.data, delta_t = lal_data.deltaT,
                       dtype=timeseries.dtype, epoch=timeseries._epoch)
 
+@functools.lru_cache(maxsize=20)
+def highpass_response(tlen, delta_t, frequency, filter_order=8,
+                      attenuation=0.1):
+    """The frequency response of the :py:func:`highpass` filter.
+
+    The filter applied by :py:func:`highpass` is a Butterworth filter that is
+    applied forward and backward, and so has zero phase. Away from the edges
+    of a time series, applying it is therefore the same as multiplying the
+    frequency series by the real response returned here. The response is
+    measured by high-passing an impulse placed in the middle of a time series.
+
+    Parameters
+    ----------
+    tlen : int
+        The number of samples in the time series.
+    delta_t : float
+        The sample spacing of the time series.
+    frequency: float
+        The frequency below which is suppressed.
+    filter_order: {8, int}, optional
+        The order of the filter to use when high-passing the time series.
+    attenuation: {0.1, float}, optional
+        The attenuation of the filter.
+
+    Returns
+    -------
+    numpy.ndarray :
+        The (real) response at each of the ``tlen//2 + 1`` frequencies.
+    """
+    impulse = numpy.zeros(tlen)
+    impulse[tlen//2] = 1.
+    impulse = highpass(TimeSeries(impulse, delta_t=delta_t), frequency,
+                       filter_order=filter_order,
+                       attenuation=attenuation).numpy()
+    resp = numpy.fft.rfft(numpy.roll(impulse, -(tlen//2))).real
+    resp.flags.writeable = False
+    return resp
+
+def highpass_fd(htilde, frequency, filter_order=8, attenuation=0.1):
+    """Return a new frequency series that is highpassed.
+
+    This gives the same result as
+    ``highpass(htilde.to_timeseries(), ...).to_frequencyseries()`` for
+    signals that are away from the edges of the time series, but without the
+    FFTs. As with the round trip through the time domain, the DC and Nyquist
+    terms of the result are real. Unlike :py:func:`highpass`, the filter is applied cyclically.
+
+    Parameters
+    ----------
+    htilde : FrequencySeries
+        The (real time series') frequency series to be high-passed.
+    frequency: float
+        The frequency below which is suppressed.
+    filter_order: {8, int}, optional
+        The order of the filter to use when high-passing the time series.
+    attenuation: {0.1, float}, optional
+        The attenuation of the filter.
+
+    Returns
+    -------
+    FrequencySeries :
+        A new FrequencySeries that has been high-passed.
+    """
+    tlen = 2 * (len(htilde) - 1)
+    delta_t = 1. / (tlen * float(htilde.delta_f))
+    resp = highpass_response(tlen, delta_t, frequency,
+                             filter_order=filter_order,
+                             attenuation=attenuation)
+    out = htilde * resp
+    # a real time series has real DC and Nyquist terms; this makes the result
+    # the same as the round trip through the time domain
+    out[0] = out[0].real
+    out[len(out)-1] = out[len(out)-1].real
+    return out
+
 def lowpass(timeseries, frequency, filter_order=8, attenuation=0.1):
     """Return a new timeseries that is lowpassed.
 
@@ -438,7 +513,7 @@ def interpolate_complex_frequency(series, delta_f, zeros_offset=0, side='right')
 
     return out_series
 
-__all__ = ['resample_to_delta_t', 'highpass', 'lowpass',
+__all__ = ['resample_to_delta_t', 'highpass', 'highpass_fd', 'lowpass',
            'interpolate_complex_frequency', 'highpass_fir',
            'lowpass_fir', 'notch_fir', 'fir_zero_filter']
 

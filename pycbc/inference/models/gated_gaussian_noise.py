@@ -33,7 +33,7 @@ from pycbc.pnutils import hybrid_meco_frequency
 from pycbc import types
 from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.waveform import generator, FailedWaveformError
-from pycbc.filter import highpass
+from pycbc.filter import highpass_fd
 from pycbc.strain.gate import invert_covariance, batch_gate_and_paint_fd
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
                              catch_waveform_error)
@@ -834,9 +834,7 @@ class GatedGaussianNoise(BaseGatedGaussian):
                 h.resize(len(self.data[det]))
                 # apply high pass
                 if self.highpass_waveforms:
-                    h = highpass(
-                        h.to_timeseries(),
-                        frequency=self.highpass_waveforms).to_frequencyseries()
+                    h = highpass_fd(h, self.highpass_waveforms)
                 wfs[det] = h
             self._current_wfs = wfs
         return self._current_wfs
@@ -906,12 +904,8 @@ class GatedGaussianMargPol(BaseGatedGaussian):
             hc.resize(len(self.data[det]))
             # apply high pass
             if self.highpass_waveforms:
-                hp = highpass(
-                    hp.to_timeseries(),
-                    frequency=self.highpass_waveforms).to_frequencyseries()
-                hc = highpass(
-                    hc.to_timeseries(),
-                    frequency=self.highpass_waveforms).to_frequencyseries()
+                hp = highpass_fd(hp, self.highpass_waveforms)
+                hc = highpass_fd(hc, self.highpass_waveforms)
             wfs[det] = (hp, hc)
         self._current_wfs = wfs
         return self._current_wfs
@@ -1176,12 +1170,8 @@ class GatedGaussianMargPhase(BaseGatedGaussian):
                 hs.resize(len(self.data[det]))
                 # apply high pass
                 if self.highpass_waveforms:
-                    hc = highpass(
-                         hc.to_timeseries(),
-                         frequency=self.highpass_waveforms).to_frequencyseries()
-                    hs = highpass(
-                         hs.to_timeseries(),
-                         frequency=self.highpass_waveforms).to_frequencyseries()
+                    hc = highpass_fd(hc, self.highpass_waveforms)
+                    hs = highpass_fd(hs, self.highpass_waveforms)
                 wfs[det] = (hc, hs)
             self._current_wfs = wfs
         return self._current_wfs
@@ -1476,12 +1466,8 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
                     hs.resize(len(self.data[det]))
                     # apply high pass
                     if self.highpass_waveforms:
-                        hc = highpass(
-                            hc.to_timeseries(),
-                            frequency=self.highpass_waveforms).to_frequencyseries()
-                        hs = highpass(
-                            hs.to_timeseries(),
-                            frequency=self.highpass_waveforms).to_frequencyseries()
+                        hc = highpass_fd(hc, self.highpass_waveforms)
+                        hs = highpass_fd(hs, self.highpass_waveforms)
                     wfs[det][mode] = (hc, hs)
             self._current_wfs = wfs
         return self._current_wfs
@@ -1918,11 +1904,8 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                     out[det] = {'summed': summed}
                 for mode, terms in out[det].items():
                     if self.highpass_waveforms:
-                        terms = [
-                            highpass(x.to_timeseries(),
-                                     frequency=self.highpass_waveforms
-                                     ).to_frequencyseries()
-                            for x in terms]
+                        terms = [highpass_fd(x, self.highpass_waveforms)
+                                 for x in terms]
                     out[det][mode] = tuple(terms)
             self._current_wfs = out
         return self._current_wfs
