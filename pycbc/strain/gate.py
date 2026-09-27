@@ -293,7 +293,7 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
     fdata = numpy.array([h.numpy() for h in htildes])
     if offset != 0:
         shift = numpy.exp(-2j * numpy.pi * offset
-                          * h0.sample_frequencies.numpy())
+                          * (numpy.arange(nfreq) * delta_f))
         fdata = fdata * shift
     # to the time domain; tlen * delta_f * delta_t = 1 converts between
     # numpy's and pycbc's FFT normalizations
