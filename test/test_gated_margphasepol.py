@@ -161,6 +161,58 @@ class TestGatedMargPhasePol(unittest.TestCase):
                                self.stats['maxl_logl'],
                                delta=1e-8 * abs(self.stats['maxl_logl']))
 
+    def test_fill_gate_cache(self):
+        """Checks that the gate cache is filled by the warmup when using the
+        gs paint method, and that the cached inverses are used."""
+        cp = self.config()
+        cp.set('model', 'paint-method', 'gs')
+        cp.set('model', 'gate-cache-samples', '1000')
+        model = models.read_from_config(cp)
+        # nothing should be cached until the warmup
+        self.assertEqual(len(model._cov_matrices), 0)
+        model.warmup()
+        cached = {(k, det) for k, dets in model._cov_matrices.items()
+                  for det in dets}
+        self.assertTrue(len(cached) > 0)
+        # the same inverses should be set up (up to round-off) when using a
+        # pool
+        pmodel = models.read_from_config(cp)
+        numpy.random.seed(0)
+        model._cov_matrices.clear()
+        model.warmup()
+        numpy.random.seed(0)
+        pmodel.warmup(nprocesses=2)
+        self.assertEqual(
+            {(k, det) for k, dets in pmodel._cov_matrices.items()
+             for det in dets},
+            {(k, det) for k, dets in model._cov_matrices.items()
+             for det in dets})
+        maxdiff = 0.
+        for k, dets in model._cov_matrices.items():
+            for det, tinv in dets.items():
+                x = pmodel._cov_matrices[k][det].x
+                maxdiff = max(maxdiff, abs(tinv.x - x).max() / abs(x).max())
+        self.assertTrue(maxdiff < 1e-10)
+        cached = {(k, det) for k, dets in model._cov_matrices.items()
+                  for det in dets}
+        model.update(**TEMPLATE_PARAMS)
+        logl = model.loglikelihood
+        # filling the cache should not change the output of the model's
+        # waveform transforms, which should still be scalars
+        for p in ['tc', 't_gate_start', 't_gate_end']:
+            self.assertEqual(numpy.ndim(model.current_params[p]), 0)
+        # the gate sizes needed for this point should have been in the cache
+        for det in model.det_names:
+            lindex, rindex = model.gate_indices(det)
+            self.assertIn((rindex - lindex, det), cached)
+        self.assertAlmostEqual(logl, self.marglogl,
+                               delta=1e-8 * abs(self.marglogl))
+        # no cache when disabled
+        cp.set('model', 'gate-cache-samples', '0')
+        model = models.read_from_config(cp)
+        model.warmup()
+        self.assertEqual(len(model._cov_matrices), 0)
+
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
         cp = self.config()
