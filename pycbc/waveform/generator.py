@@ -34,13 +34,14 @@ from .waveform import (FailedWaveformError)
 from . import ringdown
 from . import supernovae
 from . import waveform_modes
-from pycbc.types import TimeSeries
+from pycbc.types import TimeSeries, FrequencySeries
 from pycbc.waveform import parameters
 from pycbc.waveform.utils import apply_fseries_time_shift, \
                                  ceilpow2, apply_fd_time_shift
 from pycbc.detector import Detector
 from pycbc.pool import use_mpi
 from pycbc import strain
+import numpy
 from numpy import pi
 
 
@@ -1501,6 +1502,33 @@ class FDomainDetFrameTwoPhaseModesGenerator(BaseFDomainDetFrameGenerator):
         return select_waveform_modes_generator(approximant, domain)
 
 
+def _td_to_fd_batch(series, delta_f):
+    """Converts several time series to frequency series with a single FFT.
+
+    This gives the same result as
+    ``[x.to_frequencyseries(delta_f=delta_f) for x in series]``, but does all
+    of the FFTs at once. If the series do not all have the same length and
+    sample rate, or are not double precision, this just calls
+    ``to_frequencyseries`` on each.
+    """
+    x0 = series[0]
+    if x0.dtype != numpy.float64 or any(
+            len(x) != len(x0) or x.delta_t != x0.delta_t or
+            x.dtype != x0.dtype for x in series[1:]):
+        return [x.to_frequencyseries(delta_f=delta_f) for x in series]
+    # same as TimeSeries.to_frequencyseries
+    tlen = int(1.0 / delta_f / x0.delta_t + 0.5)
+    if tlen < len(x0):
+        # to_frequencyseries will raise the appropriate error
+        return [x.to_frequencyseries(delta_f=delta_f) for x in series]
+    fdata = numpy.fft.rfft(numpy.array([x.numpy() for x in series]), n=tlen,
+                           axis=1)
+    fdata *= x0.delta_t
+    return [FrequencySeries(fd, delta_f=delta_f, epoch=x.start_time,
+                            copy=False)
+            for fd, x in zip(fdata, series)]
+
+
 class FDomainDetFrameTwoPolTwoPhaseModesGenerator(
         BaseFDomainDetFrameGenerator):
     r"""Generates the cosine and sine terms of the plus and cross
@@ -1613,10 +1641,8 @@ class FDomainDetFrameTwoPolTwoPhaseModesGenerator(
             hps, hcs = hlms_sin[mode]
             if isinstance(hpc, TimeSeries):
                 df = self.current_params['delta_f']
-                hpc = hpc.to_frequencyseries(delta_f=df)
-                hcc = hcc.to_frequencyseries(delta_f=df)
-                hps = hps.to_frequencyseries(delta_f=df)
-                hcs = hcs.to_frequencyseries(delta_f=df)
+                hpc, hps, hcc, hcs = _td_to_fd_batch([hpc, hps, hcc, hcs],
+                                                     df)
                 # time-domain waveforms will not be shifted so that the peak
                 # amplitude happens at the end of the time series (as they are
                 # for f-domain), so we add an additional shift to account for
