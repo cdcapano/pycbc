@@ -33,7 +33,7 @@ from scipy.special import logsumexp
 
 from pycbc.inference import models
 from pycbc.strain.gate import (batch_gate_and_paint_fd, invert_covariance,
-                               toeplitz_inverse)
+                               toeplitz_inverse, toeplitz_inverses)
 from pycbc.workflow import WorkflowConfigParser
 from utils import simple_exit
 
@@ -134,10 +134,19 @@ class TestGatedMargPhasePol(unittest.TestCase):
         vecs = numpy.random.default_rng(0).standard_normal(
             (3, rindex - lindex))
         expected = vecs @ invmat.T
+        # the inverses of several sizes found with a single pass of the
+        # Levinson-Durbin recursion should be the same
+        n = rindex - lindex
+        tinvs = toeplitz_inverses(invpsd, [n - 1, n])
         for got in [tinv.apply(vecs),
-                    numpy.array([tinv.apply(v) for v in vecs])]:
+                    numpy.array([tinv.apply(v) for v in vecs]),
+                    tinvs[n].apply(vecs)]:
             err = abs(got - expected).max()
             self.assertTrue(err < 1e-9 * abs(expected).max())
+        expected = vecs[:, :n-1] @ invert_covariance(
+            invpsd, lindex, rindex - 1).T
+        err = abs(tinvs[n-1].apply(vecs[:, :n-1]) - expected).max()
+        self.assertTrue(err < 1e-9 * abs(expected).max())
 
     def test_gs_paint_method(self):
         """Checks that the model gives the same likelihood when in-painting

@@ -222,9 +222,8 @@ class ToeplitzInverse(object):
     :math:`O(n \\log n)` operations, rather than the :math:`O(n^2)` needed
     for a product with the explicit inverse. Only the first column needs to
     be stored. It is obtained with the Levinson recursion (which takes
-    :math:`O(n^2)` operations and :math:`O(n)` memory), followed by a couple
-    of steps of iterative refinement, which bring the residual down to
-    round-off.
+    :math:`O(n^2)` operations and :math:`O(n)` memory), followed by a step
+    of iterative refinement, which brings the residual down to round-off.
 
     Parameters
     ----------
@@ -232,9 +231,15 @@ class ToeplitzInverse(object):
         The first column of the Toeplitz matrix.
     refinement_steps : int, optional
         The number of steps of iterative refinement of the first column of
-        the inverse. Default is 2.
+        the inverse. Default is 1, which is enough to bring the residual down
+        to round-off.
+    first_column : array, optional
+        An estimate of the first column of the inverse, e.g., from
+        :py:func:`levinson_first_columns`. If provided, it is used as the
+        starting point for the iterative refinement rather than solving for
+        it with the Levinson recursion.
     """
-    def __init__(self, col, refinement_steps=2):
+    def __init__(self, col, refinement_steps=1, first_column=None):
         col = numpy.asarray(col).real
         n = len(col)
         self.n = n
@@ -243,7 +248,13 @@ class ToeplitzInverse(object):
         self.nfft = scipy.fft.next_fast_len(2*n - 1, real=True)
         e0 = numpy.zeros(n)
         e0[0] = 1.
-        x = linalg.solve_toeplitz(col, e0)
+        if first_column is None:
+            x = linalg.solve_toeplitz(col, e0)
+        else:
+            x = numpy.asarray(first_column, dtype=float)
+            if len(x) != n:
+                raise ValueError('first_column must have the same length as '
+                                 'col')
         self._set_column(x)
         # iterative refinement; T is applied as a circular convolution with
         # the symmetric extension of its first column
@@ -288,6 +299,100 @@ class ToeplitzInverse(object):
                               nfft, axis=-1)[..., :n]
         out /= self.x0
         return out
+
+
+def levinson_first_columns(col, sizes):
+    """Returns the first column of the inverse of several leading blocks of a
+    symmetric, positive-definite Toeplitz matrix.
+
+    The ``k x k`` leading block of a Toeplitz matrix is the Toeplitz matrix
+    with first column ``col[:k]``. The Levinson-Durbin recursion finds the
+    first column :math:`f_k` of the inverse of each block from that of the
+    previous one:
+
+    .. math::
+
+        f_{k+1} = \\frac{1}{1 - \\epsilon_k^2}\\left(
+            \\begin{bmatrix} f_k \\\\ 0 \\end{bmatrix} - \\epsilon_k
+            \\begin{bmatrix} 0 \\\\ J f_k \\end{bmatrix}\\right),
+        \\quad \\epsilon_k = \\sum_{i=0}^{k-1} c_{k-i} f_k[i],
+
+    where :math:`J` reverses the order of a vector. The columns for all of
+    the requested sizes are therefore obtained in a single pass, which takes
+    :math:`O(n^2)` operations for the largest size :math:`n`; this is the
+    same cost as solving for the largest size alone.
+
+    Parameters
+    ----------
+    col : array
+        The first column of the Toeplitz matrix. Must be at least as long as
+        the largest size.
+    sizes : iterable of int
+        The sizes of the leading blocks to get the inverses of.
+
+    Returns
+    -------
+    dict :
+        Dictionary of size -> first column of the inverse of the leading
+        block of that size.
+    """
+    col = numpy.asarray(col).real
+    sizes = set(int(k) for k in sizes)
+    nmax = max(sizes)
+    if nmax > len(col):
+        raise ValueError('col is shorter than the largest size')
+    out = {}
+    # the recursion alternates between two buffers to avoid allocating new
+    # arrays at every step
+    fbuf = numpy.zeros(nmax)
+    gbuf = numpy.zeros(nmax)
+    fbuf[0] = 1. / col[0]
+    if 1 in sizes:
+        out[1] = fbuf[:1].copy()
+    for k in range(1, nmax):
+        f = fbuf[:k]
+        eps = numpy.dot(col[k:0:-1], f)
+        g = gbuf[:k+1]
+        g[:k] = f
+        g[k] = 0.
+        g[1:] -= eps * f[::-1]
+        g /= 1. - eps*eps
+        fbuf, gbuf = gbuf, fbuf
+        if k+1 in sizes:
+            out[k+1] = fbuf[:k+1].copy()
+    return out
+
+
+def toeplitz_inverses(invpsd, sizes, refinement_steps=1):
+    """Returns :py:class:`ToeplitzInverse` of the covariance matrix for
+    several gate sizes.
+
+    This gives the same result as calling :py:func:`toeplitz_inverse` for
+    each size, but finds all of the inverses with a single pass of the
+    Levinson-Durbin recursion (see :py:func:`levinson_first_columns`), which
+    is much faster when there are many sizes.
+
+    Parameters
+    ----------
+    invpsd : FrequencySeries
+        The inverse of the PSD.
+    sizes : iterable of int
+        The gate sizes (``rindex - lindex``) to get the inverses for.
+    refinement_steps : int, optional
+        The number of steps of iterative refinement to apply to each
+        inverse. Default is 1.
+
+    Returns
+    -------
+    dict :
+        Dictionary of size -> :py:class:`ToeplitzInverse`.
+    """
+    tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
+    col = tdfilter.numpy().real
+    columns = levinson_first_columns(col, sizes)
+    return {k: ToeplitzInverse(col[:k], refinement_steps=refinement_steps,
+                               first_column=x)
+            for k, x in columns.items()}
 
 
 def toeplitz_inverse(invpsd, lindex, rindex):
