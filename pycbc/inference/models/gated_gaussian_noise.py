@@ -58,6 +58,15 @@ class BaseGatedGaussian(BaseGaussianNoise):
     Provides additional routines for applying a time-domain gate to data.
     See :py:class:`GatedGaussianNoise` for more details.
     """
+    # Whether the model accounts for the detector response changing over the
+    # duration of the signal (e.g., due to the motion of the detectors). If
+    # False (the default), the gate times in each detector are obtained by
+    # shifting the gate by the arrival time delay at the coalescence time,
+    # which is the same shift that is used to project the template into the
+    # detector, so the gate width is the same in every detector. If True, the
+    # start and end of the gate are each shifted by the delay at that time.
+    _time_varying_response = False
+
     def __init__(self, variable_params, data, low_frequency_cutoff, psds=None,
                  high_frequency_cutoff=None, normalize=False,
                  static_params=None, highpass_waveforms=False, **kwargs):
@@ -489,9 +498,10 @@ class BaseGatedGaussian(BaseGaussianNoise):
         ----------
         samples : dict
             Dictionary of parameter names -> arrays. Must contain
-            ``t_gate_start``, ``t_gate_end``, ``ra``, and ``dec`` (i.e., the
-            waveform transforms must already have been applied), and may
-            contain ``tc_ref_frame``. Scalars are broadcast.
+            ``t_gate_start``, ``t_gate_end``, ``ra``, and ``dec``, and
+            ``tc`` if ``_time_varying_response`` is False (i.e., the waveform
+            transforms must already have been applied), and may contain
+            ``tc_ref_frame``. Scalars are broadcast.
         pool : pool object, optional
             Pool used to set up the inverses of different detectors in
             parallel. If None, they are set up in serial.
@@ -509,11 +519,15 @@ class BaseGatedGaussian(BaseGaussianNoise):
                 raise ValueError("all samples must have the same "
                                  "tc_ref_frame")
             refframe = str(refframe[0])
-        gatestart, gateend, ra, dec = numpy.broadcast_arrays(
-            *[numpy.asarray(samples[p], dtype=float)
-              for p in ['t_gate_start', 't_gate_end', 'ra', 'dec']])
+        params = ['t_gate_start', 't_gate_end', 'ra', 'dec']
+        if not self._time_varying_response:
+            params.append('tc')
+        arrays = numpy.broadcast_arrays(
+            *[numpy.asarray(samples[p], dtype=float) for p in params])
+        gatestart, gateend, ra, dec = arrays[:4]
+        tc = arrays[4] if len(arrays) > 4 else None
         gatetimes = self._get_gate_times(gatestart, gateend, ra, dec,
-                                         refframe=refframe)
+                                         refframe=refframe, tc=tc)
         tasks = []
         for det, (start, width) in gatetimes.items():
             # same as gate_indices, i.e., TimeSeries.get_gate_indices
@@ -625,14 +639,18 @@ class BaseGatedGaussian(BaseGaussianNoise):
         # we'll need the sky location for determining time shifts
         ra = self.current_params['ra']
         dec = self.current_params['dec']
+        # and the coalescence time, unless the response is time varying
+        tc = None if self._time_varying_response else params['tc']
         # try to get from cache
+        key = (gatestart, gateend, ra, dec, tc)
         try:
-            gatetimes = self._gatetimes[gatestart, gateend, ra, dec]
+            gatetimes = self._gatetimes[key]
         except KeyError:
             # doesn't exist, or parameters have changed, recalculate
             self._gatetimes.clear()
-            gatetimes = self._get_gate_times(gatestart, gateend, ra, dec)
-            self._gatetimes[gatestart, gateend, ra, dec] = gatetimes
+            gatetimes = self._get_gate_times(gatestart, gateend, ra, dec,
+                                             tc=tc)
+            self._gatetimes[key] = gatetimes
         # check if the inpainting is numerically stable
         if self.check_condition_number:
             for det, d in self.td_data.items():
@@ -641,10 +659,17 @@ class BaseGatedGaussian(BaseGaussianNoise):
                 self.condition_number(det, lindex, rindex)
         return gatetimes
 
-    def _get_gate_times(self, gatestart, gateend, ra, dec, refframe=None):
+    def _get_gate_times(self, gatestart, gateend, ra, dec, refframe=None,
+                        tc=None):
         """Calculates the gate times in each detector.
 
         The times may also be arrays, in which case arrays are returned.
+
+        If the ``_time_varying_response`` attribute is False (the default),
+        the gate is shifted into each detector's frame by the arrival time
+        delay at the coalescence time ``tc``, so that the gate width is the
+        same in all detectors. Otherwise, the start and end of the gate are
+        each shifted by the delay at that time.
 
         Parameters
         ----------
@@ -660,12 +685,20 @@ class BaseGatedGaussian(BaseGaussianNoise):
             The frame the gate times are defined in. If None, will use the
             ``tc_ref_frame`` in the current parameters, or ``'geocentric'``
             if there is none.
+        tc : float, optional
+            The coalescence time (in the reference frame) at which to compute
+            the arrival time delay. Only used if ``_time_varying_response``
+            is False. If None, will use the ``tc`` in the current parameters.
 
         Returns
         -------
         dict :
             Dictionary of detector names -> (gate start, gate width)
         """
+        if refframe is None:
+            refframe = self.current_params.get('tc_ref_frame', 'geocentric')
+        if not self._time_varying_response and tc is None:
+            tc = self.current_params['tc']
         gatetimes = {}
         for det in self._invpsds:
             try:
@@ -674,14 +707,17 @@ class BaseGatedGaussian(BaseGaussianNoise):
                 thisdet = self._gate_detectors[det] = Detector(det)
             # account for the time delay between the waveforms of the
             # different detectors
-            if refframe is None:
-                refdet = self.current_params.get('tc_ref_frame',
-                                                 'geocentric')
+            if self._time_varying_response:
+                gatestartdelay = thisdet.arrival_time(gatestart, ra, dec,
+                                                      refframe)
+                gateenddelay = thisdet.arrival_time(gateend, ra, dec,
+                                                    refframe)
+                dgatedelay = gateenddelay - gatestartdelay
             else:
-                refdet = refframe
-            gatestartdelay = thisdet.arrival_time(gatestart, ra, dec, refdet)
-            gateenddelay = thisdet.arrival_time(gateend, ra, dec, refdet)
-            dgatedelay = gateenddelay - gatestartdelay
+                # shift the gate by the delay at tc; the width is unchanged
+                delay = thisdet.arrival_time_delay(tc, ra, dec, refframe)
+                gatestartdelay = gatestart + delay
+                dgatedelay = gateend - gatestart
             gatetimes[det] = (gatestartdelay, dgatedelay)
         return gatetimes
 

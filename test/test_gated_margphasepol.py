@@ -274,6 +274,55 @@ class TestGatedMargPhasePol(unittest.TestCase):
             self.assertAlmostEqual(logdet, numpy.linalg.slogdet(tc)[1],
                                    delta=1e-8 * abs(logdet))
 
+    def test_gate_times(self):
+        """Checks that the gates are shifted into each detector by the delay
+        at tc (preserving the gate width), unless the model has a time
+        varying response, in which case each edge is shifted by the delay at
+        that time."""
+        from pycbc.detector import Detector
+        model = self.model
+        samples = {p: numpy.full(1000, v) for p, v in TEMPLATE_PARAMS.items()}
+        rng = numpy.random.default_rng(1)
+        samples['ra'] = rng.uniform(0, 2 * numpy.pi, 1000)
+        samples['dec'] = numpy.arcsin(rng.uniform(-1, 1, 1000))
+        tc = model.static_params['trigger_time'] + rng.uniform(-0.05, 0.05,
+                                                               1000)
+        start, end = tc - 1., tc
+        refframe = model.static_params.get('tc_ref_frame', 'geocentric')
+        gatetimes = model._get_gate_times(start, end, samples['ra'],
+                                          samples['dec'], refframe=refframe,
+                                          tc=tc)
+        for det, (gstart, gwidth) in gatetimes.items():
+            thisdet = Detector(det)
+            delay = thisdet.arrival_time_delay(tc, samples['ra'],
+                                               samples['dec'], refframe)
+            numpy.testing.assert_array_equal(gstart, start + delay)
+            numpy.testing.assert_array_equal(gwidth, end - start)
+            # the gate is always the same number of samples
+            ts = model.td_data[det]
+            st0 = float(ts.start_time)
+            dt = float(ts.delta_t)
+            nsamples = (numpy.trunc((gstart + gwidth - st0) / dt)
+                        - numpy.trunc((gstart - st0) / dt))
+            self.assertEqual(len(numpy.unique(nsamples)), 1)
+        # with a time varying response, each edge is shifted by the delay at
+        # that time
+        model._time_varying_response = True
+        try:
+            gatetimes = model._get_gate_times(start, end, samples['ra'],
+                                              samples['dec'],
+                                              refframe=refframe)
+        finally:
+            model._time_varying_response = False
+        for det, (gstart, gwidth) in gatetimes.items():
+            thisdet = Detector(det)
+            astart = thisdet.arrival_time(start, samples['ra'],
+                                          samples['dec'], refframe)
+            aend = thisdet.arrival_time(end, samples['ra'], samples['dec'],
+                                        refframe)
+            numpy.testing.assert_array_equal(gstart, astart)
+            numpy.testing.assert_array_equal(gwidth, aend - astart)
+
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
         cp = self.config()
