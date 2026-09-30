@@ -39,8 +39,8 @@ from pycbc.constants import MSUN_SI, G_SI, C_SI, PC_SI
 qnm_required_args = ['f_0', 'tau', 'amp', 'phi']
 mass_spin_required_args = ['final_mass','final_spin', 'lmns', 'inclination']
 freqtau_required_args = ['lmns']
-td_args = {'delta_t': None, 't_final': None, 'taper': False}
-fd_args = {'t_0': 0, 'delta_f': None, 'f_lower': 0, 'f_final': None}
+td_args = {'delta_t': None, 't_final': None, 'taper': False, 't0': 0}
+fd_args = {'t0': 0, 'delta_f': None, 'f_lower': 0, 'f_final': None}
 
 max_freq = 16384/2.
 min_dt = 1. / (2 * max_freq)
@@ -829,6 +829,7 @@ def multimode_base(input_params, domain, freq_tau_approximant=False,
         elif domain == 'fd':
             hplus, hcross = fd_damped_sinusoid(
                 freqs[lmn], taus[lmn], amps[lmn], phis[lmn], sample_freqs,
+                t_0=input_params['t0'],
                 l=int(lmn[0]), m=int(lmn[1]), n=int(lmn[2]),
                 inclination=input_params['inclination'],
                 azimuthal=input_params['azimuthal'],
@@ -841,9 +842,14 @@ def multimode_base(input_params, domain, freq_tau_approximant=False,
                 out[lmn][0][kmin:] += norm * hplus
                 out[lmn][1][kmin:] += norm * hcross
     if sum_modes:
-        return norm * outplus, norm * outcross
-    else:
-        return out
+        out = norm * outplus, norm * outcross
+    if domain == 'td' and input_params['t0'] != 0:
+        # start the ringdown t0 after the reference time; the frequency-
+        # domain waveforms apply the same shift as a phase
+        for series in (out if sum_modes else
+                       [x for hpc in out.values() for x in hpc]):
+            series._epoch = float(series._epoch) + input_params['t0']
+    return out
 
 
 ######################################################
@@ -948,6 +954,10 @@ def get_td_from_final_mass_spin(template=None, **kwargs):
         overtone will have a different taper depending on its tau,
         the final taper being the superposition of all the tapers. Default is
         False.
+    t0 : float, optional
+        The time, relative to the reference time of the waveform (i.e.,
+        ``tc`` when the waveform is placed in a detector), at which the
+        ringdown starts. Default is 0.
 
     Returns
     -------
@@ -1055,6 +1065,10 @@ def get_fd_from_final_mass_spin(template=None, **kwargs):
         The ending frequency of the output frequency series.
         If None, it will be set to the frequency at which the amplitude
         is 1/1000 of the peak amplitude (the maximum of all modes).
+    t0 : float, optional
+        The time, relative to the reference time of the waveform (i.e.,
+        ``tc`` when the waveform is placed in a detector), at which the
+        ringdown starts. Default is 0.
 
     Returns
     -------
@@ -1170,6 +1184,10 @@ def get_td_from_freqtau(template=None, **kwargs):
         overtone will have a different taper depending on its tau,
         the final taper being the superposition of all the tapers. Default is
         False.
+    t0 : float, optional
+        The time, relative to the reference time of the waveform (i.e.,
+        ``tc`` when the waveform is placed in a detector), at which the
+        ringdown starts. Default is 0.
 
     Returns
     -------
@@ -1283,6 +1301,10 @@ def get_fd_from_freqtau(template=None, **kwargs):
         The ending frequency of the output frequency series.
         If None, it will be set to the frequency at which the amplitude
         is 1/1000 of the peak amplitude (the maximum of all modes).
+    t0 : float, optional
+        The time, relative to the reference time of the waveform (i.e.,
+        ``tc`` when the waveform is placed in a detector), at which the
+        ringdown starts. Default is 0.
 
     Returns
     -------
