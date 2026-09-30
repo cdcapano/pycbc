@@ -52,6 +52,24 @@ def _toeplitz_inverses_task(args):
     return det, toeplitz_inverses(invpsd, sizes)
 
 
+# The gate start times and widths in each detector are rounded to a multiple
+# of this (2^-20 s, about a microsecond). The gating functions take the
+# center and half-width of the gate, from which the start and end of the
+# gate are found. For times on this grid, that is exact in double precision
+# (for GPS times before 2^32 s); otherwise, the edges are only recovered to
+# within the resolution of a double at GPS times (~2e-7 s), which can change
+# the sample an edge lands in. That matters when a time is shared by the
+# gates of different models, such as the submodels of a hierarchical model
+# that split the data at a common time.
+GATE_TIME_RESOLUTION = 2.**-20
+
+
+def _round_gate_time(time):
+    """Rounds the given time(s) to a multiple of ``GATE_TIME_RESOLUTION``.
+    """
+    return numpy.round(time / GATE_TIME_RESOLUTION) * GATE_TIME_RESOLUTION
+
+
 class BaseGatedGaussian(BaseGaussianNoise):
     r"""Base model for gated gaussian.
 
@@ -669,7 +687,8 @@ class BaseGatedGaussian(BaseGaussianNoise):
         the gate is shifted into each detector's frame by the arrival time
         delay at the coalescence time ``tc``, so that the gate width is the
         same in all detectors. Otherwise, the start and end of the gate are
-        each shifted by the delay at that time.
+        each shifted by the delay at that time. The gate start and width are
+        rounded to a multiple of ``GATE_TIME_RESOLUTION``.
 
         Parameters
         ----------
@@ -708,16 +727,16 @@ class BaseGatedGaussian(BaseGaussianNoise):
             # account for the time delay between the waveforms of the
             # different detectors
             if self._time_varying_response:
-                gatestartdelay = thisdet.arrival_time(gatestart, ra, dec,
-                                                      refframe)
-                gateenddelay = thisdet.arrival_time(gateend, ra, dec,
-                                                    refframe)
+                gatestartdelay = _round_gate_time(
+                    thisdet.arrival_time(gatestart, ra, dec, refframe))
+                gateenddelay = _round_gate_time(
+                    thisdet.arrival_time(gateend, ra, dec, refframe))
                 dgatedelay = gateenddelay - gatestartdelay
             else:
                 # shift the gate by the delay at tc; the width is unchanged
                 delay = thisdet.arrival_time_delay(tc, ra, dec, refframe)
-                gatestartdelay = gatestart + delay
-                dgatedelay = gateend - gatestart
+                gatestartdelay = _round_gate_time(gatestart + delay)
+                dgatedelay = _round_gate_time(gateend - gatestart)
             gatetimes[det] = (gatestartdelay, dgatedelay)
         return gatetimes
 
