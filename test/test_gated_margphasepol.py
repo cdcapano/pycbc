@@ -33,7 +33,9 @@ import scipy.linalg
 from scipy.special import logsumexp
 
 from pycbc.inference import models
-from pycbc.inference.models.gated_gaussian_noise import GATE_TIME_RESOLUTION
+from pycbc.inference.models.gated_gaussian_noise import (
+    GATE_TIME_RESOLUTION, _round_gate_time as _round)
+from pycbc.detector import Detector
 from pycbc.strain.gate import (batch_gate_and_paint_fd, invert_covariance,
                                toeplitz_inverse, toeplitz_inverses)
 from pycbc.workflow import WorkflowConfigParser
@@ -280,7 +282,6 @@ class TestGatedMargPhasePol(unittest.TestCase):
         at tc (preserving the gate width), unless the model has a time
         varying response, in which case each edge is shifted by the delay at
         that time."""
-        from pycbc.detector import Detector
         model = self.model
         samples = {p: numpy.full(1000, v) for p, v in TEMPLATE_PARAMS.items()}
         rng = numpy.random.default_rng(1)
@@ -332,6 +333,94 @@ class TestGatedMargPhasePol(unittest.TestCase):
                                         refframe)
             self.assertTrue((abs(gstart - astart) <= res/2).all())
             self.assertTrue((abs(gstart + gwidth - aend) <= res/2).all())
+
+    def test_detector_gate_times(self):
+        """Checks that gate times given for each detector take precedence
+        over the sky-dependent gate, and that two models that share an edge
+        of their gates put that edge in the same sample."""
+        cp = self.config()
+        cp.set('model', 'paint-method', 'gs')
+        model = models.read_from_config(cp)
+        model.update(**TEMPLATE_PARAMS)
+        logl = model.loglikelihood
+        gatetimes = model.get_gate_times()
+        # giving the same gates in each detector's frame gives the same
+        # likelihood
+        detparams = {}
+        for det, (start, width) in gatetimes.items():
+            detparams[f't_gate_start_{det.lower()}'] = start
+            detparams[f't_gate_end_{det.lower()}'] = start + width
+        model.update(**TEMPLATE_PARAMS, **detparams)
+        self.assertAlmostEqual(model.loglikelihood, logl,
+                               delta=1e-12 * abs(logl))
+        self.assertEqual(model.get_gate_times(), gatetimes)
+        # the gates do not depend on the sky location if they are given for
+        # every detector
+        model.update(**{**TEMPLATE_PARAMS, 'ra': 0., 'dec': 0.},
+                     **detparams)
+        model.loglikelihood
+        self.assertEqual(model.get_gate_times(), gatetimes)
+        # a detector's gate edge takes precedence over the generic one
+        det = model.det_names[0]
+        start, width = gatetimes[det]
+        model.update(**TEMPLATE_PARAMS,
+                     **{f't_gate_start_{det.lower()}': start - 0.1})
+        model.loglikelihood
+        newtimes = model.get_gate_times()
+        self.assertEqual(newtimes[det][0], _round(start - 0.1))
+        for other in model.det_names[1:]:
+            self.assertEqual(newtimes[other], gatetimes[other])
+        # split the data at a common (reference frame) time with two
+        # complementary gates that share a tc, one that gates the data after
+        # the split and one that gates the data before, with outer edges
+        # that are fixed in each detector's frame
+        rng = numpy.random.default_rng(2)
+        nsamp = 100000
+        trigger_time = model.static_params['trigger_time']
+        tc = trigger_time + rng.uniform(-0.05, 0.05, nsamp)
+        split = tc + rng.uniform(0, 0.05, nsamp)
+        ra = rng.uniform(0, 2 * numpy.pi, nsamp)
+        dec = numpy.arcsin(rng.uniform(-1, 1, nsamp))
+        refframe = model.static_params.get('tc_ref_frame', 'geocentric')
+        after = model._get_gate_times(
+            split, None, ra, dec, refframe=refframe, tc=tc,
+            detgates={d: (None, trigger_time + 3.1)
+                      for d in model.det_names})
+        before = model._get_gate_times(
+            None, split, ra, dec, refframe=refframe, tc=tc,
+            detgates={d: (trigger_time - 3.1, None)
+                      for d in model.det_names})
+        for det in model.det_names:
+            # the split is the same in both
+            astart, awidth = after[det]
+            bstart, bwidth = before[det]
+            numpy.testing.assert_array_equal(astart, bstart + bwidth)
+            # as are the indices, so that together the gates always cover
+            # the same number of samples
+            ts = model.td_data[det]
+            st0 = float(ts.start_time)
+            dt = float(ts.delta_t)
+            acenter = astart + awidth/2
+            bcenter = bstart + bwidth/2
+            alindex = numpy.trunc((acenter - awidth/2 - st0) / dt)
+            arindex = numpy.trunc((acenter + awidth/2 - st0) / dt)
+            blindex = numpy.trunc((bcenter - bwidth/2 - st0) / dt)
+            brindex = numpy.trunc((bcenter + bwidth/2 - st0) / dt)
+            numpy.testing.assert_array_equal(alindex, brindex)
+            self.assertEqual(
+                len(numpy.unique(arindex - alindex + brindex - blindex)), 1)
+            # the split is shifted by the delay at tc
+            delay = Detector(det).arrival_time_delay(tc, ra, dec, refframe)
+            self.assertTrue((abs(astart - (split + delay))
+                             <= GATE_TIME_RESOLUTION/2).all())
+        # the cache can be filled with the gates given for each detector
+        samples = {f't_gate_start_{det.lower()}': trigger_time - 3.1
+                   for det in model.det_names}
+        samples.update({f't_gate_end_{det.lower()}': split[:100]
+                        for det in model.det_names})
+        model._cov_matrices.clear()
+        model.fill_gate_cache(samples)
+        self.assertTrue(len(model._cov_matrices) > 0)
 
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
