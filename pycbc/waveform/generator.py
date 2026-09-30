@@ -699,7 +699,7 @@ class FDomainDetFrameGenerator(BaseFDomainDetFrameGenerator):
             # time-domain waveforms will not be shifted so that the peak amp
             # happens at the end of the time series (as they are for f-domain),
             # so we add an additional shift to account for it
-            tshift = 1./df - abs(hp._epoch)
+            tshift = 1./df + hp._epoch
         else:
             tshift = 0.
         hp._epoch = hc._epoch = self._epoch
@@ -837,7 +837,7 @@ class FDomainDetFrameTwoPolGenerator(BaseFDomainDetFrameGenerator):
             # time-domain waveforms will not be shifted so that the peak amp
             # happens at the end of the time series (as they are for f-domain),
             # so we add an additional shift to account for it
-            tshift = 1./df - abs(hp._epoch)
+            tshift = 1./df + hp._epoch
         else:
             tshift = 0.
         hp._epoch = hc._epoch = self._epoch
@@ -965,7 +965,7 @@ class FDomainDetFrameTwoPolNoRespGenerator(BaseFDomainDetFrameGenerator):
             # time-domain waveforms will not be shifted so that the peak amp
             # happens at the end of the time series (as they are for f-domain),
             # so we add an additional shift to account for it
-            tshift = 1./df - abs(hp._epoch)
+            tshift = 1./df + hp._epoch
             hp = apply_fseries_time_shift(hp, tshift, copy=True)
             hc = apply_fseries_time_shift(hc, tshift, copy=True)
 
@@ -1106,7 +1106,7 @@ class FDomainDetFrameTwoPhaseGenerator(BaseFDomainDetFrameGenerator):
             # time-domain waveforms will not be shifted so that the peak amp
             # happens at the end of the time series (as they are for f-domain),
             # so we add an additional shift to account for it
-            tshift = 1./df - abs(hpc._epoch)
+            tshift = 1./df + hpc._epoch
         else:
             tshift = 0.
         hpc._epoch = hcc._epoch = hps._epoch = hcs._epoch = self._epoch
@@ -1260,7 +1260,7 @@ class FDomainDetFrameModesGenerator(BaseFDomainDetFrameGenerator):
                 # amplitude happens at the end of the time series (as they are
                 # for f-domain), so we add an additional shift to account for
                 # it
-                tshift = 1./df - abs(ulm._epoch)
+                tshift = 1./df + ulm._epoch
             else:
                 tshift = 0.
             ulm._epoch = vlm._epoch = self._epoch
@@ -1439,7 +1439,7 @@ class FDomainDetFrameTwoPhaseModesGenerator(BaseFDomainDetFrameGenerator):
                 # amplitude happens at the end of the time series (as they are
                 # for f-domain), so we add an additional shift to account for
                 # it
-                tshift = 1./df - abs(ulm_cos._epoch)
+                tshift = 1./df + ulm_cos._epoch
             else:
                 tshift = 0.
             ulm_cos._epoch = vlm_cos._epoch = self._epoch
@@ -1647,7 +1647,7 @@ class FDomainDetFrameTwoPolTwoPhaseModesGenerator(
                 # amplitude happens at the end of the time series (as they are
                 # for f-domain), so we add an additional shift to account for
                 # it
-                tshift = 1./df - abs(hpc._epoch)
+                tshift = 1./df + hpc._epoch
             else:
                 tshift = 0.
             hpc._epoch = hcc._epoch = hps._epoch = hcs._epoch = self._epoch
