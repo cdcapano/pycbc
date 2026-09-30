@@ -33,6 +33,7 @@ import scipy.linalg
 from scipy.special import logsumexp
 
 from pycbc.inference import models
+from pycbc.inference.models.gated_gaussian_noise import GATE_TIME_RESOLUTION
 from pycbc.strain.gate import (batch_gate_and_paint_fd, invert_covariance,
                                toeplitz_inverse, toeplitz_inverses)
 from pycbc.workflow import WorkflowConfigParser
@@ -292,12 +293,21 @@ class TestGatedMargPhasePol(unittest.TestCase):
         gatetimes = model._get_gate_times(start, end, samples['ra'],
                                           samples['dec'], refframe=refframe,
                                           tc=tc)
+        res = GATE_TIME_RESOLUTION
         for det, (gstart, gwidth) in gatetimes.items():
             thisdet = Detector(det)
             delay = thisdet.arrival_time_delay(tc, samples['ra'],
                                                samples['dec'], refframe)
-            numpy.testing.assert_array_equal(gstart, start + delay)
-            numpy.testing.assert_array_equal(gwidth, end - start)
+            self.assertTrue((abs(gstart - (start + delay)) <= res/2).all())
+            self.assertTrue((abs(gwidth - (end - start)) <= res/2).all())
+            # the times are on the grid, so the edges are recovered exactly
+            # from the center and half-width of the gate
+            self.assertTrue((numpy.round(gstart / res) * res == gstart).all())
+            self.assertTrue((numpy.round(gwidth / res) * res == gwidth).all())
+            center = gstart + gwidth/2
+            numpy.testing.assert_array_equal(center - gwidth/2, gstart)
+            numpy.testing.assert_array_equal(center + gwidth/2,
+                                             gstart + gwidth)
             # the gate is always the same number of samples
             ts = model.td_data[det]
             st0 = float(ts.start_time)
@@ -320,8 +330,8 @@ class TestGatedMargPhasePol(unittest.TestCase):
                                           samples['dec'], refframe)
             aend = thisdet.arrival_time(end, samples['ra'], samples['dec'],
                                         refframe)
-            numpy.testing.assert_array_equal(gstart, astart)
-            numpy.testing.assert_array_equal(gwidth, aend - astart)
+            self.assertTrue((abs(gstart - astart) <= res/2).all())
+            self.assertTrue((abs(gstart + gwidth - aend) <= res/2).all())
 
     def test_margpol_brute_phase(self):
         """Marginalizes gated_gaussian_margpol over the 220 phase."""
