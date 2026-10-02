@@ -270,3 +270,211 @@ class UniformF0Tau(uniform.Uniform):
                    final_mass=final_mass, final_spin=final_spin,
                    rdfreq=rdfreq, damping_time=damping_time,
                    **extra_opts)
+
+
+class BayesWaveSignalSNR(bounded.BoundedDist):
+    r"""The prior on the SNR of a signal wavelet used by BayesWave.
+
+    This is the prior that BayesWave puts on the signal-to-noise ratio
+    :math:`\rho` of each wavelet in its signal model (Eq. 14 of Cornish et
+    al. 2021, `arXiv:2011.09494 <https://arxiv.org/abs/2011.09494>`_):
+
+    .. math::
+
+        p(\rho) = \frac{3 \rho}{4 \rho_*^2 (1 + \rho / (4 \rho_*))^5}.
+
+    It peaks at :math:`\rho = \rho_*` and falls off as :math:`\rho^{-4}` at
+    large :math:`\rho`, which disfavors both very weak and very loud
+    components. With :math:`u = \rho / (4 \rho_*)` the pdf is
+    :math:`12 u (1 + u)^{-5} du`, so it is normalized on
+    :math:`[0, \infty)`, and its cumulative distribution is
+
+    .. math::
+
+        F(\rho) = 1 - \frac{1 + 4u}{(1 + u)^4}.
+
+    If the bounds of a parameter are narrower than :math:`[0, \infty)`, the
+    distribution is truncated to them and renormalized. The inverse of the
+    cumulative distribution, which is used to draw samples and by samplers
+    that sample the unit cube, is found by bisection.
+
+    Parameters
+    ----------
+    rho_star : float, optional
+        The SNR at which the pdf peaks, :math:`\rho_*`. Default is 5, the
+        default in BayesWave.
+    \**params :
+        The keyword arguments should provide the names of the parameters and
+        their bounds, as either tuples or ``boundaries.Bounds`` instances.
+        The bounds must be within :math:`[0, \infty)`. Parameters with bounds
+        of None are bounded by :math:`[0, \infty)`.
+
+    Examples
+    --------
+    Create the prior for an SNR between 1 and 50, and evaluate its pdf:
+
+    >>> from pycbc import distributions
+    >>> dist = distributions.BayesWaveSignalSNR(rho_star=5., snr=(1., 50.))
+    >>> dist.pdf(snr=5.)
+    0.05378...
+    """
+    name = 'bayeswave_signal_snr'
+
+    def __init__(self, rho_star=5., **params):
+        for param, bnds in params.items():
+            if bnds is None:
+                params[param] = (0., numpy.inf)
+        super().__init__(**params)
+        self.rho_star = float(rho_star)
+        if not self.rho_star > 0:
+            raise ValueError("rho_star must be positive")
+        self._sfbounds = {}
+        self._cdfbounds = {}
+        self._lognorm = 0.
+        for param in self._params:
+            lower, upper = self._bounds[param]
+            if lower < 0:
+                raise ValueError("the bounds of {} must be >= 0, got [{}, {}]"
+                                 .format(param, lower, upper))
+            sfbounds = (self._sf(lower), self._sf(upper))
+            self._sfbounds[param] = sfbounds
+            self._cdfbounds[param] = (self._cdf(lower), self._cdf(upper))
+            # the probability within the bounds
+            self._lognorm -= numpy.log(sfbounds[0] - sfbounds[1])
+        self._norm = numpy.exp(self._lognorm)
+
+    @property
+    def norm(self):
+        """float: The normalization of the multi-dimensional pdf."""
+        return self._norm
+
+    @property
+    def lognorm(self):
+        """float: The log of the normalization."""
+        return self._lognorm
+
+    def _sf(self, rho):
+        """The survival function, 1 - F(rho), of the untruncated
+        distribution."""
+        u = numpy.asarray(rho, dtype=float) / (4. * self.rho_star)
+        with numpy.errstate(invalid='ignore', over='ignore'):
+            sf = (1. + 4. * u) / (1. + u)**4
+        return numpy.where(numpy.isinf(u), 0., sf)
+
+    def _cdf(self, rho):
+        """The cdf, F(rho), of the untruncated distribution. This is written
+        as u^2 (6 + 4u + u^2) / (1 + u)^4, which equals 1 - sf without the
+        loss of precision at small rho."""
+        u = numpy.asarray(rho, dtype=float) / (4. * self.rho_star)
+        with numpy.errstate(invalid='ignore', over='ignore'):
+            cdf = u * u * (6. + u * (4. + u)) / (1. + u)**4
+        return numpy.where(numpy.isinf(u), 1., cdf)
+
+    def _logpdf_untruncated(self, rho):
+        """The log of the pdf of the untruncated distribution."""
+        with numpy.errstate(divide='ignore'):
+            return (numpy.log(3. * rho / (4. * self.rho_star**2))
+                    - 5. * numpy.log1p(rho / (4. * self.rho_star)))
+
+    def _pdf(self, **kwargs):
+        """Returns the pdf at the given values. The keyword arguments must
+        contain all of parameters in self's params. Unrecognized arguments are
+        ignored.
+        """
+        return numpy.exp(self._logpdf(**kwargs))
+
+    def _logpdf(self, **kwargs):
+        """Returns the log of the pdf at the given values. The keyword
+        arguments must contain all of parameters in self's params.
+        Unrecognized arguments are ignored. Only values within the bounds are
+        passed in (see :py:meth:`BoundedDist.logpdf`), and they may be arrays.
+        """
+        for p in self._params:
+            if p not in kwargs:
+                raise ValueError(
+                    'Missing parameter {} to construct pdf.'.format(p))
+        return self._lognorm + sum(
+            self._logpdf_untruncated(kwargs[p]) for p in self._params)
+
+    def _cdfinv_param(self, param, value):
+        """Return the inverse cdf, mapping the unit interval to the parameter
+        bounds.
+        """
+        value = numpy.asarray(value, dtype=float)
+        sflower, sfupper = self._sfbounds[param]
+        cdflower, cdfupper = self._cdfbounds[param]
+        # the value of the (untruncated) survival function and cdf to find;
+        # the cdf is used where it is less than 1/2, and the survival
+        # function elsewhere, so that the solution keeps its relative
+        # precision at both ends
+        target = sflower - value * (sflower - sfupper)
+        target_cdf = cdflower + value * (cdfupper - cdflower)
+        use_cdf = target_cdf < 0.5
+        # bracket the solution in u = rho / (4 rho_*); the survival function
+        # decreases monotonically, and is < 5 / u^3 for u >= 1
+        lower, upper = self._bounds[param]
+        ulo = numpy.full(target.shape, lower / (4. * self.rho_star))
+        if numpy.isfinite(upper):
+            uhi = numpy.full(target.shape, upper / (4. * self.rho_star))
+        else:
+            # a target of 0 (value = 1) is the end point, set below
+            with numpy.errstate(divide='ignore'):
+                uhi = numpy.where(target > 0,
+                                  numpy.maximum(1., (5. / target)**(1. / 3.)),
+                                  1.)
+        # bisect
+        for _ in range(100):
+            umid = 0.5 * (ulo + uhi)
+            below = numpy.where(
+                use_cdf,
+                umid * umid * (6. + umid * (4. + umid)) / (1. + umid)**4
+                < target_cdf,
+                (1. + 4. * umid) / (1. + umid)**4 > target)
+            ulo = numpy.where(below, umid, ulo)
+            uhi = numpy.where(below, uhi, umid)
+        rho = 2. * self.rho_star * (ulo + uhi)
+        # the end points
+        rho = numpy.where(value <= 0., lower, rho)
+        rho = numpy.where(value >= 1., upper, rho)
+        if rho.ndim == 0:
+            rho = float(rho)
+        return rho
+
+    @classmethod
+    def from_config(cls, cp, section, variable_args):
+        """Returns a distribution based on a configuration file. The
+        parameters for the distribution are retrieved from the section titled
+        "[`section`-`variable_args`]" in the config file. The bounds are given
+        with ``min-{param}`` and ``max-{param}`` (by default, the SNRs are
+        bounded by [0, inf)), and ``rho_star`` sets :math:`\\rho_*` (default
+        5).
+
+        Example:
+
+        .. code-block:: ini
+
+            [{section}-amp220_snr]
+            name = bayeswave_signal_snr
+            rho_star = 5
+            min-amp220_snr = 1
+            max-amp220_snr = 50
+
+        Parameters
+        ----------
+        cp : pycbc.workflow.WorkflowConfigParser
+            A parsed configuration file that contains the distribution
+            options.
+        section : str
+            Name of the section in the configuration file.
+        variable_args : str
+            The names of the parameters for this distribution, separated by
+            ``pycbc.VARARGS_DELIM``. These must appear in the "tag" part of
+            the section header.
+
+        Returns
+        -------
+        BayesWaveSignalSNR
+            A distribution instance.
+        """
+        return bounded.bounded_from_config(cls, cp, section, variable_args,
+                                           bounds_required=False)
