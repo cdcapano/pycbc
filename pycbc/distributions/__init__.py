@@ -33,7 +33,7 @@ from pycbc.distributions.sky_location import UniformSky, UniformDiskSky, FisherS
 from pycbc.distributions.uniform import Uniform
 from pycbc.distributions.uniform_log import UniformLog10
 from pycbc.distributions.spins import IndependentChiPChiEff
-from pycbc.distributions.qnm import UniformF0Tau
+from pycbc.distributions.qnm import UniformF0Tau, BayesWaveSignalSNR
 from pycbc.distributions.joint import JointDistribution
 from pycbc.distributions.external import External, DistributionFunctionFromFile
 from pycbc.distributions.fixedsamples import FixedSamples
@@ -57,6 +57,7 @@ distribs = {
     UniformDiskSky.name : UniformDiskSky,
     UniformLog10.name : UniformLog10,
     UniformF0Tau.name : UniformF0Tau,
+    BayesWaveSignalSNR.name : BayesWaveSignalSNR,
     External.name: External,
     DistributionFunctionFromFile.name: DistributionFunctionFromFile,
     FixedSamples.name: FixedSamples,
