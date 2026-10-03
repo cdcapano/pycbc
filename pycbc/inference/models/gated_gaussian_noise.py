@@ -1687,6 +1687,9 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
                  ref_phase=None, sample_snrs=False,
                  amp_names=None, fiducial_amp_value=1., ref_amp=None,
                  **kwargs):
+        # cache of the current waveforms, stacked into 2D arrays; see
+        # _stacked
+        self._current_wf_stacks = None
         # set up the boiler-plate attributes
         super().__init__(
             variable_params, data, low_frequency_cutoff, psds=psds,
@@ -1754,6 +1757,13 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
 
     def get_waveforms(self):
         r"""Generate the waveforms.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> modes -> (h_c, h_s), where
+            ``h_c`` (``h_s``) is the cosine (sine) term of the mode in the
+            detector.
         """
         if self._current_wfs is None:
             params = self.current_params.copy()
@@ -1761,21 +1771,41 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
             for amp in self.amp_names:
                 params[amp] = self.fiducial_amp_value
             # generate the cosine and sine terms
-            wfs = self.waveform_generator.generate(phases=self.phase_names, 
+            wfs = self.waveform_generator.generate(phases=self.phase_names,
                                                    ref_phase=self.ref_phase,
                                                    **params)
-            for det in wfs:
-                for mode in wfs[det]:
-                    hc, hs = wfs[det][mode]
-                    # make the same length as the data
-                    hc.resize(len(self.data[det]))
-                    hs.resize(len(self.data[det]))
-                    # apply high pass
-                    if self.highpass_waveforms:
-                        hc = highpass_fd(hc, self.highpass_waveforms)
-                        hs = highpass_fd(hs, self.highpass_waveforms)
-                    wfs[det][mode] = (hc, hs)
-            self._current_wfs = wfs
+            out = {}
+            stacks = {}
+            for det, modes in wfs.items():
+                # all of the terms are stored in a single
+                # (number of terms) x (number of frequencies) array, so
+                # that operations on them can be done all at once
+                names = list(modes.keys())
+                x0 = modes[names[0]][0]
+                nfreq = len(self.data[det])
+                stack = numpy.zeros((2*len(names), nfreq), dtype=x0.dtype)
+                for ii, mode in enumerate(names):
+                    for jj, x in enumerate(modes[mode]):
+                        # this is the same as resizing to the length of the
+                        # data
+                        n = min(len(x), nfreq)
+                        stack[2*ii+jj, :n] = x.numpy()[:n]
+                if self.highpass_waveforms:
+                    tlen = 2 * (nfreq - 1)
+                    stack *= highpass_response(
+                        tlen, 1. / (tlen * float(x0.delta_f)),
+                        self.highpass_waveforms)
+                    # same as highpass_fd
+                    stack[:, 0] = stack[:, 0].real
+                    stack[:, -1] = stack[:, -1].real
+                stacks[det] = stack
+                out[det] = {mode: tuple(
+                    FrequencySeries(stack[2*ii+jj], delta_f=x0.delta_f,
+                                    epoch=x0.epoch, copy=False)
+                    for jj in range(2))
+                    for ii, mode in enumerate(names)}
+            self._current_wf_stacks = (out, stacks)
+            self._current_wfs = out
             if self.ref_amp is not None:
                 mode_bools = [i in self.ref_amp for i in self.sampled_mode_names]
                 self.ref_mode_name = self.sampled_mode_names[mode_bools.index(True)]
