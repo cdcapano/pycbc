@@ -1864,15 +1864,31 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
         out = {}
         gated_stacks = {}
         for det, modes in wfs.items():
-            gatestartdelay, dgatedelay = gate_times[det]
+            gate = gate_times[det]
+            gatestartdelay, dgatedelay = gate
             # all of the series share the same gate, so gate them together
             names = list(modes.keys())
+            fdata = stacks[det]
+            # the data has the same gate, so if it hasn't been gated yet with
+            # this gate, gate it along with the waveforms; the result is
+            # stored to the same cache that get_gated_data uses
+            cache = self._gated_data.setdefault(det, {})
+            gate_data = gate not in cache
+            if gate_data:
+                fdata = numpy.concatenate(
+                    [fdata, self.data[det].numpy()[None, :]])
             x0 = modes[names[0]][0]
             gated = batch_gate_and_paint_fd_array(
-                stacks[det], float(x0.delta_f), float(x0.start_time),
+                fdata, float(x0.delta_f), float(x0.start_time),
                 gatestartdelay + dgatedelay/2, dgatedelay/2,
                 self._invpsds[det], paint_method=self.paint_method,
                 invmat=self.invert_covariance(det))
+            if gate_data:
+                d = self.data[det]
+                cache.clear()
+                cache[gate] = FrequencySeries(gated[-1], delta_f=d.delta_f,
+                                              epoch=d.epoch, copy=False)
+                gated = gated[:-1]
             gated_stacks[det] = gated
             out[det] = {mode: tuple(
                 FrequencySeries(gated[2*ii+jj], delta_f=x0.delta_f,
