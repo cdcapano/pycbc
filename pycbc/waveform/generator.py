@@ -1431,10 +1431,8 @@ class FDomainDetFrameTwoPhaseModesGenerator(BaseFDomainDetFrameGenerator):
             ulm_sin, vlm_sin = hlms_sin[mode]
             if isinstance(ulm_cos, TimeSeries):
                 df = self.current_params['delta_f']
-                ulm_cos = ulm_cos.to_frequencyseries(delta_f=df)
-                vlm_cos = vlm_cos.to_frequencyseries(delta_f=df)
-                ulm_sin = ulm_sin.to_frequencyseries(delta_f=df)
-                vlm_sin = vlm_sin.to_frequencyseries(delta_f=df)
+                ulm_cos, vlm_cos, ulm_sin, vlm_sin = _td_to_fd_batch(
+                    [ulm_cos, vlm_cos, ulm_sin, vlm_sin], df)
                 # time-domain waveforms will not be shifted so that the peak
                 # amplitude happens at the end of the time series (as they are
                 # for f-domain), so we add an additional shift to account for
