@@ -2060,10 +2060,15 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
         loglr = coeffs @ self._phase_terms
         # get the maxL phase
         maxlidx = loglr.argmax()
+        maxloglr = loglr[maxlidx]
         self._current_stats.maxl_phase = self.phases[maxlidx]
-        self._current_stats.maxl_logl = loglr[maxlidx] + lognl
-        # get the marginalized log likelihood
-        marglogl = special.logsumexp(loglr) + lognl \
+        self._current_stats.maxl_logl = maxloglr + lognl
+        # compute the marginalized log likelihood; this is the same as
+        # special.logsumexp(loglr), but is faster since we already have the
+        # max
+        loglr -= maxloglr
+        numpy.exp(loglr, out=loglr)
+        marglogl = maxloglr + numpy.log(loglr.sum()) + lognl \
             - numpy.log(self.phase_samples)
         return float(marglogl)
 
