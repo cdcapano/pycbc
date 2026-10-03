@@ -1890,6 +1890,14 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
         return ['maxl_phase', 'maxl_logl'] + \
             [f'scale_factor_{mode}' for mode in self.sampled_mode_names]
 
+    def _nowaveform_handler(self):
+        """Sets the extra stats to nan if no waveform was generated."""
+        setattr(self._current_stats, 'maxl_phase', numpy.nan)
+        for mode in self.sampled_mode_names:
+            setattr(self._current_stats, f'scale_factor_{mode}', numpy.nan)
+        setattr(self._current_stats, 'maxl_logl', -numpy.inf)
+        return -numpy.inf
+
     def _det_inner_products(self, det, wfs, gated_wfs, gated_data):
         r"""Computes the inner products in the given detector.
 
