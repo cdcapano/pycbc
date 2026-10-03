@@ -68,6 +68,24 @@ def _round_gate_time(time):
     return numpy.round(time / GATE_TIME_RESOLUTION) * GATE_TIME_RESOLUTION
 
 
+def _parse_angle(value):
+    """Converts an angle to a float.
+
+    The angle may be a number, or a string that is either a number or an
+    arithmetic expression of numbers and ``pi`` (e.g., ``'pi'``, ``'2*pi'``,
+    or ``'pi/2'``).
+    """
+    if not isinstance(value, str):
+        return float(value)
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    if not set(value.replace('pi', '')) <= set('0123456789.+-*/() e'):
+        raise ValueError(f'unrecognized angle {value!r}')
+    return float(eval(value, {'__builtins__': {}}, {'pi': numpy.pi}))
+
+
 class BaseGatedGaussian(BaseGaussianNoise):
     r"""Base model for gated gaussian.
 
@@ -2118,6 +2136,15 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
     more demanding of the two, since the antenna patterns vary as twice the
     polarization angle.
 
+    The range of the polarization grid can be changed with the
+    ``polarization_bounds`` argument, a ``(min, max)`` tuple, or a string
+    of the two separated by a space, in which ``pi`` may be used (e.g.,
+    ``polarization_bounds = 0 pi`` in a config file). The grid is uniform in
+    ``[min, max)``. Since the antenna patterns are periodic in the
+    polarization with period :math:`\pi`, ``[0, pi)`` gives the same
+    marginalized likelihood as the default ``[0, 2pi)``, with half the
+    points needed for the same resolution.
+
     As with :py:class:`GatedGaussianMultimodeMargPhase`, the optimal SNR of
     modes may be sampled instead of their amplitude by setting
     ``sample_snrs`` and listing the amplitude parameters in ``amp_names``.
@@ -2143,6 +2170,7 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                  high_frequency_cutoff=None, normalize=False,
                  static_params=None,
                  phase_samples=512, polarization_samples=512,
+                 polarization_bounds=None,
                  phase_names=None, ref_phase=None, sample_snrs=False,
                  amp_names=None, fiducial_amp_value=1., ref_amp=None,
                  **kwargs):
@@ -2184,7 +2212,19 @@ class GatedGaussianMultimodeMargPhasePol(BaseGatedGaussian):
                                      endpoint=False)
         # polarization marginalization parameters
         self.polarization_samples = int(polarization_samples)
-        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples,
+        if polarization_bounds is None:
+            polarization_bounds = (0., 2*numpy.pi)
+        elif isinstance(polarization_bounds, str):
+            polarization_bounds = polarization_bounds.split()
+        if len(polarization_bounds) != 2:
+            raise ValueError('polarization_bounds must have two values; got '
+                             f'{polarization_bounds}')
+        polmin, polmax = [_parse_angle(x) for x in polarization_bounds]
+        if not polmax > polmin:
+            raise ValueError('the upper polarization bound must be larger '
+                             'than the lower')
+        self.polarization_bounds = (polmin, polmax)
+        self.pol = numpy.linspace(polmin, polmax, self.polarization_samples,
                                   endpoint=False)
         # the phase dependence of the log likelihood ratio; this is a
         # 5 x phase_samples array of cos, sin, cos^2, sin^2, cos*sin

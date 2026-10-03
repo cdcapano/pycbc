@@ -447,6 +447,38 @@ class TestGatedMargPhasePol(unittest.TestCase):
         self.assertAlmostEqual(marglogl, self.marglogl, delta=1e-8)
         self.assertAlmostEqual(maxl, self.stats['maxl_logl'], delta=1e-8)
 
+    def test_polarization_bounds(self):
+        """Checks that marginalizing over polarizations in [0, pi) with half
+        as many points gives the same likelihood as the default [0, 2pi),
+        since the antenna patterns are periodic in polarization with period
+        pi."""
+        cp = self.config()
+        cp.set('model', 'polarization_bounds', '0 pi')
+        cp.set('model', 'polarization_samples',
+               str(self.model.polarization_samples // 2))
+        model = models.read_from_config(cp)
+        self.assertEqual(model.polarization_bounds, (0., numpy.pi))
+        numpy.testing.assert_array_equal(
+            model.pol, self.model.pol[:len(self.model.pol)//2])
+        model.update(**TEMPLATE_PARAMS)
+        self.assertAlmostEqual(model.loglikelihood, self.marglogl, delta=1e-8)
+        stats = model.current_stats
+        self.assertAlmostEqual(stats['maxl_logl'], self.stats['maxl_logl'],
+                               delta=1e-8)
+        self.assertTrue(0 <= stats['maxl_polarization'] < numpy.pi)
+        dpol = (stats['maxl_polarization']
+                - self.stats['maxl_polarization']) % numpy.pi
+        self.assertAlmostEqual(min(dpol, numpy.pi - dpol), 0., delta=1e-10)
+        # numbers and expressions of pi work too, and bad bounds are rejected
+        for bounds in [(0., numpy.pi), ('0', 'pi/1'), ('0.', '2*pi/2')]:
+            cp.set('model', 'polarization_bounds', ' '.join(map(str, bounds)))
+            self.assertEqual(models.read_from_config(cp).polarization_bounds,
+                             (0., numpy.pi))
+        for bad in ['pi 0', '0', 'import os']:
+            cp.set('model', 'polarization_bounds', bad)
+            with self.assertRaises(ValueError):
+                models.read_from_config(cp)
+
     def test_multimargphase_brute_pol(self):
         """Marginalizes gated_gaussian_multimargphase over polarization."""
         cp = self.config()
