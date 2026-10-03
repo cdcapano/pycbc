@@ -1698,9 +1698,10 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
                  ref_phase=None, sample_snrs=False,
                  snr_mode_map=None, fiducial_amp_value=1.,
                  ref_mode=False, **kwargs):
-        # cache of the current waveforms, stacked into 2D arrays; see
-        # _stacked
+        # caches of the current waveforms and gated waveforms, stacked into
+        # 2D arrays; see _stacked
         self._current_wf_stacks = None
+        self._current_gated_stacks = None
         # set up the boiler-plate attributes
         super().__init__(
             variable_params, data, low_frequency_cutoff, psds=psds,
@@ -1851,33 +1852,52 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
 
     def get_gated_waveforms(self):
         r"""Generate the gated waveforms.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> modes -> gated (h_c, h_s).
         """
         wfs = self.get_waveforms()
-        out = {det: {} for det in wfs}
-        # apply the gate
-        for det in wfs:
-            for mode in wfs[det]:
-                hc, hs = wfs[det][mode]
-                hct = hc.to_timeseries()
-                hst = hs.to_timeseries()
-                invpsd = self._invpsds[det]
-                gate_times = self.get_gate_times()
-                gatestartdelay, dgatedelay = gate_times[det]
-                invmat = self.invert_covariance(det)
-                hct = hct.gate(gatestartdelay + dgatedelay/2,
-                               window=dgatedelay/2, copy=False,
-                               invpsd=invpsd, method='paint',
-                               paint_method=self.paint_method,
-                               paint_invmat=invmat)
-                hst = hst.gate(gatestartdelay + dgatedelay/2,
-                               window=dgatedelay/2, copy=False,
-                               invpsd=invpsd, method='paint',
-                               paint_method=self.paint_method,
-                               paint_invmat=invmat)
-                hc = hct.to_frequencyseries()
-                hs = hst.to_frequencyseries()
-                out[det][mode] = (hc, hs)
+        stacks = self._stacked(wfs)
+        gate_times = self.get_gate_times()
+        out = {}
+        gated_stacks = {}
+        for det, modes in wfs.items():
+            gatestartdelay, dgatedelay = gate_times[det]
+            # all of the series share the same gate, so gate them together
+            names = list(modes.keys())
+            x0 = modes[names[0]][0]
+            gated = batch_gate_and_paint_fd_array(
+                stacks[det], float(x0.delta_f), float(x0.start_time),
+                gatestartdelay + dgatedelay/2, dgatedelay/2,
+                self._invpsds[det], paint_method=self.paint_method,
+                invmat=self.invert_covariance(det))
+            gated_stacks[det] = gated
+            out[det] = {mode: tuple(
+                FrequencySeries(gated[2*ii+jj], delta_f=x0.delta_f,
+                                epoch=x0.epoch, copy=False)
+                for jj in range(2))
+                for ii, mode in enumerate(names)}
+        self._current_gated_stacks = (out, gated_stacks)
         return out
+
+    def _stacked(self, wfs):
+        """Returns the terms of the given waveforms, stacked into a
+        ``(number of terms) x (number of frequencies)`` array for each
+        detector.
+
+        If the waveforms are the ones that were created by
+        :py:meth:`get_waveforms` or :py:meth:`get_gated_waveforms`, the
+        arrays that were stored when they were created are returned.
+        Otherwise, the arrays are created.
+        """
+        for cached in (self._current_wf_stacks, self._current_gated_stacks):
+            if cached is not None and cached[0] is wfs:
+                return cached[1]
+        return {det: numpy.array([x.numpy() for terms in modes.values()
+                                  for x in terms])
+                for det, modes in wfs.items()}
 
     @property
     def _extra_stats(self):
