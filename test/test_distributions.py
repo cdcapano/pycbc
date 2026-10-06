@@ -262,6 +262,68 @@ class TestDistributions(unittest.TestCase):
                 array, one_at_a_time, rtol=0., atol=0.,
                 err_msg="UniformF0Tau.{} disagrees with the one-point "
                         "call".format(name))
+    def test_bayeswave_signal_snr(self):
+        """Checks the BayesWave signal SNR prior against Eq. 14 of
+        arXiv:2011.09494, both untruncated and truncated, and checks its
+        inverse cdf and random draws against the analytic cdf."""
+        from scipy import stats
+        from scipy.integrate import quad
+
+        def logpdf_eq14(rho, rho_star):
+            return (numpy.log(3. * rho / (4. * rho_star**2))
+                    - 5. * numpy.log(1. + rho / (4. * rho_star)))
+
+        def cdf(rho, rho_star):
+            u = numpy.asarray(rho, dtype=float) / (4. * rho_star)
+            with numpy.errstate(invalid='ignore'):
+                sf = (1. + 4. * u) / (1. + u)**4
+            return 1. - numpy.where(numpy.isinf(u), 0., sf)
+
+        for rho_star in [3., 5.]:
+            for bounds in [None, (1., 50.)]:
+                dist = distributions.BayesWaveSignalSNR(rho_star=rho_star,
+                                                        snr=bounds)
+                lo, hi = (0., numpy.inf) if bounds is None else bounds
+                norm = cdf(hi, rho_star) - cdf(lo, rho_star)
+                # the pdf matches Eq. 14, renormalized to the bounds (the
+                # upper bound is open)
+                rho = numpy.linspace(max(lo, 0.01), min(hi, 200.), 500,
+                                     endpoint=False)
+                logpdf = numpy.array([dist.logpdf(snr=r) for r in rho])
+                expected = logpdf_eq14(rho, rho_star) - numpy.log(norm)
+                numpy.testing.assert_allclose(logpdf, expected, rtol=0,
+                                              atol=1e-12)
+                pdf = numpy.array([dist.pdf(snr=r) for r in rho])
+                numpy.testing.assert_allclose(pdf, numpy.exp(expected),
+                                              rtol=1e-12)
+                # and integrates to 1
+                integral = quad(lambda r: dist.pdf(snr=r), lo, hi,
+                                limit=200)[0]
+                self.assertAlmostEqual(integral, 1., delta=1e-6)
+                # it is zero outside the bounds
+                if bounds is not None:
+                    self.assertEqual(dist.logpdf(snr=lo / 2.), -numpy.inf)
+                    self.assertEqual(dist.logpdf(snr=2. * hi), -numpy.inf)
+                # the inverse cdf inverts the cdf, for arrays and scalars
+                u = numpy.concatenate([[0., 1e-12, 0.5, 1. - 1e-12],
+                                       numpy.random.uniform(size=1000)])
+                rho_u = dist.cdfinv(snr=u)['snr']
+                got = (cdf(rho_u, rho_star) - cdf(lo, rho_star)) / norm
+                numpy.testing.assert_allclose(got, u, rtol=0, atol=1e-10)
+                self.assertTrue((rho_u >= lo).all() and (rho_u <= hi).all())
+                scalar = dist.cdfinv(snr=0.3)['snr']
+                self.assertIsInstance(scalar, float)
+                self.assertAlmostEqual(
+                    (cdf(scalar, rho_star) - cdf(lo, rho_star)) / norm, 0.3,
+                    delta=1e-12)
+                self.assertEqual(dist.cdfinv(snr=1.)['snr'], hi)
+                self.assertEqual(dist.cdfinv(snr=0.)['snr'], lo)
+                # random draws follow the cdf
+                draws = dist.rvs(size=100000)['snr']
+                pvalue = stats.kstest(
+                    draws, lambda r: (cdf(r, rho_star) - cdf(lo, rho_star))
+                    / norm).pvalue
+                self.assertGreater(pvalue, 1e-3)
 
     def test_solid_angle(self):
         """ The uniform solid angle and uniform sky position distributions
