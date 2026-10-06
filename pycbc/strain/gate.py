@@ -279,21 +279,60 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
         The gated and in-painted series, in the same order as ``htildes``.
     """
     h0 = htildes[0]
-    nfreq = len(h0)
-    delta_f = float(h0.delta_f)
+    fdata = batch_gate_and_paint_fd_array(
+        numpy.array([h.numpy() for h in htildes]), float(h0.delta_f),
+        float(h0.start_time), time, window, invpsd,
+        paint_method=paint_method, invmat=invmat)
+    return [FrequencySeries(fd, delta_f=h.delta_f, epoch=h.epoch, copy=False)
+            for fd, h in zip(fdata, htildes)]
+
+
+def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
+                                  invpsd, paint_method='toeplitz',
+                                  invmat=None):
+    """Gates and in-paints several frequency series stored in a 2D array.
+
+    This is the same as :py:func:`batch_gate_and_paint_fd`, but takes and
+    returns the frequency series as a ``(number of series) x (number of
+    frequencies)`` array.
+
+    Parameters
+    ----------
+    fdata : numpy.ndarray
+        The frequency series to gate, one per row. This is not modified.
+    delta_f : float
+        The frequency spacing of the series.
+    start_time : float
+        The start time (epoch) of the series.
+    time : float
+        Central time of the gate in seconds.
+    window : float
+        Half-length in seconds of the gate.
+    invpsd : FrequencySeries
+        The inverse of the PSD. Must be the same length as the series.
+    paint_method : {'toeplitz', 'matmul'}
+        Which method to use for in-painting the gated region.
+    invmat : array, optional
+        The inverted covariance matrix to use if ``paint_method='matmul'``.
+        If None, it will be calculated from ``invpsd``.
+
+    Returns
+    -------
+    numpy.ndarray :
+        The gated and in-painted series, in the same order as ``fdata``.
+    """
+    nfreq = fdata.shape[1]
     tlen = 2 * (nfreq - 1)
     delta_t = 1. / (tlen * delta_f)
-    start_time = float(h0.start_time)
     # same as TimeSeries.get_gate_indices
     lindex = max(int((time - window - start_time) / delta_t), 0)
     rindex = min(int((time + window - start_time) / delta_t), tlen)
     # time shift so that the end of the gate lands on a sample, as is done
     # in TimeSeries.gate
     offset = start_time + rindex * delta_t - (time + window)
-    fdata = numpy.array([h.numpy() for h in htildes])
     if offset != 0:
         shift = numpy.exp(-2j * numpy.pi * offset
-                          * h0.sample_frequencies.numpy())
+                          * (numpy.arange(nfreq) * delta_f))
         fdata = fdata * shift
     # to the time domain; tlen * delta_f * delta_t = 1 converts between
     # numpy's and pycbc's FFT normalizations
@@ -302,19 +341,27 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
     # the over-whitened gated data
     owhgated = numpy.fft.irfft(numpy.fft.rfft(tdata, axis=1)
                                * invpsd.numpy(), n=tlen, axis=1)
-    owhgated = owhgated[:, lindex:rindex].T
-    # remove the projection into the null space
+    owhgated = owhgated[:, lindex:rindex]
+    # remove the projection into the null space; the projection is computed
+    # as a (number of series) x (gate length) array
     if paint_method == 'toeplitz':
         tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
         proj = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
-                                     owhgated)
+                                     owhgated.T).T
     elif paint_method == 'matmul':
         if invmat is None:
             invmat = invert_covariance(invpsd, lindex, rindex)
-        proj = invmat @ owhgated
+        # BLAS is several times faster multiplying the (thin) gated series by
+        # a C-ordered matrix than by a Fortran-ordered one; the matrix
+        # returned by invert_covariance is Fortran ordered, so its transpose
+        # is C ordered
+        if invmat.flags.c_contiguous:
+            proj = (invmat @ owhgated.T).T
+        else:
+            proj = owhgated @ invmat.T
     else:
         raise ValueError(f'Unrecognized paint_method input {paint_method}')
-    tdata[:, lindex:rindex] -= proj.T
+    tdata[:, lindex:rindex] -= proj
     # back to the frequency domain
     fdata = numpy.fft.rfft(tdata, axis=1) * delta_t
     if offset != 0:
@@ -323,5 +370,4 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
         # the DC and Nyquist bins real after undoing the time shift
         fdata[:, 0] = fdata[:, 0].real
         fdata[:, -1] = fdata[:, -1].real
-    return [FrequencySeries(fd, delta_f=h.delta_f, epoch=h.epoch)
-            for fd, h in zip(fdata, htildes)]
+    return fdata
