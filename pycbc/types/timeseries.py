@@ -697,10 +697,12 @@ class TimeSeries(Array):
         paint_method: str
             Which method to use for inpainting the gated region if
             method='paint'. If 'toeplitz', use a Toeplitz solver. If 'matmul',
-            use explicit matrix inversion and multiplication.
-        paint_invmat: array
+            use explicit matrix inversion and multiplication. If 'gs', apply
+            the inverse with the Gohberg-Semencul formula.
+        paint_invmat: array or ToeplitzInverse
             The uninverted covariance matrix to use to calculate inpainting if
-            paint_method='matmul'. If None (default), calculate from given
+            paint_method='matmul', or the ToeplitzInverse to use if
+            paint_method='gs'. If None (default), calculate from given
             invpsd.
 
         Returns
@@ -715,8 +717,9 @@ class TimeSeries(Array):
         elif method == 'paint':
             # Uses the hole-filling method of
             # https://arxiv.org/pdf/1908.05644.pdf
-            from pycbc.strain.gate import (gate_and_paint, 
-                                           gate_and_paint_matmul)
+            from pycbc.strain.gate import (gate_and_paint,
+                                           gate_and_paint_matmul,
+                                           gate_and_paint_gs)
             from pycbc.waveform.utils import apply_fd_time_shift
             if invpsd is None:
                 # These are some bare minimum settings, normally you
@@ -731,6 +734,9 @@ class TimeSeries(Array):
                 elif paint_method == 'matmul':
                     return gate_and_paint_matmul(data, lindex, rindex, invpsd,
                                                  invmat=paint_invmat, copy=False)
+                elif paint_method == 'gs':
+                    return gate_and_paint_gs(data, lindex, rindex, invpsd,
+                                             invmat=paint_invmat, copy=False)
                 else:
                     raise ValueError(f'Unrecognized paint_method input {paint_method}')
             else:
@@ -744,6 +750,9 @@ class TimeSeries(Array):
                 elif paint_method == 'matmul':
                     data = gate_and_paint_matmul(data, lindex, rindex, invpsd,
                                                  invmat=paint_invmat, copy=False)
+                elif paint_method == 'gs':
+                    data = gate_and_paint_gs(data, lindex, rindex, invpsd,
+                                             invmat=paint_invmat, copy=False)
                 else:
                     raise ValueError(f'Unrecognized paint_method input {paint_method}')
                 # shift back to the original time

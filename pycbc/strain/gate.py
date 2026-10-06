@@ -17,6 +17,7 @@
 """
 
 import numpy
+import scipy.fft
 from scipy import linalg
 from pycbc.types import FrequencySeries
 from . import strain
@@ -203,6 +204,285 @@ def invert_covariance(invpsd, lindex, rindex):
     invmat = linalg.inv(mat)
     return invmat
 
+class ToeplitzInverse(object):
+    """Applies the inverse of a symmetric, positive-definite Toeplitz matrix.
+
+    This uses the Gohberg-Semencul formula, which writes the inverse of an
+    ``n x n`` symmetric Toeplitz matrix :math:`T` in terms of the first column
+    :math:`x = T^{-1} e_0` of the inverse:
+
+    .. math::
+
+        T^{-1} = \\frac{1}{x_0}\\left[L(x)L(x)^T - L(ZJx)L(ZJx)^T\\right],
+
+    where :math:`L(v)` is the lower-triangular Toeplitz matrix with first
+    column :math:`v`, :math:`J` reverses the order of a vector, and :math:`Z`
+    shifts it down by one element. Since products with triangular Toeplitz
+    matrices are convolutions, :math:`T^{-1}` can be applied with FFTs in
+    :math:`O(n \\log n)` operations, rather than the :math:`O(n^2)` needed
+    for a product with the explicit inverse. Only the (real) first column
+    needs to be stored. It is obtained with the Levinson recursion (which takes
+    :math:`O(n^2)` operations and :math:`O(n)` memory), followed by a step
+    of iterative refinement, which brings the residual down to round-off.
+
+    Parameters
+    ----------
+    col : array
+        The first column of the Toeplitz matrix.
+    refinement_steps : int, optional
+        The number of steps of iterative refinement of the first column of
+        the inverse. Default is 1, which is enough to bring the residual down
+        to round-off.
+    first_column : array, optional
+        An estimate of the first column of the inverse, e.g., from
+        :py:func:`levinson_first_columns`. If provided, it is used as the
+        starting point for the iterative refinement rather than solving for
+        it with the Levinson recursion.
+    """
+    def __init__(self, col, refinement_steps=1, first_column=None):
+        col = numpy.asarray(col).real
+        n = len(col)
+        self.n = n
+        # zero padding to at least 2n - 1 makes the circular convolutions
+        # linear
+        self.nfft = scipy.fft.next_fast_len(2*n - 1, real=True)
+        e0 = numpy.zeros(n)
+        e0[0] = 1.
+        if first_column is None:
+            x = linalg.solve_toeplitz(col, e0)
+        else:
+            x = numpy.asarray(first_column, dtype=float)
+            if len(x) != n:
+                raise ValueError('first_column must have the same length as '
+                                 'col')
+        self._set_column(x)
+        # iterative refinement; T is applied as a circular convolution with
+        # the symmetric extension of its first column
+        fcol = scipy.fft.rfft(numpy.concatenate(
+            [col, numpy.zeros(self.nfft - 2*n + 1), col[:0:-1]]))
+        for _ in range(refinement_steps):
+            resid = e0 - scipy.fft.irfft(fcol * scipy.fft.rfft(x, self.nfft),
+                                         self.nfft)[:n]
+            x = x + self.apply(resid)
+            self._set_column(x)
+
+    def _set_column(self, x):
+        """Sets the first column of the inverse.
+
+        Only the (real) first column is stored; the FFTs of it that are
+        needed to apply the inverse are computed when it is applied. This
+        halves the memory needed compared to storing the FFTs.
+        """
+        self.x = numpy.array(x, dtype=float)
+
+    @property
+    def x0(self):
+        """The first element of the first column of the inverse."""
+        return self.x[0]
+
+    def _column_ffts(self):
+        """The FFTs of the first column of the inverse, x, and of ZJx.
+
+        Returns
+        -------
+        fx : numpy.ndarray
+            The FFT of x (zero padded to ``nfft``).
+        fzjx : numpy.ndarray
+            The FFT of ZJx (zero padded to ``nfft``), where J reverses x and
+            Z shifts it down by one element.
+        """
+        cols = numpy.zeros((2, self.n))
+        cols[0] = self.x
+        cols[1, 1:] = self.x[:0:-1]
+        fcols = scipy.fft.rfft(cols, self.nfft, axis=-1)
+        return fcols[0], fcols[1]
+
+    def apply(self, b):
+        """Returns :math:`T^{-1} b` for every row :math:`b` of ``b``.
+
+        Parameters
+        ----------
+        b : array
+            A ``(number of vectors) x n`` array, or a single vector of length
+            ``n``.
+
+        Returns
+        -------
+        numpy.ndarray :
+            Array with the same shape as ``b``.
+        """
+        n = self.n
+        nfft = self.nfft
+        fx, fzjx = self._column_ffts()
+        # L(v)^T y is the reverse of L(v) applied to the reversed y
+        fb = scipy.fft.rfft(b[..., ::-1], nfft, axis=-1)
+        r1 = scipy.fft.irfft(fb * fx, nfft, axis=-1)[..., n-1::-1]
+        r2 = scipy.fft.irfft(fb * fzjx, nfft, axis=-1)[..., n-1::-1]
+        out = scipy.fft.irfft(scipy.fft.rfft(r1, nfft, axis=-1) * fx
+                              - scipy.fft.rfft(r2, nfft, axis=-1) * fzjx,
+                              nfft, axis=-1)[..., :n]
+        out /= self.x0
+        return out
+
+
+def levinson_first_columns(col, sizes):
+    """Returns the first column of the inverse of several leading blocks of a
+    symmetric, positive-definite Toeplitz matrix.
+
+    The ``k x k`` leading block of a Toeplitz matrix is the Toeplitz matrix
+    with first column ``col[:k]``. The Levinson-Durbin recursion finds the
+    first column :math:`f_k` of the inverse of each block from that of the
+    previous one:
+
+    .. math::
+
+        f_{k+1} = \\frac{1}{1 - \\epsilon_k^2}\\left(
+            \\begin{bmatrix} f_k \\\\ 0 \\end{bmatrix} - \\epsilon_k
+            \\begin{bmatrix} 0 \\\\ J f_k \\end{bmatrix}\\right),
+        \\quad \\epsilon_k = \\sum_{i=0}^{k-1} c_{k-i} f_k[i],
+
+    where :math:`J` reverses the order of a vector. The columns for all of
+    the requested sizes are therefore obtained in a single pass, which takes
+    :math:`O(n^2)` operations for the largest size :math:`n`; this is the
+    same cost as solving for the largest size alone.
+
+    Parameters
+    ----------
+    col : array
+        The first column of the Toeplitz matrix. Must be at least as long as
+        the largest size.
+    sizes : iterable of int
+        The sizes of the leading blocks to get the inverses of.
+
+    Returns
+    -------
+    dict :
+        Dictionary of size -> first column of the inverse of the leading
+        block of that size.
+    """
+    col = numpy.asarray(col).real
+    sizes = set(int(k) for k in sizes)
+    nmax = max(sizes)
+    if nmax > len(col):
+        raise ValueError('col is shorter than the largest size')
+    out = {}
+    # the recursion alternates between two buffers to avoid allocating new
+    # arrays at every step
+    fbuf = numpy.zeros(nmax)
+    gbuf = numpy.zeros(nmax)
+    fbuf[0] = 1. / col[0]
+    if 1 in sizes:
+        out[1] = fbuf[:1].copy()
+    for k in range(1, nmax):
+        f = fbuf[:k]
+        eps = numpy.dot(col[k:0:-1], f)
+        g = gbuf[:k+1]
+        g[:k] = f
+        g[k] = 0.
+        g[1:] -= eps * f[::-1]
+        g /= 1. - eps*eps
+        fbuf, gbuf = gbuf, fbuf
+        if k+1 in sizes:
+            out[k+1] = fbuf[:k+1].copy()
+    return out
+
+
+def toeplitz_inverses(invpsd, sizes, refinement_steps=1):
+    """Returns :py:class:`ToeplitzInverse` of the covariance matrix for
+    several gate sizes.
+
+    This gives the same result as calling :py:func:`toeplitz_inverse` for
+    each size, but finds all of the inverses with a single pass of the
+    Levinson-Durbin recursion (see :py:func:`levinson_first_columns`), which
+    is much faster when there are many sizes.
+
+    Parameters
+    ----------
+    invpsd : FrequencySeries
+        The inverse of the PSD.
+    sizes : iterable of int
+        The gate sizes (``rindex - lindex``) to get the inverses for.
+    refinement_steps : int, optional
+        The number of steps of iterative refinement to apply to each
+        inverse. Default is 1.
+
+    Returns
+    -------
+    dict :
+        Dictionary of size -> :py:class:`ToeplitzInverse`.
+    """
+    tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
+    col = tdfilter.numpy().real
+    columns = levinson_first_columns(col, sizes)
+    return {k: ToeplitzInverse(col[:k], refinement_steps=refinement_steps,
+                               first_column=x)
+            for k, x in columns.items()}
+
+
+def toeplitz_inverse(invpsd, lindex, rindex):
+    """Returns a :py:class:`ToeplitzInverse` of the covariance matrix.
+
+    This is the same (uninverted) covariance matrix that is explicitly
+    inverted by :py:func:`invert_covariance`.
+
+    Parameters
+    ----------
+    invpsd : FrequencySeries
+        The inverse of the PSD.
+    lindex : int
+        The start index of the gate.
+    rindex : int
+        The end index of the gate.
+
+    Returns
+    -------
+    ToeplitzInverse :
+        Object that applies the inverse of the matrix.
+    """
+    tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
+    return ToeplitzInverse(tdfilter[:(rindex-lindex)].numpy())
+
+
+def gate_and_paint_gs(data, lindex, rindex, invpsd, invmat=None, copy=True):
+    """Gates and in-paints data using the Gohberg-Semencul formula.
+
+    This gives the same result as :py:func:`gate_and_paint_matmul`, but
+    uses a :py:class:`ToeplitzInverse` rather than the explicit inverse.
+
+    Parameters
+    ----------
+    data : TimeSeries
+        The data to gate.
+    lindex : int
+        The start index of the gate.
+    rindex : int
+        The end index of the gate.
+    invpsd : FrequencySeries
+        The inverse of the PSD.
+    invmat : ToeplitzInverse, optional
+        The inverse to use. If None, calculate on function call.
+    copy : bool, optional
+        Copy the data before applying the gate. Otherwise, the gate will
+        be applied in-place. Default is True.
+
+    Returns
+    -------
+    TimeSeries :
+        The gated and in-painted time series.
+    """
+    if copy:
+        data = data.copy()
+    data[lindex:rindex] = 0
+    # get the over-whitened gated data
+    owhgated_data = (data.to_frequencyseries() * invpsd).to_timeseries()
+    if invmat is None:
+        invmat = toeplitz_inverse(invpsd, lindex, rindex)
+    # remove the projection into the null space
+    proj = invmat.apply(owhgated_data.numpy()[lindex:rindex])
+    data[lindex:rindex] -= proj
+    return data
+
+
 def gate_and_paint_matmul(data, lindex, rindex, invpsd, invmat=None, copy=True):
     """Gates and in-paints data using explicit matrix multiplication.
 
@@ -267,10 +547,13 @@ def batch_gate_and_paint_fd(htildes, time, window, invpsd,
         Half-length in seconds of the gate.
     invpsd : FrequencySeries
         The inverse of the PSD. Must be the same length as the series.
-    paint_method : {'toeplitz', 'matmul'}
-        Which method to use for in-painting the gated region.
-    invmat : array, optional
-        The inverted covariance matrix to use if ``paint_method='matmul'``.
+    paint_method : {'toeplitz', 'matmul', 'gs'}
+        Which method to use for in-painting the gated region. The ``'gs'``
+        method applies the inverse of the covariance matrix with the
+        Gohberg-Semencul formula; see :py:class:`ToeplitzInverse`.
+    invmat : array or ToeplitzInverse, optional
+        The inverted covariance matrix to use if ``paint_method='matmul'``,
+        or the :py:class:`ToeplitzInverse` to use if ``paint_method='gs'``.
         If None, it will be calculated from ``invpsd``.
 
     Returns
@@ -310,10 +593,13 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
         Half-length in seconds of the gate.
     invpsd : FrequencySeries
         The inverse of the PSD. Must be the same length as the series.
-    paint_method : {'toeplitz', 'matmul'}
-        Which method to use for in-painting the gated region.
-    invmat : array, optional
-        The inverted covariance matrix to use if ``paint_method='matmul'``.
+    paint_method : {'toeplitz', 'matmul', 'gs'}
+        Which method to use for in-painting the gated region. The ``'gs'``
+        method applies the inverse of the covariance matrix with the
+        Gohberg-Semencul formula; see :py:class:`ToeplitzInverse`.
+    invmat : array or ToeplitzInverse, optional
+        The inverted covariance matrix to use if ``paint_method='matmul'``,
+        or the :py:class:`ToeplitzInverse` to use if ``paint_method='gs'``.
         If None, it will be calculated from ``invpsd``.
 
     Returns
@@ -330,24 +616,35 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
     # time shift so that the end of the gate lands on a sample, as is done
     # in TimeSeries.gate
     offset = start_time + rindex * delta_t - (time + window)
+    # the time shift is applied to the over-whitening filter and to the
+    # correction, rather than to the series, since the output is the
+    # series minus the (unshifted) correction
     if offset != 0:
         shift = numpy.exp(-2j * numpy.pi * offset
                           * (numpy.arange(nfreq) * delta_f))
-        fdata = fdata * shift
-    # to the time domain; tlen * delta_f * delta_t = 1 converts between
-    # numpy's and pycbc's FFT normalizations
-    tdata = numpy.fft.irfft(fdata, n=tlen, axis=1) * (tlen * delta_f)
-    tdata[:, lindex:rindex] = 0
-    # the over-whitened gated data
-    owhgated = numpy.fft.irfft(numpy.fft.rfft(tdata, axis=1)
-                               * invpsd.numpy(), n=tlen, axis=1)
-    owhgated = owhgated[:, lindex:rindex]
-    # remove the projection into the null space; the projection is computed
-    # as a (number of series) x (gate length) array
+        owhfilter = shift * invpsd.numpy()
+    else:
+        shift = None
+        owhfilter = invpsd.numpy()
+    # Gating and in-painting a series v gives v' = z - E T^{-1} (K z)_g,
+    # where z is v with the gated samples zeroed, K is the over-whitening
+    # operator (a circulant matrix), (.)_g takes the samples in the gate,
+    # E puts a vector of gate samples back into a full-length series, and
+    # T = K_gg is the (Toeplitz) matrix that is inverted by the in-painting
+    # methods. Since (K z)_g = (K v)_g - T v_g, this simplifies to
+    # v' = v - E T^{-1} (K v)_g. This only needs the over-whitened
+    # (ungated) series in the gate, and an FFT of the correction, rather
+    # than the FFTs to the time domain and back of the zeroed series.
+    # Note that tlen * delta_f * delta_t = 1 converts between numpy's and
+    # pycbc's FFT normalizations.
+    owh = numpy.fft.irfft(fdata * owhfilter, n=tlen, axis=1)
+    owh = owh[:, lindex:rindex] * (tlen * delta_f)
+    # apply T^{-1} to get the correction in the gate as a
+    # (number of series) x (gate length) array
     if paint_method == 'toeplitz':
         tdfilter = invpsd.astype('complex').to_timeseries() * invpsd.delta_t
-        proj = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
-                                     owhgated.T).T
+        corr = linalg.solve_toeplitz(tdfilter[:(rindex - lindex)].numpy(),
+                                     owh.T).T
     elif paint_method == 'matmul':
         if invmat is None:
             invmat = invert_covariance(invpsd, lindex, rindex)
@@ -356,18 +653,33 @@ def batch_gate_and_paint_fd_array(fdata, delta_f, start_time, time, window,
         # returned by invert_covariance is Fortran ordered, so its transpose
         # is C ordered
         if invmat.flags.c_contiguous:
-            proj = (invmat @ owhgated.T).T
+            corr = (invmat @ owh.T).T
         else:
-            proj = owhgated @ invmat.T
+            corr = owh @ invmat.T
+    elif paint_method == 'gs':
+        if invmat is None:
+            invmat = toeplitz_inverse(invpsd, lindex, rindex)
+        corr = invmat.apply(owh)
     else:
         raise ValueError(f'Unrecognized paint_method input {paint_method}')
-    tdata[:, lindex:rindex] -= proj
-    # back to the frequency domain
-    fdata = numpy.fft.rfft(tdata, axis=1) * delta_t
-    if offset != 0:
-        fdata *= shift.conj()
-        # TimeSeries.gate returns a time series, which is real; this makes
-        # the DC and Nyquist bins real after undoing the time shift
-        fdata[:, 0] = fdata[:, 0].real
-        fdata[:, -1] = fdata[:, -1].real
-    return fdata
+    # subtract the correction in the frequency domain
+    tcorr = numpy.zeros((fdata.shape[0], tlen))
+    tcorr[:, lindex:rindex] = corr
+    fcorr = numpy.fft.rfft(tcorr, axis=1)
+    fcorr *= delta_t
+    if shift is not None:
+        fcorr *= shift.conj()
+        # the Nyquist term of the shifted series is made real before the
+        # correction is subtracted (since the series is real in the time
+        # domain); this is the same as what is done by TimeSeries.gate
+        nyq = fdata[:, -1] * shift[-1]
+        nyq = (nyq.real - fcorr[:, -1] * shift[-1]) * shift[-1].conj()
+    out = fdata - fcorr
+    # TimeSeries.gate returns a time series, which is real; this makes the
+    # DC and Nyquist bins real
+    out[:, 0] = out[:, 0].real
+    if shift is not None:
+        out[:, -1] = nyq.real
+    else:
+        out[:, -1] = out[:, -1].real
+    return out
