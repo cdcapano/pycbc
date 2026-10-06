@@ -192,16 +192,28 @@ class BaseGatedGaussian(BaseGaussianNoise):
             p = self.psds[det]
         except KeyError:
             raise ValueError("No psd set for detector %s" % det)
+        # the covariance matrix is the Toeplitz matrix with first column
+        # Rss/2; only the (small) truncated matrices needed for the fit are
+        # constructed from it
         Rss = self._Rss[det]
-        cov = scipy.linalg.toeplitz(Rss/2) # full covariance matrix
-        samples, fit = self.logdet_fit(cov, p)
+        samples, fit = self.logdet_fit(Rss.numpy()/2, p)
         self._cov_samples[det] = samples
         self._cov_regressions[det] = fit
         return
 
-    def logdet_fit(self, cov, p):
+    def logdet_fit(self, cov_col, p):
         """Construct a linear regression from a sample of truncated covariance
         matrices.
+
+        Parameters
+        ----------
+        cov_col : array
+            The first column of the (Toeplitz) covariance matrix. The
+            truncated matrices are constructed directly from it, so that the
+            full covariance matrix, which can be very large, is never
+            constructed.
+        p : FrequencySeries
+            The PSD.
 
         Returns the sample points used for linear fit generation as well as the
         linear fit parameters.
@@ -211,7 +223,7 @@ class BaseGatedGaussian(BaseGaussianNoise):
         sample_dets = []
         # set sizes of sample matrices; ensure exact calculations are only on
         # small matrices
-        s = cov.shape[0]
+        s = len(cov_col)
         max_size = 8192
         if s > max_size:
             sample_sizes = [s, max_size, max_size//2, max_size//4]
@@ -228,8 +240,17 @@ class BaseGatedGaussian(BaseGaussianNoise):
                 gate_size = s - i
                 start = (s - gate_size)//2
                 end = start + gate_size
-                tc = numpy.delete(numpy.delete(cov, slice(start, end), 0),
-                                  slice(start, end), 1)
+                # the covariance matrix with rows and columns start:end
+                # removed; element (j, k) of the full matrix is
+                # cov_col[j-k] for j >= k, and the conjugate of cov_col[k-j]
+                # otherwise (as for scipy.linalg.toeplitz)
+                idx = numpy.concatenate([numpy.arange(start),
+                                         numpy.arange(end, s)])
+                lag = idx[:, None] - idx[None, :]
+                tc = cov_col[abs(lag)]
+                if numpy.iscomplexobj(tc):
+                    tc = numpy.where(lag >= 0, tc, tc.conj())
+                del lag
                 ld = numpy.linalg.slogdet(tc)[1]
                 sample_dets.append(ld)
         # generate a linear regression using the four points (size, logdet)
