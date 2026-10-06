@@ -25,7 +25,6 @@ import scipy
 import shlex
 from scipy import special
 import warnings
-from copy import deepcopy
 
 from pycbc.types import FrequencySeries
 from pycbc.detector import Detector
@@ -1698,7 +1697,10 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
                  ref_phase=None, sample_snrs=False,
                  snr_mode_map=None, fiducial_amp_value=1.,
                  ref_mode=False, **kwargs):
-
+        # caches of the current waveforms and gated waveforms, stacked into
+        # 2D arrays; see _stacked
+        self._current_wf_stacks = None
+        self._current_gated_stacks = None
         # set up the boiler-plate attributes
         super().__init__(
             variable_params, data, low_frequency_cutoff, psds=psds,
@@ -1711,6 +1713,12 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
         self.phase_samples = int(phase_samples)
         self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples,
                                      endpoint=False)
+        # the phase dependence of the log likelihood ratio; this is a
+        # 5 x phase_samples array of cos, sin, cos^2, sin^2, cos*sin
+        cphi = numpy.cos(self.phases)
+        sphi = numpy.sin(self.phases)
+        self._phase_terms = numpy.array([cphi, sphi, cphi*cphi, sphi*sphi,
+                                         cphi*sphi])
         if ref_phase is None:
             raise KeyError('ref_phase is set to None. Please specify the '
                            'name of the phase parameter to marginalize '
@@ -1796,6 +1804,13 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
 
     def get_waveforms(self):
         r"""Generate the waveforms.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> modes -> (h_c, h_s), where
+            ``h_c`` (``h_s``) is the cosine (sine) term of the mode in the
+            detector.
         """
         if self._current_wfs is None:
             params = self.current_params.copy()
@@ -1806,49 +1821,104 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
             wfs = self.waveform_generator.generate(phases=self.phase_names,
                                                    ref_phase=self.ref_phase,
                                                    **params)
-            for det in wfs:
-                for mode in wfs[det]:
-                    hc, hs = wfs[det][mode]
-                    # make the same length as the data
-                    hc.resize(len(self.data[det]))
-                    hs.resize(len(self.data[det]))
-                    # apply high pass
-                    if self.highpass_waveforms:
-                        hc = highpass_fd(hc, self.highpass_waveforms)
-                        hs = highpass_fd(hs, self.highpass_waveforms)
-                    wfs[det][mode] = (hc, hs)
-            self._current_wfs = wfs
+            out = {}
+            stacks = {}
+            for det, modes in wfs.items():
+                # all of the terms are stored in a single
+                # (number of terms) x (number of frequencies) array, so
+                # that operations on them can be done all at once
+                names = list(modes.keys())
+                x0 = modes[names[0]][0]
+                nfreq = len(self.data[det])
+                stack = numpy.zeros((2*len(names), nfreq), dtype=x0.dtype)
+                for ii, mode in enumerate(names):
+                    for jj, x in enumerate(modes[mode]):
+                        # this is the same as resizing to the length of the
+                        # data
+                        n = min(len(x), nfreq)
+                        stack[2*ii+jj, :n] = x.numpy()[:n]
+                if self.highpass_waveforms:
+                    tlen = 2 * (nfreq - 1)
+                    stack *= highpass_response(
+                        tlen, 1. / (tlen * float(x0.delta_f)),
+                        self.highpass_waveforms)
+                    # same as highpass_fd
+                    stack[:, 0] = stack[:, 0].real
+                    stack[:, -1] = stack[:, -1].real
+                stacks[det] = stack
+                out[det] = {mode: tuple(
+                    FrequencySeries(stack[2*ii+jj], delta_f=x0.delta_f,
+                                    epoch=x0.epoch, copy=False)
+                    for jj in range(2))
+                    for ii, mode in enumerate(names)}
+            self._current_wf_stacks = (out, stacks)
+            self._current_wfs = out
         return self._current_wfs
 
     def get_gated_waveforms(self):
         r"""Generate the gated waveforms.
+
+        Returns
+        -------
+        dict :
+            Dictionary of detector names -> modes -> gated (h_c, h_s).
         """
         wfs = self.get_waveforms()
-        out = {det: {} for det in wfs}
-        # apply the gate
-        for det in wfs:
-            for mode in wfs[det]:
-                hc, hs = wfs[det][mode]
-                hct = hc.to_timeseries()
-                hst = hs.to_timeseries()
-                invpsd = self._invpsds[det]
-                gate_times = self.get_gate_times()
-                gatestartdelay, dgatedelay = gate_times[det]
-                invmat = self.invert_covariance(det)
-                hct = hct.gate(gatestartdelay + dgatedelay/2,
-                               window=dgatedelay/2, copy=False,
-                               invpsd=invpsd, method='paint',
-                               paint_method=self.paint_method,
-                               paint_invmat=invmat)
-                hst = hst.gate(gatestartdelay + dgatedelay/2,
-                               window=dgatedelay/2, copy=False,
-                               invpsd=invpsd, method='paint',
-                               paint_method=self.paint_method,
-                               paint_invmat=invmat)
-                hc = hct.to_frequencyseries()
-                hs = hst.to_frequencyseries()
-                out[det][mode] = (hc, hs)
+        stacks = self._stacked(wfs)
+        gate_times = self.get_gate_times()
+        out = {}
+        gated_stacks = {}
+        for det, modes in wfs.items():
+            gate = gate_times[det]
+            gatestartdelay, dgatedelay = gate
+            # all of the series share the same gate, so gate them together
+            names = list(modes.keys())
+            fdata = stacks[det]
+            # the data has the same gate, so if it hasn't been gated yet with
+            # this gate, gate it along with the waveforms; the result is
+            # stored to the same cache that get_gated_data uses
+            cache = self._gated_data.setdefault(det, {})
+            gate_data = gate not in cache
+            if gate_data:
+                fdata = numpy.concatenate(
+                    [fdata, self.data[det].numpy()[None, :]])
+            x0 = modes[names[0]][0]
+            gated = batch_gate_and_paint_fd_array(
+                fdata, float(x0.delta_f), float(x0.start_time),
+                gatestartdelay + dgatedelay/2, dgatedelay/2,
+                self._invpsds[det], paint_method=self.paint_method,
+                invmat=self.invert_covariance(det))
+            if gate_data:
+                d = self.data[det]
+                cache.clear()
+                cache[gate] = FrequencySeries(gated[-1], delta_f=d.delta_f,
+                                              epoch=d.epoch, copy=False)
+                gated = gated[:-1]
+            gated_stacks[det] = gated
+            out[det] = {mode: tuple(
+                FrequencySeries(gated[2*ii+jj], delta_f=x0.delta_f,
+                                epoch=x0.epoch, copy=False)
+                for jj in range(2))
+                for ii, mode in enumerate(names)}
+        self._current_gated_stacks = (out, gated_stacks)
         return out
+
+    def _stacked(self, wfs):
+        """Returns the terms of the given waveforms, stacked into a
+        ``(number of terms) x (number of frequencies)`` array for each
+        detector.
+
+        If the waveforms are the ones that were created by
+        :py:meth:`get_waveforms` or :py:meth:`get_gated_waveforms`, the
+        arrays that were stored when they were created are returned.
+        Otherwise, the arrays are created.
+        """
+        for cached in (self._current_wf_stacks, self._current_gated_stacks):
+            if cached is not None and cached[0] is wfs:
+                return cached[1]
+        return {det: numpy.array([x.numpy() for terms in modes.values()
+                                  for x in terms])
+                for det, modes in wfs.items()}
 
     @property
     def _extra_stats(self):
@@ -1856,129 +1926,151 @@ class GatedGaussianMultimodeMargPhase(BaseGatedGaussian):
         return ['maxl_phase', 'maxl_logl'] + \
             [f'scale_factor_{mode}' for mode in self.mode_names]
 
-    def _snr_scale_factor(self, wfs, gated_wfs, mode, snr=None):
-        """Compute scale factor to get the desired network SNR given a set of
-        waveforms."""
-        if snr is None:
-            return 1.
-        thismode = {det: wfs[det][mode] for det in self.det_names}
-        thisgatedmode = {det: gated_wfs[det][mode] for det in self.det_names}
-        # get the fiducial network SNR
-        fid_snr = 0.
-        for det in thismode:
-            invpsd = self._invpsds[det]
-            slc = slice(self._kmin[det], self._kmax[det])
-            hc, _ = deepcopy(thismode[det])
-            gated_hc, _ = deepcopy(thisgatedmode[det])
-            gated_hc *= 4 * invpsd.delta_f * invpsd
-            fid_snr += hc[slc].inner(gated_hc[slc]).real
-        # get the scale between fiducal and specified SNR
-        return snr / fid_snr**0.5
+    def _det_inner_products(self, det, wfs, gated_wfs, gated_data):
+        r"""Computes the inner products in the given detector.
+
+        The inner products are computed between all of the terms
+        :math:`u_k`, where :math:`k` runs over the modes and, for each mode,
+        :math:`(h_c, h_s)`. The second argument of each inner product is
+        gated.
+
+        Returns
+        -------
+        uv : array
+            The ``2M x 2M`` array of :math:`\left<u_k, u_l\right>`.
+        ud : array
+            The length ``2M`` array of
+            :math:`\left<u_k, d\right> + \left<d, u_k\right>`.
+        dd : float
+            :math:`\left<d, d\right>`.
+        """
+        # we always filter the entire segment starting from kmin, since the
+        # gated series may have high frequency components
+        slc = slice(self._kmin[det], self._kmax[det])
+        invpsd = self._invpsds[det]
+        fac = 4 * invpsd.delta_f
+        # overwhiten the ungated data and waveforms; the terms are stacked
+        # into (number of terms) x (number of frequencies) arrays, so that
+        # all of the inner products can be done with matrix products
+        d = self._overwhitened_data[det].numpy()[slc]
+        gated_d = gated_data[det].numpy()[slc]
+        # the terms are stacked in the same order as the modes, since the
+        # modes are the keys of the waveform dictionaries
+        hs = self._stacked(wfs)[det][:, slc] * invpsd.numpy()[slc]
+        hs = hs.conj()
+        gated_hs = self._stacked(gated_wfs)[det][:, slc]
+        # <u, v> for all u, v; note that this is not symmetric
+        uv = fac * (hs @ gated_hs.T).real
+        # <u, d> + <d, u>
+        ud = fac * ((hs @ gated_d).real + (gated_hs @ d.conj()).real)
+        # <d, d>
+        dd = fac * numpy.vdot(d, gated_d).real
+        return uv, ud, dd
+
+    def _scale_factors(self, modes, uv):
+        """Computes the scale factor of every mode.
+
+        Parameters
+        ----------
+        modes : list
+            The names of the modes, in the order of the terms in ``uv``.
+        uv : array
+            The ``2M x 2M`` array of inner products between the terms,
+            summed over detectors.
+
+        Returns
+        -------
+        dict :
+            Dictionary of mode -> scale factor.
+        """
+        scales = {}
+        for ii, mode in enumerate(modes):
+            snr = None
+            if mode in self.snr_names:
+                snr = self.current_params.get(self.snr_names[mode])
+            if snr is None:
+                scales[mode] = 1.
+                continue
+            # the fiducial network SNR^2 of the mode is <h_c, h_c>
+            scales[mode] = snr / uv[2*ii, 2*ii]**0.5
+        # scale all other modes by the reference mode's scale factor if spec'd
+        if self.ref_mode:
+            rf = self.mode_names[0]
+            for mode in modes:
+                if mode not in self.mode_names:
+                    scales[mode] = scales[mode] * scales[rf]
+        return scales
 
     @catch_waveform_error
     def _loglikelihood(self):
-        r"""Computes the log likelihood.
+        r"""Computes the log likelihood marginalized over the reference
+        phase.
+
+        Returns
+        -------
+        float
+            The value of the marginalized log likelihood.
         """
         # get waveforms
         wfs = self.get_waveforms()
         gated_wfs = self.get_gated_waveforms()
         # get data
-        data = self.get_data()
         gated_data = self.get_gated_data()
-        # cycle over all detectors
-        norm = 0.
-        hchc = 0.
-        hchs = 0.
-        hshc = 0.
-        hshs = 0.
-        dhc = 0.
-        dhs = 0.
-        hcd = 0.
-        hsd = 0.
-        dd = 0.
-        # cache scale factors
-        scale_factors = {}
-        for mode in wfs[self.det_names[0]]:
-            if mode in self.snr_names:
-                sampled_snr = self.current_params.get(self.snr_names[mode])
-            else:
-                sampled_snr = None
-            scale_factors[mode] = self._snr_scale_factor(wfs, gated_wfs,
-                                                         mode, sampled_snr)
-            # scale all other modes by reference mode's scale factor if spec'd
-            if self.ref_mode and mode not in self.mode_names:
-                rf = self.mode_names[0]
-                scale_factors[mode] *= scale_factors[rf]
-            setattr(self._current_stats, f'scale_factor_{mode}',
-                    scale_factors[mode])
+        modes = list(wfs[self.det_names[0]].keys())
+        # the inner products between all of the terms, summed over
+        # detectors
+        uv = 0.
+        ud = 0.
+        lognl = 0.
         for det in self.det_names:
-            if det not in self.dets:
-                self.dets[det] = Detector(det)
-            # we always filter the entire segment starting from kmin, since the
-            # gated series may have high frequency components
-            slc = slice(self._kmin[det], self._kmax[det])
-            invpsd = self._invpsds[det]
-            d = data[det].copy()
-            gated_d = gated_data[det].copy()
-            # overwhiten gated data and get inner product
-            gated_d *= 2 * invpsd.delta_f * invpsd
-            # get dd inner product
-            dd += d[slc].inner(gated_d[slc]).real
-            # get full waveforms
-            hc = 0.
-            hs = 0.
-            gated_hc = 0.
-            gated_hs = 0.
-            for mode in wfs[det]:
-                thishc, thishs = deepcopy(wfs[det][mode])
-                thisgatedhc, thisgatedhs = deepcopy(gated_wfs[det][mode])
-                # scale and overwhiten waveforms
-                if numpy.isnan(scale_factors[mode]):
-                    # a negative showed up somewhere in the snr calcs;
-                    # reject this waveform
-                    raise FailedWaveformError
-                # scale and overwhiten waveforms
-                thishc *= scale_factors[mode]
-                thishs *= scale_factors[mode]
-                thisgatedhc *= 2 * invpsd.delta_f * invpsd * scale_factors[mode]
-                thisgatedhs *= 2 * invpsd.delta_f * invpsd * scale_factors[mode]
-                # add to full wfs
-                hc += thishc
-                hs += thishs
-                gated_hc += thisgatedhc
-                gated_hs += thisgatedhs
-            # template inner products
-            hchc += hc[slc].inner(gated_hc[slc]).real
-            hchs += hc[slc].inner(gated_hs[slc]).real
-            hshc += hs[slc].inner(gated_hc[slc]).real
-            hshs += hs[slc].inner(gated_hs[slc]).real
-            # data/template cross terms
-            dhc += d[slc].inner(gated_hc[slc]).real
-            dhs += d[slc].inner(gated_hs[slc]).real
-            hcd += hc[slc].inner(gated_d[slc]).real
-            hsd += hs[slc].inner(gated_d[slc]).real
+            duv, dud, dd = self._det_inner_products(det, wfs, gated_wfs,
+                                                    gated_data)
+            uv = uv + duv
+            ud = ud + dud
             # get the normalization in this detector
             if self.normalize:
                 start_index, end_index = self.gate_indices(det)
             else:
                 start_index = end_index = None
-            norm += self.det_lognorm(det, start_index, end_index)
+            lognl += self.det_lognorm(det, start_index, end_index) - 0.5*dd
+        # get the scale factor of each mode
+        scales = self._scale_factors(modes, uv)
+        if numpy.isnan(list(scales.values())).any():
+            # a negative showed up somewhere in the snr calcs;
+            # reject this waveform
+            raise FailedWaveformError
+        for mode in modes:
+            setattr(self._current_stats, f'scale_factor_{mode}',
+                    scales[mode])
+        # scale the terms; the cosine (sine) terms are the even (odd) ones
+        weights = numpy.repeat([scales[mode] for mode in modes], 2)
+        uv = uv * numpy.outer(weights, weights)
+        ud = ud * weights
+        cidx = slice(0, None, 2)
+        sidx = slice(1, None, 2)
+        # the coefficients of (cos, sin, cos^2, sin^2, cos*sin), from
+        # <h, d>/2 + <d, h>/2 - <h, h>/2
+        coeffs = numpy.array([
+            0.5 * ud[cidx].sum(),
+            0.5 * ud[sidx].sum(),
+            -0.5 * uv[cidx, cidx].sum(),
+            -0.5 * uv[sidx, sidx].sum(),
+            -0.5 * (uv[cidx, sidx].sum() + uv[sidx, cidx].sum())])
         # numerical marginalization over phases
-        cphi = numpy.cos(self.phases)
-        sphi = numpy.sin(self.phases)
-        hh = cphi*cphi*hchc + sphi*sphi*hshs + cphi*sphi*(hchs+hshc)
-        dh = cphi*dhc + sphi*dhs
-        hd = cphi*hcd + sphi*hsd
-        loglr = -(hh-dh-hd)
-        lognl = -dd
+        loglr = coeffs @ self._phase_terms
         # get the maxL phase
         maxlidx = loglr.argmax()
+        maxloglr = loglr[maxlidx]
         self._current_stats.maxl_phase = self.phases[maxlidx]
-        self._current_stats.maxl_logl = loglr[maxlidx] + lognl + norm
-        # get the marginalized log likelihood ratio
-        marglogl = special.logsumexp(loglr) + lognl + norm - \
-                    numpy.log(self.phase_samples)
-        return marglogl
+        self._current_stats.maxl_logl = maxloglr + lognl
+        # compute the marginalized log likelihood; this is the same as
+        # special.logsumexp(loglr), but is faster since we already have the
+        # max
+        loglr -= maxloglr
+        numpy.exp(loglr, out=loglr)
+        marglogl = maxloglr + numpy.log(loglr.sum()) + lognl \
+            - numpy.log(self.phase_samples)
+        return float(marglogl)
 
     def _nowaveform_handler(self):
         """Sets the extra stats to nan if no waveform was generated."""
