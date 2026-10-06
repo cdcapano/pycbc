@@ -866,8 +866,8 @@ class GatedGaussianMargPol(BaseGatedGaussian):
 
     This implements the GatedGaussian likelihood with an explicit numerical
     marginalization over polarization angle. This is accomplished using
-    a fixed set of integration points distribution uniformation between
-    0 and 2pi. By default, 1000 integration points are used.
+    a fixed set of integration points distributed uniformly in [0, 2pi).
+    By default, 1000 integration points are used.
     The 'polarization_samples' argument can be passed to set an alternate
     number of integration points.
     """
@@ -884,7 +884,8 @@ class GatedGaussianMargPol(BaseGatedGaussian):
             static_params=static_params, **kwargs)
         # the polarization parameters
         self.polarization_samples = polarization_samples
-        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples)
+        self.pol = numpy.linspace(0, 2*numpy.pi, self.polarization_samples,
+                                  endpoint=False)
         self.dets = {}
         # create the waveform generator
         self.waveform_generator = create_waveform_generator(
@@ -1134,7 +1135,8 @@ class GatedGaussianMargPhase(BaseGatedGaussian):
         self.dets = {}
         # phase marginalization parameters
         self.phase_samples = int(phase_samples)
-        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples)
+        self.phases = numpy.linspace(0, 2*numpy.pi, self.phase_samples,
+                                     endpoint=False)
         if ref_phase is None:
             raise KeyError('ref_phase is set to None. Please specify the '
                            'name of the phase parameter to marginalize '
