@@ -31,7 +31,6 @@ from pycbc.types import FrequencySeries
 from pycbc.detector import Detector
 from pycbc.pnutils import hybrid_meco_frequency
 from pycbc import types
-from pycbc import transforms
 from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.waveform import generator, FailedWaveformError
 from pycbc.filter import highpass_fd, highpass_response
@@ -40,6 +39,7 @@ from pycbc.strain.gate import (invert_covariance, toeplitz_inverse,
                                batch_gate_and_paint_fd_array)
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
                              catch_waveform_error)
+from .base import apply_transforms_to_samples
 from .base_data import BaseDataModel
 from .data_utils import fd_data_from_strain_dict
 
@@ -50,50 +50,6 @@ def _toeplitz_inverses_task(args):
     BaseGatedGaussian.fill_gate_cache with a pool."""
     det, invpsd, sizes = args
     return det, toeplitz_inverses(invpsd, sizes)
-
-
-def apply_transforms_to_samples(samples, transform_list):
-    """Applies transforms to a set of samples without modifying the
-    transforms.
-
-    Some transforms (e.g., custom transforms) store scratch space sized to
-    the last input they were given, so applying them to arrays of samples
-    would change their output for later (scalar) inputs. This applies
-    copies of the transforms instead. Numerical scalars in ``samples`` are
-    broadcast to the size of the samples first. If the transforms cannot be
-    applied to all of the samples at once, they are applied to each sample
-    separately.
-
-    Parameters
-    ----------
-    samples : dict
-        Dictionary of parameter names -> arrays (or scalars) of samples.
-    transform_list : list
-        The transforms to apply.
-
-    Returns
-    -------
-    dict :
-        Dictionary of parameter names -> arrays of transformed samples.
-    """
-    size = max(numpy.size(val) for val in samples.values()
-               if not isinstance(val, str))
-    samples = {p: (numpy.full(size, val)
-                   if numpy.ndim(val) == 0 and not isinstance(val, str)
-                   else val)
-               for p, val in samples.items()}
-    try:
-        return transforms.apply_transforms(dict(samples),
-                                           deepcopy(transform_list))
-    except (TypeError, ValueError):
-        pass
-    transform_list = deepcopy(transform_list)
-    out = []
-    for ii in range(size):
-        sample = {p: (val if isinstance(val, str) else val[ii])
-                  for p, val in samples.items()}
-        out.append(transforms.apply_transforms(sample, transform_list))
-    return {p: numpy.array([o[p] for o in out]) for p in out[0]}
 
 
 class BaseGatedGaussian(BaseGaussianNoise):
