@@ -31,15 +31,69 @@ from pycbc.types import FrequencySeries
 from pycbc.detector import Detector
 from pycbc.pnutils import hybrid_meco_frequency
 from pycbc import types
+from pycbc import transforms
 from pycbc.waveform.utils import time_from_frequencyseries
 from pycbc.waveform import generator, FailedWaveformError
 from pycbc.filter import highpass_fd, highpass_response
 from pycbc.strain.gate import (invert_covariance, toeplitz_inverse,
+                               toeplitz_inverses,
                                batch_gate_and_paint_fd_array)
 from .gaussian_noise import (BaseGaussianNoise, create_waveform_generator,
                              catch_waveform_error)
 from .base_data import BaseDataModel
 from .data_utils import fd_data_from_strain_dict
+
+
+def _toeplitz_inverses_task(args):
+    """Calls toeplitz_inverses with the given (detector, invpsd, sizes)
+    tuple, returning the detector and the result. Used by
+    BaseGatedGaussian.fill_gate_cache with a pool."""
+    det, invpsd, sizes = args
+    return det, toeplitz_inverses(invpsd, sizes)
+
+
+def apply_transforms_to_samples(samples, transform_list):
+    """Applies transforms to a set of samples without modifying the
+    transforms.
+
+    Some transforms (e.g., custom transforms) store scratch space sized to
+    the last input they were given, so applying them to arrays of samples
+    would change their output for later (scalar) inputs. This applies
+    copies of the transforms instead. Numerical scalars in ``samples`` are
+    broadcast to the size of the samples first. If the transforms cannot be
+    applied to all of the samples at once, they are applied to each sample
+    separately.
+
+    Parameters
+    ----------
+    samples : dict
+        Dictionary of parameter names -> arrays (or scalars) of samples.
+    transform_list : list
+        The transforms to apply.
+
+    Returns
+    -------
+    dict :
+        Dictionary of parameter names -> arrays of transformed samples.
+    """
+    size = max(numpy.size(val) for val in samples.values()
+               if not isinstance(val, str))
+    samples = {p: (numpy.full(size, val)
+                   if numpy.ndim(val) == 0 and not isinstance(val, str)
+                   else val)
+               for p, val in samples.items()}
+    try:
+        return transforms.apply_transforms(dict(samples),
+                                           deepcopy(transform_list))
+    except (TypeError, ValueError):
+        pass
+    transform_list = deepcopy(transform_list)
+    out = []
+    for ii in range(size):
+        sample = {p: (val if isinstance(val, str) else val[ii])
+                  for p, val in samples.items()}
+        out.append(transforms.apply_transforms(sample, transform_list))
+    return {p: numpy.array([o[p] for o in out]) for p in out[0]}
 
 
 class BaseGatedGaussian(BaseGaussianNoise):
@@ -87,6 +141,12 @@ class BaseGatedGaussian(BaseGaussianNoise):
             variable_params, data, low_frequency_cutoff, psds=psds,
             high_frequency_cutoff=high_frequency_cutoff, normalize=normalize,
             static_params=static_params, **kwargs)
+        # the number of prior samples to use to fill the cache of in-painting
+        # inverses in the warmup
+        gate_cache_samples = kwargs.get('gate_cache_samples')
+        if gate_cache_samples is None:
+            gate_cache_samples = kwargs.get('gate-cache-samples', 10000)
+        self.gate_cache_samples = int(gate_cache_samples)
 
     @classmethod
     def from_config(cls, cp, data_section='data', data=None, psds=None,
@@ -431,6 +491,133 @@ class BaseGatedGaussian(BaseGaussianNoise):
             out[det] = dtilde
         return out
 
+    def fill_gate_cache(self, samples, pool=None):
+        """Adds the in-painting inverses for the gate sizes of the given
+        samples to the cache.
+
+        The gate start and end times of every sample are converted to each
+        detector's frame, and the gate size (in samples) is found in the
+        same way as is done when the likelihood is evaluated. The
+        :py:class:`pycbc.strain.gate.ToeplitzInverse` for all of the sizes
+        that are not already cached are then found with a single pass of the
+        Levinson-Durbin recursion in each detector (see
+        :py:func:`pycbc.strain.gate.toeplitz_inverses`). This is much faster
+        than setting up each size separately as it is encountered. Any sizes
+        that are missed will still be set up and cached as they are
+        encountered.
+
+        This is only supported for the ``'gs'`` paint method.
+
+        Parameters
+        ----------
+        samples : dict
+            Dictionary of parameter names -> arrays. Must contain
+            ``t_gate_start``, ``t_gate_end``, ``ra``, and ``dec`` (i.e., the
+            waveform transforms must already have been applied), and may
+            contain ``tc_ref_frame``. Scalars are broadcast.
+        pool : pool object, optional
+            Pool used to set up the inverses of different detectors in
+            parallel. If None, they are set up in serial.
+        """
+        if self.paint_method != 'gs':
+            raise ValueError("filling the gate cache is only supported for "
+                             "the gs paint method")
+        refframe = samples.get('tc_ref_frame',
+                               self.static_params.get('tc_ref_frame',
+                                                      'geocentric'))
+        if not isinstance(refframe, str):
+            # a single reference frame is assumed
+            refframe = numpy.unique(refframe)
+            if len(refframe) != 1:
+                raise ValueError("all samples must have the same "
+                                 "tc_ref_frame")
+            refframe = str(refframe[0])
+        gatestart, gateend, ra, dec = numpy.broadcast_arrays(
+            *[numpy.asarray(samples[p], dtype=float)
+              for p in ['t_gate_start', 't_gate_end', 'ra', 'dec']])
+        gatetimes = self._get_gate_times(gatestart, gateend, ra, dec,
+                                         refframe=refframe)
+        tasks = []
+        for det, (start, width) in gatetimes.items():
+            # same as gate_indices, i.e., TimeSeries.get_gate_indices
+            ts = self.td_data[det]
+            st = float(ts.start_time)
+            dt = float(ts.delta_t)
+            window = width / 2
+            gt = start + window
+            lindex = numpy.trunc((gt - window - st) / dt).astype(int)
+            rindex = numpy.trunc((gt + window - st) / dt).astype(int)
+            lindex = numpy.clip(lindex, 0, None)
+            rindex = numpy.clip(rindex, None, len(ts))
+            sizes = set(int(k) for k in numpy.unique(rindex - lindex)
+                        if k > 0)
+            new = [k for k in sizes if det not in self._cov_matrices.get(k, {})]
+            if not new:
+                continue
+            logging.info("Setting up the in-painting inverses for %i gate "
+                         "sizes (%i - %i samples) in %s", len(new), min(new),
+                         max(new), det)
+            tasks.append((det, self._invpsds[det], new))
+        if pool is None:
+            results = map(_toeplitz_inverses_task, tasks)
+        else:
+            results = pool.map(_toeplitz_inverses_task, tasks)
+        for det, tinvs in results:
+            for k, tinv in tinvs.items():
+                self._cov_matrices.setdefault(k, {})[det] = tinv
+
+    def _warmup(self, pool):
+        """Fills the cache of in-painting inverses using samples drawn from
+        the prior.
+
+        This is only done for the ``'gs'`` paint method (the other methods
+        need too much memory to cache many gate sizes), and if the
+        ``gate_cache_samples`` attribute (set by the ``gate-cache-samples``
+        model option) is greater than zero. The given number of samples are
+        drawn with :py:meth:`prior_rvs`, the waveform transforms are applied
+        to them, and the result is passed to :py:meth:`fill_gate_cache`.
+        Nothing is done if the model has no prior or no variable parameters,
+        or if the gate times cannot be determined from the prior (e.g., if
+        ``gatefunc = hmeco``).
+
+        Parameters
+        ----------
+        pool : pool object
+            Pool used to parallelize the set up over detectors.
+        """
+        nsamples = self.gate_cache_samples
+        if self.paint_method != 'gs' or nsamples <= 0:
+            return
+        if 'gatefunc' in self.variable_params or \
+                self.static_params.get('gatefunc') is not None:
+            logging.info("The gate times depend on the waveform, so not "
+                         "filling the gate cache")
+            return
+        if not self.variable_params:
+            logging.debug("No variable parameters, so not filling the gate "
+                          "cache")
+            return
+        try:
+            draws = self.prior_rvs(size=nsamples)
+        except AttributeError:
+            logging.debug("No prior, so not filling the gate cache")
+            return
+        logging.info("Filling the gate cache using %i samples from the "
+                     "prior", nsamples)
+        if self.sampling_transforms is not None:
+            draws = self.sampling_transforms.apply(draws, inverse=True)
+        samples = {p: draws[p] for p in draws.fieldnames}
+        for p, val in self.static_params.items():
+            samples.setdefault(p, val)
+        try:
+            if self.waveform_transforms is not None:
+                samples = apply_transforms_to_samples(
+                    samples, self.waveform_transforms)
+            self.fill_gate_cache(samples, pool=pool)
+        except (KeyError, ValueError, TypeError) as err:
+            logging.info("The gate times could not be determined from the "
+                         "prior (%s), so not filling the gate cache", err)
+
     def get_gate_times(self):
         """Gets the time to apply a gate based on the current sky position.
 
@@ -477,8 +664,10 @@ class BaseGatedGaussian(BaseGaussianNoise):
                 self.condition_number(det, lindex, rindex)
         return gatetimes
 
-    def _get_gate_times(self, gatestart, gateend, ra, dec):
+    def _get_gate_times(self, gatestart, gateend, ra, dec, refframe=None):
         """Calculates the gate times in each detector.
+
+        The times may also be arrays, in which case arrays are returned.
 
         Parameters
         ----------
@@ -490,6 +679,10 @@ class BaseGatedGaussian(BaseGaussianNoise):
             Right ascension of the signal.
         dec : float
             Declination of the signal.
+        refframe : str, optional
+            The frame the gate times are defined in. If None, will use the
+            ``tc_ref_frame`` in the current parameters, or ``'geocentric'``
+            if there is none.
 
         Returns
         -------
@@ -504,7 +697,11 @@ class BaseGatedGaussian(BaseGaussianNoise):
                 thisdet = self._gate_detectors[det] = Detector(det)
             # account for the time delay between the waveforms of the
             # different detectors
-            refdet = self.current_params.get('tc_ref_frame', 'geocentric')
+            if refframe is None:
+                refdet = self.current_params.get('tc_ref_frame',
+                                                 'geocentric')
+            else:
+                refdet = refframe
             gatestartdelay = thisdet.arrival_time(gatestart, ra, dec, refdet)
             gateenddelay = thisdet.arrival_time(gateend, ra, dec, refdet)
             dgatedelay = gateenddelay - gatestartdelay

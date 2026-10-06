@@ -125,6 +125,12 @@ with ctx:
     # construct class that will return the natural logarithm of likelihood
     model = models.read_from_config(cp)
 
+    # do any set up that the model needs before sampling; this is done before
+    # the sampler (and its pool) is created, so that processes started by the
+    # sampler inherit the result
+    logging.info("Warming up model")
+    model.warmup(nprocesses=opts.nprocesses, use_mpi=opts.use_mpi)
+
     logging.info("Setting up sampler")
 
     # Create sampler that will run.

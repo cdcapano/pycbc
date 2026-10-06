@@ -614,6 +614,58 @@ class BaseModel(metaclass=ABCMeta):
                                         names=self.sampling_params)
         return p0
 
+    def warmup(self, nprocesses=1, use_mpi=False):
+        """Sets up anything the model needs after it has been initialized,
+        but before sampling starts.
+
+        This creates a pool of processes, passes it to :py:meth:`_warmup`,
+        which does the actual work, and then closes the pool, so that it
+        does not interfere with the pool that is created by the sampler.
+        Models that need to do something before sampling starts should
+        implement ``_warmup``; by default, nothing is done.
+
+        If running under MPI, every process runs the warmup itself, with a
+        single-process pool. This is because each MPI process has its own
+        copy of the model, which the warmup may need to set up (e.g., by
+        filling caches). Otherwise, the warmup is done in this process, and
+        processes that are started later by the sampler will inherit the
+        result.
+
+        Parameters
+        ----------
+        nprocesses : int, optional
+            The number of processes to use for the pool. Default is 1.
+        use_mpi : bool, optional
+            Whether MPI is being used. Default is False.
+        """
+        from pycbc.pool import SinglePool, choose_pool
+        from pycbc.pool import use_mpi as _use_mpi
+        under_mpi, _, _ = _use_mpi(require_mpi=use_mpi, log=False)
+        if under_mpi or nprocesses == 1:
+            pool = SinglePool()
+            pool.size = 1
+        else:
+            pool = choose_pool(nprocesses)
+        try:
+            self._warmup(pool)
+        finally:
+            pool.close_pool()
+
+    def _warmup(self, pool):
+        """Does the work of :py:meth:`warmup`.
+
+        This does nothing by default. Models that need to set things up
+        before sampling starts should override it.
+
+        Parameters
+        ----------
+        pool : pool object
+            A pool of processes that may be used to parallelize the warmup.
+            It has (at least) ``map`` and ``size`` attributes. It is closed
+            after this function returns.
+        """
+        pass
+
     def _transform_params(self, **params):
         r"""Applies sampling transforms and boundary conditions to parameters.
 
