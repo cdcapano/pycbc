@@ -519,13 +519,41 @@ class Detector(object):
         float : 
             The coalescence time converted to the current detector frame.
         """
+        return ref_tc + self.arrival_time_delay(ref_tc, ra, dec,
+                                                ref_frame=ref_frame)
+
+    def arrival_time_delay(self, ref_tc, ra, dec, ref_frame='geocentric'):
+        """Compute the delay between the arrival time in this detector and
+        the time in the reference frame.
+
+        This is the same as ``arrival_time(ref_tc, ...) - ref_tc``, but is
+        computed directly, so it does not lose precision to the subtraction
+        of two (large) GPS times.
+
+        Parameters
+        ----------
+        ref_tc : {float, lal.LIGOTimeGPS}
+            The time in the reference frame at which to compute the delay.
+        ra : float
+            Right ascension.
+        dec : float
+            Declination.
+        ref_frame : str (optional)
+            The detector to convert from, in which ref_tc is sampled. Default
+            'geocentric'.
+
+        Returns
+        -------
+        float :
+            The arrival time in this detector minus the time in the reference
+            frame.
+        """
         if ref_frame == 'geocentric':
             # from geocenter
-            tc = ref_tc + \
-                self.time_delay_from_earth_center(ra, dec, ref_tc)
+            return self.time_delay_from_earth_center(ra, dec, ref_tc)
         elif ref_frame == self.name:
             # no time shift; sampling in current det
-            tc = ref_tc
+            return 0.
         elif ref_frame in _ground_detectors:
             # from sampling det; the detector is cached, since creating it is
             # much more expensive than computing the time delay
@@ -534,13 +562,10 @@ class Detector(object):
             except KeyError:
                 refdet = _arrival_time_ref_detectors[ref_frame] = \
                     Detector(ref_frame)
-            tc = ref_tc + \
-                self.time_delay_from_detector(refdet, ra, dec, ref_tc)
-        else:
-            raise ValueError(f'Unrecognized ref_frame argument {ref_frame}. '
-                             'Accepted arguments are: "geocentric", '
-                             f'{get_available_detectors()}')
-        return tc
+            return self.time_delay_from_detector(refdet, ra, dec, ref_tc)
+        raise ValueError(f'Unrecognized ref_frame argument {ref_frame}. '
+                         'Accepted arguments are: "geocentric", '
+                         f'{get_available_detectors()}')
 
     def project_wave(self, hp, hc, ra, dec, polarization,
                      method='lal',
